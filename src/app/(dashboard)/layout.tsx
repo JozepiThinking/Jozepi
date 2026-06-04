@@ -27,6 +27,11 @@ export default async function DashboardLayout({
       <Sidebar
         userEmail={user.email ?? ""}
         userName={profile?.full_name}
+        avatarUrl={
+          typeof user.user_metadata.avatar_url === "string"
+            ? user.user_metadata.avatar_url
+            : null
+        }
       />
       <main className="pl-20">
         <div className="mx-auto max-w-7xl px-8 py-8">{children}</div>

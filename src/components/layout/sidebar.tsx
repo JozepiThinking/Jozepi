@@ -8,6 +8,7 @@ import {
   Users,
   Wrench,
   Wallet,
+  Building2,
 } from "lucide-react";
 import { UserMenu } from "./user-menu";
 
@@ -17,11 +18,13 @@ const navigation = [
   { name: "Clientes", href: "/clientes", icon: Users },
   { name: "Serviços", href: "/servicos", icon: Wrench },
   { name: "Financeiro", href: "/financeiro", icon: Wallet },
+  { name: "Perfil da Empresa", href: "/empresa", icon: Building2 },
 ];
 
 interface SidebarProps {
   userEmail: string;
   userName?: string;
+  avatarUrl?: string | null;
 }
 
 function GarageMark({ className }: { className?: string }) {
@@ -70,7 +73,7 @@ function GarageMark({ className }: { className?: string }) {
   );
 }
 
-export function Sidebar({ userEmail, userName }: SidebarProps) {
+export function Sidebar({ userEmail, userName, avatarUrl }: SidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -115,7 +118,7 @@ export function Sidebar({ userEmail, userName }: SidebarProps) {
         })}
       </nav>
 
-      <UserMenu email={userEmail} fullName={userName} />
+      <UserMenu email={userEmail} fullName={userName} avatarUrl={avatarUrl} />
     </aside>
   );
 }
