@@ -2,11 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  CalendarDays,
+  Car,
   Check,
   ChevronLeft,
   ChevronRight,
-  Clock,
   ChevronDown,
   Pencil,
   Plus,
@@ -59,6 +58,7 @@ const statusStyles: Record<
   AppointmentStatus,
   {
     calendarPill: string;
+    timelineBlock: string;
     sideCard: string;
     sideAccent: string;
     statusBadge: string;
@@ -67,6 +67,7 @@ const statusStyles: Record<
 > = {
   Confirmado: {
     calendarPill: "bg-success/10 text-success",
+    timelineBlock: "bg-success",
     sideCard: "border-success/20 bg-success/5",
     sideAccent: "border-l-[var(--success)]",
     statusBadge: "bg-success/10 text-success",
@@ -74,6 +75,7 @@ const statusStyles: Record<
   },
   Pendente: {
     calendarPill: "bg-warning/10 text-warning",
+    timelineBlock: "bg-warning",
     sideCard: "border-warning/20 bg-warning/5",
     sideAccent: "border-l-[var(--warning)]",
     statusBadge: "bg-warning/10 text-warning",
@@ -81,6 +83,7 @@ const statusStyles: Record<
   },
   Cancelado: {
     calendarPill: "bg-danger/10 text-danger",
+    timelineBlock: "bg-danger",
     sideCard: "border-danger/20 bg-danger/5",
     sideAccent: "border-l-[var(--danger)]",
     statusBadge: "bg-danger/10 text-danger",
@@ -88,6 +91,7 @@ const statusStyles: Record<
   },
   Concluído: {
     calendarPill: "bg-slate-200 text-slate-700",
+    timelineBlock: "bg-slate-500",
     sideCard: "border-slate-300 bg-slate-100",
     sideAccent: "border-l-slate-500",
     statusBadge: "bg-slate-200 text-slate-700",
@@ -367,11 +371,48 @@ export function AgendaCalendar() {
     )
   ).size;
   const totalSlots = timeSlots.length;
-  const freeSlotsToday = Math.max(totalSlots - occupiedSlotsToday, 0);
-  const occupancyPercent = Math.min(
-    Math.round((occupiedSlotsToday / totalSlots) * 100),
-    100
-  );
+  const timelineBlocks = [...todayAppointments]
+    .sort((a, b) => a.startTime.localeCompare(b.startTime))
+    .map((appointment, index, dayAppointments) => {
+      const start =
+        ((timeToMinutes(appointment.startTime) -
+          timeToMinutes(BUSINESS_START_TIME)) /
+          (timeToMinutes(BUSINESS_END_TIME) -
+            timeToMinutes(BUSINESS_START_TIME))) *
+        100;
+      const width =
+        ((timeToMinutes(appointment.endTime) -
+          timeToMinutes(appointment.startTime)) /
+          (timeToMinutes(BUSINESS_END_TIME) -
+            timeToMinutes(BUSINESS_START_TIME))) *
+        100;
+      const connectsStart =
+        index > 0 && dayAppointments[index - 1].endTime === appointment.startTime;
+      const connectsEnd =
+        index < dayAppointments.length - 1 &&
+        appointment.endTime === dayAppointments[index + 1].startTime;
+      const roundedClass =
+        connectsStart && connectsEnd
+          ? "rounded-none"
+          : connectsStart
+            ? "rounded-l-none rounded-r-full"
+            : connectsEnd
+              ? "rounded-l-full rounded-r-none"
+              : "rounded-full";
+
+      return {
+        appointment,
+        roundedClass,
+        start: Math.max(0, Math.min(start, 100)),
+        width: Math.max(0, Math.min(width, 100 - start)),
+      };
+    });
+  const timelineMarkers = ["07h", "09h", "11h", "13h", "15h", "17h", "19h"];
+  const todayStatusCounts = appointmentStatuses.map((status) => ({
+    status,
+    count: todayAppointments.filter((appointment) => appointment.status === status)
+      .length,
+  }));
   const nextAppointment =
     selectedAppointments
       .filter(
@@ -382,6 +423,13 @@ export function AgendaCalendar() {
             timeToMinutes(appointment.endTime) > timeToMinutes(currentTime))
       )
       .sort((a, b) => a.startTime.localeCompare(b.startTime))[0] ?? null;
+  const nextAppointmentStyle = nextAppointment
+    ? getStatusStyle(nextAppointment.status)
+    : null;
+  const nextAppointmentServices = nextAppointment?.service
+    .split(",")
+    .map((service) => service.trim())
+    .filter(Boolean) ?? [];
   const selectedClient = clients.find((client) => client.id === form.clientId);
   const selectedClientVehicles = selectedClient?.vehicles ?? [];
   const selectedServices = services.filter((service) =>
@@ -679,40 +727,88 @@ export function AgendaCalendar() {
     <>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-start justify-between gap-5">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-muted">Ocupação hoje</p>
-              <div className="mt-3 h-3 w-full max-w-xs overflow-hidden rounded-full bg-background">
-                <div
-                  className="h-full rounded-full bg-success transition-all duration-300"
-                  style={{ width: `${occupancyPercent}%` }}
-                />
+              <div className="relative mt-4 h-7 overflow-hidden rounded-full bg-slate-200 shadow-inner">
+                {timelineBlocks.map(({ appointment, roundedClass, start, width }) => {
+                  const style = getStatusStyle(appointment.status);
+
+                  return (
+                    <div
+                      key={appointment.id}
+                      title={`${appointment.startTime} - ${appointment.endTime} • ${appointment.client} • ${appointment.service}`}
+                      className={`absolute top-0 h-full ${roundedClass} ${style.timelineBlock}`}
+                      style={{
+                        left: `${start}%`,
+                        width: `${width}%`,
+                      }}
+                    />
+                  );
+                })}
               </div>
+              <div className="mt-2 flex justify-between text-[11px] font-medium text-muted">
+                {timelineMarkers.map((marker) => (
+                  <span key={marker}>{marker}</span>
+                ))}
+              </div>
+              {todayAppointments.length > 0 ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {todayStatusCounts
+                    .filter(({ count }) => count > 0)
+                    .map(({ status, count }) => {
+                      const style = getStatusStyle(status);
+
+                      return (
+                        <span
+                          key={status}
+                          className="inline-flex items-center gap-2 rounded-full bg-background px-3 py-1 text-xs font-semibold text-muted"
+                        >
+                          <span
+                            className={`h-2.5 w-2.5 rounded-full ${style.timelineBlock}`}
+                          />
+                          {status}: {count}
+                        </span>
+                      );
+                    })}
+                </div>
+              ) : null}
               <p className="mt-3 text-sm font-medium text-foreground">
-                {todayAppointments.length} agendamentos • {freeSlotsToday}{" "}
-                horários livres
+                {todayAppointments.length} agendamentos
               </p>
               <p className="mt-1 text-xs text-muted">
                 {occupiedSlotsToday} de {totalSlots} horários ocupados
               </p>
             </div>
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <CalendarDays className="h-6 w-6" />
-            </div>
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
+        <div
+          className={`rounded-xl border-l-4 bg-card p-6 shadow-sm ${
+            nextAppointmentStyle?.sideAccent ?? "border-l-border"
+          }`}
+        >
+          <div className="flex items-start justify-between gap-5">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-muted">Próximo cliente</p>
               {nextAppointment ? (
                 <>
-                  <p className="mt-2 text-2xl font-bold text-foreground">
+                  <p className="mt-2 text-3xl font-bold leading-tight text-foreground">
                     {nextAppointment.client}
                   </p>
-                  <p className="mt-1 text-sm text-muted">
-                    {nextAppointment.service} • {nextAppointment.vehicle}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {nextAppointmentServices.map((service) => (
+                      <span
+                        key={service}
+                        className="rounded-full bg-background px-3 py-1 text-xs font-semibold text-muted"
+                      >
+                        {service}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="mt-3 flex items-center gap-2 text-sm text-muted">
+                    <Car className="h-4 w-4 shrink-0" />
+                    <span>{nextAppointment.vehicle}</span>
                   </p>
                 </>
               ) : (
@@ -721,13 +817,22 @@ export function AgendaCalendar() {
                 </p>
               )}
             </div>
-            {nextAppointment && (
-              <span className="rounded-xl bg-warning/10 px-3 py-2 text-sm font-bold text-warning">
-                {nextAppointment.startTime}
-              </span>
-            )}
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-warning/10 text-warning">
-              <Clock className="h-6 w-6" />
+            <div className="flex shrink-0 flex-col items-end gap-3">
+              {nextAppointment && (
+                <>
+                  <span
+                    className={`min-w-44 whitespace-nowrap rounded-2xl px-5 py-4 text-center text-xl font-bold leading-tight shadow-sm ${nextAppointmentStyle?.timeBadge}`}
+                  >
+                    {nextAppointment.startTime} - {nextAppointment.endTime}
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${nextAppointmentStyle?.statusBadge}`}
+                  >
+                    <span className="h-2 w-2 rounded-full bg-current" />
+                    {nextAppointment.status}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
