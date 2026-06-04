@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
+  Check,
   ChevronLeft,
   ChevronRight,
   Clock,
+  ChevronDown,
   Pencil,
   Plus,
   Trash2,
@@ -16,7 +18,10 @@ import { Input } from "@/components/ui/input";
 import { ClientFormModal } from "@/components/clients/client-form-modal";
 import { syncVehicles } from "@/lib/clients/sync-vehicles";
 import { createClient } from "@/lib/supabase/client";
+import { formatCurrency } from "@/lib/utils/format";
 import { type Client, type ClientFormData } from "@/types/client";
+
+type AppointmentStatus = "Confirmado" | "Pendente" | "Cancelado" | "Concluído";
 
 interface Appointment {
   id: string;
@@ -25,11 +30,12 @@ interface Appointment {
   endTime: string;
   clientId: string;
   vehicleId: string;
-  serviceId: string;
+  serviceIds: string[];
   client: string;
   service: string;
+  totalAmount: number;
   vehicle: string;
-  status: "Confirmado" | "Pendente";
+  status: AppointmentStatus;
 }
 
 interface AppointmentForm {
@@ -38,7 +44,7 @@ interface AppointmentForm {
   endTime: string;
   clientId: string;
   vehicleId: string;
-  serviceId: string;
+  serviceIds: string[];
 }
 
 interface AgendaService {
@@ -49,19 +55,82 @@ interface AgendaService {
   active: boolean;
 }
 
-const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-const timeSlots = Array.from({ length: 27 }, (_, index) => {
-  const totalMinutes = 6 * 60 + index * 30;
-  const hours = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-  const minutes = String(totalMinutes % 60).padStart(2, "0");
+const statusStyles: Record<
+  AppointmentStatus,
+  {
+    calendarPill: string;
+    sideCard: string;
+    sideAccent: string;
+    statusBadge: string;
+    timeBadge: string;
+  }
+> = {
+  Confirmado: {
+    calendarPill: "bg-success/10 text-success",
+    sideCard: "border-success/20 bg-success/5",
+    sideAccent: "border-l-[var(--success)]",
+    statusBadge: "bg-success/10 text-success",
+    timeBadge: "bg-success/10 text-success",
+  },
+  Pendente: {
+    calendarPill: "bg-warning/10 text-warning",
+    sideCard: "border-warning/20 bg-warning/5",
+    sideAccent: "border-l-[var(--warning)]",
+    statusBadge: "bg-warning/10 text-warning",
+    timeBadge: "bg-warning/10 text-warning",
+  },
+  Cancelado: {
+    calendarPill: "bg-danger/10 text-danger",
+    sideCard: "border-danger/20 bg-danger/5",
+    sideAccent: "border-l-[var(--danger)]",
+    statusBadge: "bg-danger/10 text-danger",
+    timeBadge: "bg-danger/10 text-danger",
+  },
+  Concluído: {
+    calendarPill: "bg-slate-200 text-slate-700",
+    sideCard: "border-slate-300 bg-slate-100",
+    sideAccent: "border-l-slate-500",
+    statusBadge: "bg-slate-200 text-slate-700",
+    timeBadge: "bg-slate-200 text-slate-700",
+  },
+};
 
-  return `${hours}:${minutes}`;
-});
+const appointmentStatuses: AppointmentStatus[] = [
+  "Pendente",
+  "Confirmado",
+  "Concluído",
+  "Cancelado",
+];
+
+function getStatusStyle(status: AppointmentStatus) {
+  return statusStyles[status];
+}
 
 function timeToMinutes(time: string) {
   const [hours, minutes] = time.split(":").map(Number);
   return hours * 60 + minutes;
 }
+
+const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const AGENDA_STORAGE_KEY = "auto-estetica-agenda-appointments";
+const BUSINESS_START_TIME = "07:00";
+const BUSINESS_END_TIME = "19:00";
+const SLOT_INTERVAL_MINUTES = 30;
+const timeSlots = Array.from(
+  {
+    length:
+      (timeToMinutes(BUSINESS_END_TIME) - timeToMinutes(BUSINESS_START_TIME)) /
+      SLOT_INTERVAL_MINUTES,
+  },
+  (_, index) => {
+    const totalMinutes =
+      timeToMinutes(BUSINESS_START_TIME) + index * SLOT_INTERVAL_MINUTES;
+    const hours = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+    const minutes = String(totalMinutes % 60).padStart(2, "0");
+
+    return `${hours}:${minutes}`;
+  }
+);
 
 function isTimeBetween(time: string, startTime: string, endTime: string) {
   const current = timeToMinutes(time);
@@ -94,6 +163,10 @@ function dateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function isAppointmentPast(appointment: Appointment, now: Date) {
+  return new Date(`${appointment.date}T${appointment.endTime}:00`) <= now;
+}
+
 function formatLongDate(date: Date) {
   return new Intl.DateTimeFormat("pt-BR", {
     weekday: "long",
@@ -110,6 +183,10 @@ function formatMonthTitle(date: Date) {
   }).format(date);
 }
 
+function getServicePrice(service: AgendaService) {
+  return Number(service.price) || 0;
+}
+
 function buildCalendarDays(currentMonth: Date) {
   const firstDay = startOfMonth(currentMonth);
   const gridStart = new Date(firstDay);
@@ -122,77 +199,14 @@ function buildCalendarDays(currentMonth: Date) {
   });
 }
 
-function createInitialAppointments(today: Date): Appointment[] {
-  const secondDate = new Date(today);
-  secondDate.setDate(today.getDate() + 2);
-
-  const fourthDate = new Date(today);
-  fourthDate.setDate(today.getDate() + 4);
-
-  return [
-    {
-      id: "appointment-1",
-      date: dateKey(today),
-      startTime: "09:00",
-      endTime: "10:00",
-      clientId: "",
-      vehicleId: "",
-      serviceId: "",
-      client: "Cliente exemplo",
-      service: "Lavagem completa",
-      vehicle: "Toyota Corolla",
-      status: "Confirmado",
-    },
-    {
-      id: "appointment-2",
-      date: dateKey(today),
-      startTime: "14:30",
-      endTime: "16:00",
-      clientId: "",
-      vehicleId: "",
-      serviceId: "",
-      client: "Cliente exemplo 2",
-      service: "Polimento",
-      vehicle: "Honda Civic",
-      status: "Pendente",
-    },
-    {
-      id: "appointment-3",
-      date: dateKey(secondDate),
-      startTime: "10:00",
-      endTime: "11:30",
-      clientId: "",
-      vehicleId: "",
-      serviceId: "",
-      client: "Cliente exemplo 3",
-      service: "Higienização interna",
-      vehicle: "Jeep Compass",
-      status: "Confirmado",
-    },
-    {
-      id: "appointment-4",
-      date: dateKey(fourthDate),
-      startTime: "16:00",
-      endTime: "18:00",
-      clientId: "",
-      vehicleId: "",
-      serviceId: "",
-      client: "Cliente exemplo 4",
-      service: "Cristalização",
-      vehicle: "Volkswagen Nivus",
-      status: "Pendente",
-    },
-  ];
-}
-
 export function AgendaCalendar() {
   const supabase = useMemo(() => createClient(), []);
   const today = useMemo(() => new Date(), []);
+  const [now, setNow] = useState(today);
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(today));
   const [selectedDate, setSelectedDate] = useState(today);
-  const [appointments, setAppointments] = useState(() =>
-    createInitialAppointments(today)
-  );
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [appointmentsLoaded, setAppointmentsLoaded] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<AgendaService[]>([]);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
@@ -200,6 +214,8 @@ export function AgendaCalendar() {
   const [loadingServices, setLoadingServices] = useState(true);
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [addingService, setAddingService] = useState(false);
+  const [openStatusMenuId, setOpenStatusMenuId] = useState<string | null>(null);
   const [editingAppointmentId, setEditingAppointmentId] = useState<
     string | null
   >(null);
@@ -209,7 +225,7 @@ export function AgendaCalendar() {
     endTime: "",
     clientId: "",
     vehicleId: "",
-    serviceId: "",
+    serviceIds: [],
   });
   const [error, setError] = useState<string | null>(null);
 
@@ -262,28 +278,122 @@ export function AgendaCalendar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      const storedAppointments = window.localStorage.getItem(AGENDA_STORAGE_KEY);
+
+      if (storedAppointments) {
+        try {
+          setAppointments(JSON.parse(storedAppointments) as Appointment[]);
+        } catch {
+          window.localStorage.removeItem(AGENDA_STORAGE_KEY);
+        }
+      }
+
+      setAppointmentsLoaded(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!appointmentsLoaded) return;
+
+    window.localStorage.setItem(
+      AGENDA_STORAGE_KEY,
+      JSON.stringify(appointments)
+    );
+  }, [appointments, appointmentsLoaded]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      const nextNow = new Date();
+      setNow(nextNow);
+      setAppointments((prev) => {
+        let changed = false;
+        const next = prev.map((appointment) => {
+          if (
+            appointment.status === "Confirmado" &&
+            isAppointmentPast(appointment, nextNow)
+          ) {
+            changed = true;
+            return { ...appointment, status: "Concluído" as const };
+          }
+
+          return appointment;
+        });
+
+        return changed ? next : prev;
+      });
+    }, 60_000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   const selectedKey = dateKey(selectedDate);
   const calendarDays = useMemo(
     () => buildCalendarDays(currentMonth),
     [currentMonth]
   );
+  const normalizedAppointments = useMemo(() => {
+    return appointments.map((appointment) =>
+      appointment.status === "Confirmado" && isAppointmentPast(appointment, now)
+        ? { ...appointment, status: "Concluído" as const }
+        : appointment
+    );
+  }, [appointments, now]);
   const appointmentsByDate = useMemo(() => {
-    return appointments.reduce<Record<string, Appointment[]>>(
+    return normalizedAppointments.reduce<Record<string, Appointment[]>>(
       (acc, appointment) => {
         acc[appointment.date] = [...(acc[appointment.date] ?? []), appointment];
         return acc;
       },
       {}
     );
-  }, [appointments]);
+  }, [normalizedAppointments]);
   const selectedAppointments = (appointmentsByDate[selectedKey] ?? []).sort(
     (a, b) => a.startTime.localeCompare(b.startTime)
   );
   const todayAppointments = appointmentsByDate[dateKey(today)] ?? [];
-  const nextAppointment = selectedAppointments[0];
+  const currentDateKey = dateKey(now);
+  const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(
+    now.getMinutes()
+  ).padStart(2, "0")}`;
+  const occupiedSlotsToday = new Set(
+    todayAppointments.flatMap((appointment) =>
+      timeSlots.filter(
+        (time) =>
+          timeToMinutes(time) >= timeToMinutes(appointment.startTime) &&
+          timeToMinutes(time) < timeToMinutes(appointment.endTime)
+      )
+    )
+  ).size;
+  const totalSlots = timeSlots.length;
+  const freeSlotsToday = Math.max(totalSlots - occupiedSlotsToday, 0);
+  const occupancyPercent = Math.min(
+    Math.round((occupiedSlotsToday / totalSlots) * 100),
+    100
+  );
+  const nextAppointment =
+    selectedAppointments
+      .filter(
+        (appointment) =>
+          (appointment.status === "Pendente" ||
+            appointment.status === "Confirmado") &&
+          (selectedKey !== currentDateKey ||
+            timeToMinutes(appointment.endTime) > timeToMinutes(currentTime))
+      )
+      .sort((a, b) => a.startTime.localeCompare(b.startTime))[0] ?? null;
   const selectedClient = clients.find((client) => client.id === form.clientId);
   const selectedClientVehicles = selectedClient?.vehicles ?? [];
-  const selectedService = services.find((service) => service.id === form.serviceId);
+  const selectedServices = services.filter((service) =>
+    form.serviceIds.includes(service.id)
+  );
+  const availableServices = services.filter(
+    (service) => !form.serviceIds.includes(service.id)
+  );
+  const servicesTotal = selectedServices.reduce(
+    (total, service) => total + getServicePrice(service),
+    0
+  );
   const busyTimesForFormDate = useMemo(() => {
     const appointmentsForDate = appointments.filter(
       (appointment) =>
@@ -308,9 +418,10 @@ export function AgendaCalendar() {
       endTime: "",
       clientId: "",
       vehicleId: "",
-      serviceId: "",
+      serviceIds: [],
     });
     setError(null);
+    setAddingService(false);
   }
 
   function openCreateForm() {
@@ -320,17 +431,37 @@ export function AgendaCalendar() {
   }
 
   function openEditForm(appointment: Appointment) {
+    setOpenStatusMenuId(null);
     setForm({
       date: appointment.date,
       startTime: appointment.startTime,
       endTime: appointment.endTime,
       clientId: appointment.clientId,
       vehicleId: appointment.vehicleId,
-      serviceId: appointment.serviceId,
+      serviceIds: appointment.serviceIds,
     });
     setEditingAppointmentId(appointment.id);
     setError(null);
     setCreating(true);
+    setAddingService(false);
+  }
+
+  function addServiceToForm(serviceId: string) {
+    if (!serviceId) return;
+
+    setForm((prev) =>
+      prev.serviceIds.includes(serviceId)
+        ? prev
+        : { ...prev, serviceIds: [...prev.serviceIds, serviceId] }
+    );
+    setAddingService(false);
+  }
+
+  function removeServiceFromForm(serviceId: string) {
+    setForm((prev) => ({
+      ...prev,
+      serviceIds: prev.serviceIds.filter((id) => id !== serviceId),
+    }));
   }
 
   function selectTimeSlot(time: string) {
@@ -369,7 +500,7 @@ export function AgendaCalendar() {
       !form.endTime ||
       !form.clientId ||
       !form.vehicleId ||
-      !form.serviceId
+      form.serviceIds.length === 0
     ) {
       setError("Informe data, começo, final, cliente, veículo e serviço.");
       return;
@@ -404,12 +535,13 @@ export function AgendaCalendar() {
       (vehicle) => vehicle.id === form.vehicleId
     );
 
-    if (!appointmentClient || !appointmentVehicle || !selectedService) {
+    if (!appointmentClient || !appointmentVehicle || selectedServices.length === 0) {
       setError("Selecione cliente, veículo e serviço válidos.");
       return;
     }
 
     const vehicleLabel = `${appointmentVehicle.brand} ${appointmentVehicle.model} - ${appointmentVehicle.plate}`;
+    const serviceLabel = selectedServices.map((service) => service.name).join(", ");
 
     if (editingAppointmentId) {
       setAppointments((prev) =>
@@ -422,9 +554,10 @@ export function AgendaCalendar() {
                 endTime: form.endTime,
                 clientId: appointmentClient.id,
                 vehicleId: appointmentVehicle.id,
-                serviceId: selectedService.id,
+                serviceIds: selectedServices.map((service) => service.id),
                 client: appointmentClient.name,
-                service: selectedService.name,
+                service: serviceLabel,
+                totalAmount: servicesTotal,
                 vehicle: vehicleLabel,
               }
             : appointment
@@ -440,9 +573,10 @@ export function AgendaCalendar() {
           endTime: form.endTime,
           clientId: appointmentClient.id,
           vehicleId: appointmentVehicle.id,
-          serviceId: selectedService.id,
+          serviceIds: selectedServices.map((service) => service.id),
           client: appointmentClient.name,
-          service: selectedService.name,
+          service: serviceLabel,
+          totalAmount: servicesTotal,
           vehicle: vehicleLabel,
           status: "Pendente",
         },
@@ -454,6 +588,7 @@ export function AgendaCalendar() {
   }
 
   function handleDeleteAppointment(appointment: Appointment) {
+    setOpenStatusMenuId(null);
     const confirmed = window.confirm(
       `Deseja excluir o horário de ${appointment.client}?`
     );
@@ -470,6 +605,7 @@ export function AgendaCalendar() {
   }
 
   function handleClearSelectedDay() {
+    setOpenStatusMenuId(null);
     const confirmed = window.confirm(
       "Deseja excluir todos os horários deste dia?"
     );
@@ -480,6 +616,20 @@ export function AgendaCalendar() {
       prev.filter((appointment) => appointment.date !== selectedKey)
     );
     closeForm();
+  }
+
+  function handleChangeStatus(
+    appointmentId: string,
+    status: AppointmentStatus
+  ) {
+    setAppointments((prev) =>
+      prev.map((appointment) =>
+        appointment.id === appointmentId
+          ? { ...appointment, status }
+          : appointment
+      )
+    );
+    setOpenStatusMenuId(null);
   }
 
   async function handleCreateClient(data: ClientFormData) {
@@ -531,11 +681,19 @@ export function AgendaCalendar() {
         <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-muted">
-                Agendamentos hoje
+              <p className="text-sm font-medium text-muted">Ocupação hoje</p>
+              <div className="mt-3 h-3 w-full max-w-xs overflow-hidden rounded-full bg-background">
+                <div
+                  className="h-full rounded-full bg-success transition-all duration-300"
+                  style={{ width: `${occupancyPercent}%` }}
+                />
+              </div>
+              <p className="mt-3 text-sm font-medium text-foreground">
+                {todayAppointments.length} agendamentos • {freeSlotsToday}{" "}
+                horários livres
               </p>
-              <p className="mt-2 text-3xl font-bold text-foreground">
-                {todayAppointments.length}
+              <p className="mt-1 text-xs text-muted">
+                {occupiedSlotsToday} de {totalSlots} horários ocupados
               </p>
             </div>
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -547,15 +705,27 @@ export function AgendaCalendar() {
         <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-muted">
-                Próximo horário
-              </p>
-              <p className="mt-2 text-3xl font-bold text-foreground">
-                {nextAppointment
-                  ? `${nextAppointment.startTime} - ${nextAppointment.endTime}`
-                  : "--:--"}
-              </p>
+              <p className="text-sm font-medium text-muted">Próximo cliente</p>
+              {nextAppointment ? (
+                <>
+                  <p className="mt-2 text-2xl font-bold text-foreground">
+                    {nextAppointment.client}
+                  </p>
+                  <p className="mt-1 text-sm text-muted">
+                    {nextAppointment.service} • {nextAppointment.vehicle}
+                  </p>
+                </>
+              ) : (
+                <p className="mt-2 text-lg font-semibold text-foreground">
+                  Nenhum agendamento pendente
+                </p>
+              )}
             </div>
+            {nextAppointment && (
+              <span className="rounded-xl bg-warning/10 px-3 py-2 text-sm font-bold text-warning">
+                {nextAppointment.startTime}
+              </span>
+            )}
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-warning/10 text-warning">
               <Clock className="h-6 w-6" />
             </div>
@@ -647,15 +817,19 @@ export function AgendaCalendar() {
                   </div>
 
                   <div className="mt-2 space-y-1">
-                    {dayAppointments.slice(0, 2).map((appointment) => (
-                      <div
-                        key={appointment.id}
-                        className="truncate rounded-md bg-success/10 px-2 py-1 text-[11px] font-medium text-success"
-                      >
-                        {appointment.startTime} - {appointment.endTime}{" "}
-                        {appointment.client}
-                      </div>
-                    ))}
+                    {dayAppointments.slice(0, 2).map((appointment) => {
+                      const style = getStatusStyle(appointment.status);
+
+                      return (
+                        <div
+                          key={appointment.id}
+                          className={`truncate rounded-md px-2 py-1 text-[11px] font-medium ${style.calendarPill}`}
+                        >
+                          {appointment.startTime} - {appointment.endTime}{" "}
+                          {appointment.client}
+                        </div>
+                      );
+                    })}
                     {dayAppointments.length > 2 && (
                       <p className="px-1 text-[11px] text-muted">
                         +{dayAppointments.length - 2} horários
@@ -725,7 +899,7 @@ export function AgendaCalendar() {
                     setForm((prev) => ({ ...prev, date: event.target.value }))
                   }
                 />
-                <div className="space-y-1.5">
+                <div className="space-y-2.5">
                   <div className="flex items-center justify-between">
                     <label className="block text-sm font-semibold text-foreground">
                       Horário
@@ -736,7 +910,7 @@ export function AgendaCalendar() {
                       </span>
                     )}
                   </div>
-                  <div className="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto rounded-lg border border-border bg-card p-2 sm:grid-cols-4">
+                  <div className="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto rounded-2xl border border-slate-200 bg-card p-2.5 shadow-sm sm:grid-cols-4">
                     {timeSlots.map((time) => {
                       const isSelectedEndpoint =
                         form.startTime === time || form.endTime === time;
@@ -752,14 +926,14 @@ export function AgendaCalendar() {
                           key={time}
                           disabled={isBusy}
                           onClick={() => selectTimeSlot(time)}
-                          className={`rounded-lg px-2 py-2 text-sm font-semibold transition-colors ${
+                          className={`rounded-full px-2 py-2 text-sm font-semibold transition-all duration-200 ${
                             isSelectedEndpoint
-                              ? "bg-success text-white"
+                              ? "bg-success text-white shadow-sm"
                               : isInSelectedRange
                                 ? "bg-success/20 text-success"
                               : isBusy
                                 ? "cursor-not-allowed bg-muted/10 text-muted/50 line-through"
-                                : "bg-background text-foreground hover:bg-success/10 hover:text-success"
+                                : "bg-background text-foreground hover:-translate-y-0.5 hover:bg-success/10 hover:text-success hover:shadow-sm"
                           }`}
                         >
                           {time}
@@ -768,11 +942,11 @@ export function AgendaCalendar() {
                     })}
                   </div>
                   <p className="text-[11px] text-muted">
-                    Clique no começo e depois no final. Horários riscados já
-                    estão ocupados nesta data.
+                    Clique no começo e depois no final. Expediente das{" "}
+                    {BUSINESS_START_TIME} às {BUSINESS_END_TIME}.
                   </p>
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2.5">
                   <div className="flex items-center justify-between gap-3">
                     <label
                       htmlFor="agenda-client"
@@ -799,7 +973,7 @@ export function AgendaCalendar() {
                         vehicleId: "",
                       }))
                     }
-                    className="w-full rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm text-foreground transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 text-sm text-foreground shadow-sm transition-all duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="">
                       {loadingClients
@@ -818,7 +992,7 @@ export function AgendaCalendar() {
                     </p>
                   )}
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2.5">
                   <label
                     htmlFor="agenda-vehicle"
                     className="block text-sm font-semibold text-foreground"
@@ -828,14 +1002,16 @@ export function AgendaCalendar() {
                   <select
                     id="agenda-vehicle"
                     value={form.vehicleId}
-                    disabled={!form.clientId || selectedClientVehicles.length === 0}
+                    disabled={
+                      !form.clientId || selectedClientVehicles.length === 0
+                    }
                     onChange={(event) =>
                       setForm((prev) => ({
                         ...prev,
                         vehicleId: event.target.value,
                       }))
                     }
-                    className="w-full rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm text-foreground transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 text-sm text-foreground shadow-sm transition-all duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="">
                       {!form.clientId
@@ -856,49 +1032,99 @@ export function AgendaCalendar() {
                     </p>
                   )}
                 </div>
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="agenda-service"
-                    className="block text-sm font-semibold text-foreground"
-                  >
-                    Serviço
-                  </label>
-                  <select
-                    id="agenda-service"
-                    value={form.serviceId}
-                    disabled={loadingServices || services.length === 0}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        serviceId: event.target.value,
-                      }))
-                    }
-                    className="w-full rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm text-foreground transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="">
-                      {loadingServices
-                        ? "Carregando serviços..."
-                        : services.length === 0
-                          ? "Nenhum serviço cadastrado"
-                          : "Selecione um serviço"}
-                    </option>
-                    {services.map((service) => (
-                      <option key={service.id} value={service.id}>
-                        {service.name}
-                        {service.duration_minutes
-                          ? ` - ${service.duration_minutes} min`
-                          : ""}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="block text-sm font-semibold text-foreground">
+                      Serviços
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setAddingService(true)}
+                      disabled={
+                        loadingServices ||
+                        services.length === 0 ||
+                        availableServices.length === 0
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-3 py-1.5 text-xs font-semibold text-success transition-all duration-200 hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Adicionar serviço
+                    </button>
+                  </div>
+
+                  {selectedServices.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {selectedServices.map((service) => (
+                        <span
+                          key={service.id}
+                          className="inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1.5 text-xs font-semibold text-success shadow-sm"
+                        >
+                          {service.name}
+                          <button
+                            type="button"
+                            onClick={() => removeServiceFromForm(service.id)}
+                            className="rounded-full p-0.5 transition-colors hover:bg-success/20"
+                            aria-label={`Remover ${service.name}`}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-dashed border-border bg-card px-4 py-3 text-center text-xs text-muted">
+                      Nenhum serviço adicionado.
+                    </p>
+                  )}
+
+                  {addingService && (
+                    <select
+                      autoFocus
+                      defaultValue=""
+                      disabled={loadingServices || availableServices.length === 0}
+                      onChange={(event) => addServiceToForm(event.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 text-sm text-foreground shadow-sm transition-all duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <option value="">
+                        {loadingServices
+                          ? "Carregando serviços..."
+                          : availableServices.length === 0
+                            ? "Todos os serviços já adicionados"
+                            : "Selecione um serviço"}
                       </option>
-                    ))}
-                  </select>
+                      {availableServices.map((service) => (
+                        <option key={service.id} value={service.id}>
+                          {service.name}
+                          {service.duration_minutes
+                            ? ` - ${service.duration_minutes} min`
+                            : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
                   {!loadingServices && services.length === 0 && (
                     <p className="text-xs text-muted">
                       Cadastre serviços na aba Serviços para usar na agenda.
                     </p>
                   )}
+
+                  <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+                    <span className="text-sm font-medium text-muted">
+                      Total dos serviços
+                    </span>
+                    <span className="text-base font-bold text-foreground">
+                      {formatCurrency(servicesTotal)}
+                    </span>
+                  </div>
                 </div>
                 {error && <p className="text-xs text-danger">{error}</p>}
-                <Button type="submit" variant="success" className="w-full">
+                <Button
+                  type="submit"
+                  variant="success"
+                  className="w-full bg-gradient-to-r from-success to-emerald-500 text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:from-success hover:to-emerald-600 hover:shadow-md"
+                >
+                  <Check className="h-4 w-4" />
                   {editingAppointmentId ? "Salvar alterações" : "Salvar na agenda"}
                 </Button>
               </form>
@@ -915,51 +1141,101 @@ export function AgendaCalendar() {
                   </p>
                 </div>
               ) : (
-                selectedAppointments.map((appointment) => (
-                  <div
-                    key={appointment.id}
-                    className="rounded-xl border border-border bg-background p-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">
-                          {appointment.client}
-                        </p>
-                        <p className="mt-1 text-xs text-muted">
-                          {appointment.service} • {appointment.vehicle}
-                        </p>
-                      </div>
-                      <span className="rounded-lg bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
-                        {appointment.startTime} - {appointment.endTime}
-                      </span>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between gap-3">
-                      <span className="inline-flex rounded-full bg-success/10 px-3 py-1 text-xs font-medium text-success">
-                        {appointment.status}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openEditForm(appointment)}
-                          className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
-                          title="Editar agendamento"
-                          aria-label="Editar agendamento"
+                selectedAppointments.map((appointment) => {
+                  const style = getStatusStyle(appointment.status);
+
+                  return (
+                    <div
+                      key={appointment.id}
+                      className={`rounded-xl border border-l-4 p-4 shadow-sm transition-shadow hover:shadow-md ${style.sideCard} ${style.sideAccent}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">
+                            {appointment.client}
+                          </p>
+                          <p className="mt-1 text-xs text-muted">
+                            {appointment.service} • {appointment.vehicle}
+                          </p>
+                          {appointment.totalAmount > 0 && (
+                            <p className="mt-2 text-xs font-semibold text-foreground">
+                              Total: {formatCurrency(appointment.totalAmount)}
+                            </p>
+                          )}
+                        </div>
+                        <span
+                          className={`rounded-lg px-2 py-1 text-xs font-semibold ${style.timeBadge}`}
                         >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteAppointment(appointment)}
-                          className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
-                          title="Excluir agendamento"
-                          aria-label="Excluir agendamento"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                          {appointment.startTime} - {appointment.endTime}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex items-center justify-between gap-3">
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOpenStatusMenuId((current) =>
+                                current === appointment.id
+                                  ? null
+                                  : appointment.id
+                              )
+                            }
+                            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-shadow hover:shadow-sm ${style.statusBadge}`}
+                            aria-haspopup="menu"
+                            aria-expanded={openStatusMenuId === appointment.id}
+                          >
+                            {appointment.status}
+                            <ChevronDown className="h-3 w-3" />
+                          </button>
+
+                          {openStatusMenuId === appointment.id && (
+                            <div className="absolute bottom-full left-0 z-30 mb-2 w-40 rounded-xl border border-border bg-card p-2 shadow-lg">
+                              {appointmentStatuses.map((status) => {
+                                const optionStyle = getStatusStyle(status);
+
+                                return (
+                                  <button
+                                    key={status}
+                                    type="button"
+                                    onClick={() =>
+                                      handleChangeStatus(appointment.id, status)
+                                    }
+                                    className={`mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-semibold transition-colors last:mb-0 hover:bg-background ${optionStyle.statusBadge}`}
+                                  >
+                                    {status}
+                                    {appointment.status === status && (
+                                      <span className="text-[10px]">Atual</span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openEditForm(appointment)}
+                            className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
+                            title="Editar agendamento"
+                            aria-label="Editar agendamento"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteAppointment(appointment)}
+                            className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
+                            title="Excluir agendamento"
+                            aria-label="Excluir agendamento"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
