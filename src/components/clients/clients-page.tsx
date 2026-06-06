@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Plus,
   Pencil,
@@ -10,6 +11,7 @@ import {
   Users,
   Car,
   ClipboardList,
+  X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Header } from "@/components/layout/header";
@@ -17,7 +19,8 @@ import { Button } from "@/components/ui/button";
 import { ClientFormModal } from "@/components/clients/client-form-modal";
 import { formatDate, formatPhone, getWhatsAppUrl } from "@/lib/utils/format";
 import { syncVehicles } from "@/lib/clients/sync-vehicles";
-import { type Client, type ClientFormData } from "@/types/client";
+import { deleteVehiclePhotoByUrl } from "@/lib/supabase/vehicle-photos";
+import { type Client, type ClientFormData, type Vehicle } from "@/types/client";
 
 function WhatsAppIcon({ className }: { className?: string }) {
   return (
@@ -35,6 +38,181 @@ function WhatsAppIcon({ className }: { className?: string }) {
 const clientInfoCardClass =
   "inline-flex h-11 min-w-[12rem] items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium shadow-sm";
 
+function ClientVehiclesPanel({
+  client,
+  closing,
+  deletingVehicleId,
+  onAddVehicle,
+  onClose,
+  onDeleteVehicle,
+  onEditVehicle,
+}: {
+  client: Client;
+  closing: boolean;
+  deletingVehicleId: string | null;
+  onAddVehicle: (client: Client) => void;
+  onClose: () => void;
+  onDeleteVehicle: (client: Client, vehicle: Vehicle) => void;
+  onEditVehicle: (client: Client, vehicle: Vehicle) => void;
+}) {
+  const vehicles = client.vehicles ?? [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div
+        className={`vehicle-panel-overlay absolute inset-0 bg-foreground/40 backdrop-blur-sm ${
+          closing ? "vehicle-panel-overlay-exit" : "vehicle-panel-overlay-enter"
+        }`}
+        onClick={onClose}
+      />
+      <aside
+        className={`vehicle-panel-drawer relative z-10 flex h-full w-full max-w-xl flex-col overflow-hidden border-l border-border bg-card shadow-2xl ${
+          closing ? "vehicle-panel-drawer-exit" : "vehicle-panel-drawer-enter"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+              Veículos cadastrados
+            </p>
+            <h2 className="mt-1 text-xl font-bold text-foreground">
+              {client.name}
+            </h2>
+            <p className="mt-1 text-sm text-muted">
+              {vehicles.length} veículo{vehicles.length !== 1 ? "s" : ""}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-2 text-muted transition-colors hover:bg-background hover:text-foreground"
+            aria-label="Fechar veículos"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="border-b border-border px-6 py-4">
+          <button
+            type="button"
+            onClick={() => onAddVehicle(client)}
+            className="flex w-full items-center justify-between rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-left transition-all hover:-translate-y-0.5 hover:border-success/60 hover:bg-success/15 hover:shadow-md"
+          >
+            <span>
+              <span className="block text-sm font-semibold text-success">
+                Adicionar veículo
+              </span>
+              <span className="mt-0.5 block text-xs text-muted">
+                Cadastrar outro carro para este cliente
+              </span>
+            </span>
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-success text-white">
+              <Plus className="h-4 w-4" />
+            </span>
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto p-6">
+          {vehicles.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border bg-background p-8 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Car className="h-6 w-6" />
+              </div>
+              <p className="text-sm font-semibold text-foreground">
+                Nenhum veículo cadastrado
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Edite o cliente para adicionar carros.
+              </p>
+            </div>
+          ) : (
+            vehicles.map((vehicle) => {
+              const photos = [
+                vehicle.photo_url_1,
+                vehicle.photo_url_2,
+              ].filter(Boolean) as string[];
+
+              return (
+                <article
+                  key={vehicle.id}
+                  className="rounded-2xl border border-border bg-background p-4 shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-lg font-bold text-foreground">
+                        {vehicle.brand} {vehicle.model}
+                      </p>
+                      <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-primary">
+                        {vehicle.plate}
+                      </p>
+                    </div>
+                    <div className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+                      {vehicle.year ?? "Ano não informado"}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onEditVehicle(client, vehicle)}
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-success/10 px-3 py-2 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white"
+                    >
+                      <Pencil className="h-4 w-4" />
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingVehicleId === vehicle.id}
+                      onClick={() => onDeleteVehicle(client, vehicle)}
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-danger/10 px-3 py-2 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {deletingVehicleId === vehicle.id ? "Excluindo..." : "Excluir"}
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    {[0, 1].map((index) => {
+                      const photo = photos[index];
+
+                      return photo ? (
+                        <div
+                          key={photo}
+                          className="relative h-36 overflow-hidden rounded-xl border border-border bg-card"
+                        >
+                          <Image
+                            src={photo}
+                            alt={`Foto ${index + 1} de ${vehicle.brand} ${vehicle.model}`}
+                            fill
+                            sizes="(max-width: 768px) 50vw, 240px"
+                            className="object-cover"
+                          />
+                        </div>
+                      ) : (
+                        <div
+                          key={`empty-photo-${index}`}
+                          className="flex h-36 items-center justify-center rounded-xl border border-dashed border-border bg-card text-muted"
+                        >
+                          <div className="text-center">
+                            <Car className="mx-auto h-6 w-6" />
+                            <p className="mt-2 text-xs font-medium">
+                              Sem foto
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 export function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
@@ -42,7 +220,11 @@ export function ClientsPage() {
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [startWithNewVehicle, setStartWithNewVehicle] = useState(false);
+  const [vehiclesClient, setVehiclesClient] = useState<Client | null>(null);
+  const [vehiclesPanelClosing, setVehiclesPanelClosing] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingVehicleId, setDeletingVehicleId] = useState<string | null>(null);
 
   const supabase = useMemo(() => createClient(), []);
 
@@ -79,7 +261,7 @@ export function ClientsPage() {
   }, [supabase]);
 
   useEffect(() => {
-    loadClients();
+    void Promise.resolve().then(loadClients);
   }, [loadClients]);
 
   const filteredClients = clients.filter((client) => {
@@ -99,17 +281,50 @@ export function ClientsPage() {
 
   function openCreateModal() {
     setEditingClient(null);
+    setStartWithNewVehicle(false);
     setModalOpen(true);
   }
 
   function openEditModal(client: Client) {
+    setVehiclesClient(null);
     setEditingClient(client);
+    setStartWithNewVehicle(false);
     setModalOpen(true);
   }
 
   function closeModal() {
     setModalOpen(false);
     setEditingClient(null);
+    setStartWithNewVehicle(false);
+  }
+
+  function openVehiclesPanel(client: Client) {
+    setVehiclesPanelClosing(false);
+    setVehiclesClient(client);
+  }
+
+  function closeVehiclesPanel() {
+    setVehiclesPanelClosing(true);
+    window.setTimeout(() => {
+      setVehiclesClient(null);
+      setVehiclesPanelClosing(false);
+    }, 220);
+  }
+
+  function openAddVehicleModal(client: Client) {
+    setVehiclesClient(null);
+    setVehiclesPanelClosing(false);
+    setEditingClient(client);
+    setStartWithNewVehicle(true);
+    setModalOpen(true);
+  }
+
+  function openEditVehicleModal(client: Client) {
+    setVehiclesClient(null);
+    setVehiclesPanelClosing(false);
+    setEditingClient(client);
+    setStartWithNewVehicle(false);
+    setModalOpen(true);
   }
 
   async function handleSave(data: ClientFormData) {
@@ -169,6 +384,51 @@ export function ClientsPage() {
       await loadClients();
     }
     setDeletingId(null);
+  }
+
+  async function handleDeleteVehicle(client: Client, vehicle: Vehicle) {
+    const confirmed = window.confirm(
+      `Deseja excluir o veículo ${vehicle.brand} ${vehicle.model} - ${vehicle.plate}?`
+    );
+    if (!confirmed) return;
+
+    setDeletingVehicleId(vehicle.id);
+
+    try {
+      await Promise.all([
+        deleteVehiclePhotoByUrl(supabase, vehicle.photo_url_1),
+        deleteVehiclePhotoByUrl(supabase, vehicle.photo_url_2),
+      ]);
+
+      const { error } = await supabase
+        .from("vehicles")
+        .delete()
+        .eq("id", vehicle.id);
+
+      if (error) throw new Error(error.message);
+
+      const removeVehicleFromClient = (item: Client) =>
+        item.id === client.id
+          ? {
+              ...item,
+              vehicles: item.vehicles?.filter((v) => v.id !== vehicle.id) ?? [],
+            }
+          : item;
+
+      setClients((prev) => prev.map(removeVehicleFromClient));
+      setVehiclesClient((prev) =>
+        prev ? removeVehicleFromClient(prev) : prev
+      );
+      await loadClients();
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Erro ao excluir veículo."
+      );
+    } finally {
+      setDeletingVehicleId(null);
+    }
   }
 
   return (
@@ -265,12 +525,15 @@ export function ClientsPage() {
                       <WhatsAppIcon className="h-5 w-5" />
                       <span>{formatPhone(client.phone)}</span>
                     </a>
-                    <span
-                      className={`${clientInfoCardClass} text-primary`}
+                    <button
+                      type="button"
+                      onClick={() => openVehiclesPanel(client)}
+                      className={`${clientInfoCardClass} text-primary transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-primary hover:text-white hover:shadow-md`}
+                      title="Ver veículos cadastrados"
                     >
                       <Car className="h-4 w-4" />
                       {vehicleCount} veículo{vehicleCount !== 1 ? "s" : ""}
-                    </span>
+                    </button>
                   </div>
                 </div>
 
@@ -305,9 +568,74 @@ export function ClientsPage() {
       <ClientFormModal
         open={modalOpen}
         client={editingClient}
+        startWithNewVehicle={startWithNewVehicle}
         onClose={closeModal}
         onSave={handleSave}
       />
+
+      {vehiclesClient && (
+        <ClientVehiclesPanel
+          client={vehiclesClient}
+          closing={vehiclesPanelClosing}
+          deletingVehicleId={deletingVehicleId}
+          onAddVehicle={openAddVehicleModal}
+          onClose={closeVehiclesPanel}
+          onDeleteVehicle={handleDeleteVehicle}
+          onEditVehicle={openEditVehicleModal}
+        />
+      )}
+
+      <style>{`
+        @media (prefers-reduced-motion: no-preference) {
+          .vehicle-panel-overlay-enter {
+            animation: vehicle-panel-fade-in 220ms ease-out both;
+          }
+
+          .vehicle-panel-overlay-exit {
+            animation: vehicle-panel-fade-out 180ms ease-in both;
+          }
+
+          .vehicle-panel-drawer-enter {
+            animation: vehicle-panel-slide-in 240ms ease-out both;
+          }
+
+          .vehicle-panel-drawer-exit {
+            animation: vehicle-panel-slide-out 180ms ease-in both;
+          }
+        }
+
+        @keyframes vehicle-panel-fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes vehicle-panel-fade-out {
+          from { opacity: 1; }
+          to { opacity: 0; }
+        }
+
+        @keyframes vehicle-panel-slide-in {
+          from {
+            opacity: 0;
+            transform: translateX(28px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+
+        @keyframes vehicle-panel-slide-out {
+          from {
+            opacity: 1;
+            transform: translateX(0);
+          }
+          to {
+            opacity: 0;
+            transform: translateX(28px);
+          }
+        }
+      `}</style>
     </>
   );
 }

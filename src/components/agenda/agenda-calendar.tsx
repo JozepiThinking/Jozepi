@@ -44,6 +44,7 @@ interface AppointmentForm {
   clientId: string;
   vehicleId: string;
   serviceIds: string[];
+  totalAmount: string;
 }
 
 interface AgendaService {
@@ -52,6 +53,12 @@ interface AgendaService {
   price: number | string;
   duration_minutes: number | null;
   active: boolean;
+}
+
+interface SelectOption {
+  value: string;
+  label: string;
+  description?: string;
 }
 
 const statusStyles: Record<
@@ -105,6 +112,7 @@ const appointmentStatuses: AppointmentStatus[] = [
   "Concluído",
   "Cancelado",
 ];
+type AgendaSelectId = "client" | "vehicle" | "service";
 
 function getStatusStyle(status: AppointmentStatus) {
   return statusStyles[status];
@@ -187,20 +195,144 @@ function formatMonthTitle(date: Date) {
   }).format(date);
 }
 
+function getShortClientName(name: string) {
+  const [firstName, secondName] = name.trim().split(/\s+/);
+  return [firstName, secondName].filter(Boolean).join(" ");
+}
+
 function getServicePrice(service: AgendaService) {
   return Number(service.price) || 0;
 }
 
+function formatServiceDuration(minutes: number | null) {
+  if (!minutes) return null;
+
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+
+  return remainingMinutes > 0
+    ? `${hours}h${String(remainingMinutes).padStart(2, "0")}`
+    : `${hours}h`;
+}
+
 function buildCalendarDays(currentMonth: Date) {
   const firstDay = startOfMonth(currentMonth);
-  const gridStart = new Date(firstDay);
-  gridStart.setDate(firstDay.getDate() - firstDay.getDay());
+  const lastDay = new Date(
+    currentMonth.getFullYear(),
+    currentMonth.getMonth() + 1,
+    0
+  );
 
-  return Array.from({ length: 42 }, (_, index) => {
-    const day = new Date(gridStart);
-    day.setDate(gridStart.getDate() + index);
+  return Array.from({ length: lastDay.getDate() }, (_, index) => {
+    const day = new Date(firstDay);
+    day.setDate(index + 1);
     return day;
   });
+}
+
+function AgendaDropdown({
+  id,
+  value,
+  placeholder,
+  emptyMessage,
+  options,
+  disabled = false,
+  open,
+  onToggle,
+  onSelect,
+  onClear,
+  clearLabel = "Limpar seleção",
+}: {
+  id: string;
+  value: string;
+  placeholder: string;
+  emptyMessage: string;
+  options: SelectOption[];
+  disabled?: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onSelect: (value: string) => void;
+  onClear?: () => void;
+  clearLabel?: string;
+}) {
+  const selectedOption = options.find((option) => option.value === value);
+
+  return (
+    <div className="relative">
+      <button
+        id={id}
+        type="button"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 text-left text-sm text-foreground shadow-sm transition-all duration-200 hover:border-success/40 hover:bg-white focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <span className={selectedOption ? "font-medium" : "text-muted"}>
+          {selectedOption?.label ?? placeholder}
+        </span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-muted transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+
+      {open && !disabled && (
+        <div className="absolute left-0 right-0 top-full z-40 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-border bg-card p-2 shadow-xl">
+          {selectedOption && onClear && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="mb-2 flex w-full items-center justify-between rounded-xl border border-danger/10 bg-danger/5 px-3 py-2.5 text-left text-sm font-semibold text-danger transition-colors hover:bg-danger hover:text-white"
+            >
+              {clearLabel}
+              <X className="h-4 w-4" />
+            </button>
+          )}
+          {options.length > 0 ? (
+            <div role="listbox" aria-labelledby={id} className="space-y-1">
+              {options.map((option) => {
+                const selected = option.value === value;
+
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    onClick={() => onSelect(option.value)}
+                    className={`w-full rounded-xl px-3 py-2.5 text-left transition-colors ${
+                      selected
+                        ? "bg-success/10 text-success"
+                        : "text-foreground hover:bg-background"
+                    }`}
+                  >
+                    <span className="block text-sm font-semibold">
+                      {option.label}
+                    </span>
+                    {option.description && (
+                      <span className="mt-0.5 block text-xs text-muted">
+                        {option.description}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="rounded-xl bg-background px-3 py-2.5 text-sm text-muted">
+              {emptyMessage}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function AgendaCalendar() {
@@ -218,8 +350,17 @@ export function AgendaCalendar() {
   const [loadingServices, setLoadingServices] = useState(true);
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [formClosing, setFormClosing] = useState(false);
   const [addingService, setAddingService] = useState(false);
+  const [editingTotalAmount, setEditingTotalAmount] = useState(false);
+  const [openSelectId, setOpenSelectId] = useState<AgendaSelectId | null>(null);
   const [openStatusMenuId, setOpenStatusMenuId] = useState<string | null>(null);
+  const [closingStatusMenuId, setClosingStatusMenuId] = useState<string | null>(
+    null
+  );
+  const [focusedAppointmentId, setFocusedAppointmentId] = useState<string | null>(
+    null
+  );
   const [editingAppointmentId, setEditingAppointmentId] = useState<
     string | null
   >(null);
@@ -230,6 +371,7 @@ export function AgendaCalendar() {
     clientId: "",
     vehicleId: "",
     serviceIds: [],
+    totalAmount: "",
   });
   const [error, setError] = useState<string | null>(null);
 
@@ -356,22 +498,13 @@ export function AgendaCalendar() {
   const selectedAppointments = (appointmentsByDate[selectedKey] ?? []).sort(
     (a, b) => a.startTime.localeCompare(b.startTime)
   );
-  const todayAppointments = appointmentsByDate[dateKey(today)] ?? [];
   const currentDateKey = dateKey(now);
   const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(
     now.getMinutes()
   ).padStart(2, "0")}`;
-  const occupiedSlotsToday = new Set(
-    todayAppointments.flatMap((appointment) =>
-      timeSlots.filter(
-        (time) =>
-          timeToMinutes(time) >= timeToMinutes(appointment.startTime) &&
-          timeToMinutes(time) < timeToMinutes(appointment.endTime)
-      )
-    )
-  ).size;
-  const totalSlots = timeSlots.length;
-  const timelineBlocks = [...todayAppointments]
+  const selectedDateIsToday = selectedKey === currentDateKey;
+  const occupancyTitle = selectedDateIsToday ? "Ocupação hoje" : "Ocupação do dia";
+  const timelineBlocks = [...selectedAppointments]
     .sort((a, b) => a.startTime.localeCompare(b.startTime))
     .map((appointment, index, dayAppointments) => {
       const start =
@@ -408,12 +541,15 @@ export function AgendaCalendar() {
       };
     });
   const timelineMarkers = ["07h", "09h", "11h", "13h", "15h", "17h", "19h"];
-  const todayStatusCounts = appointmentStatuses.map((status) => ({
+  const selectedStatusCounts = appointmentStatuses.map((status) => ({
     status,
-    count: todayAppointments.filter((appointment) => appointment.status === status)
+    count: selectedAppointments.filter((appointment) => appointment.status === status)
       .length,
   }));
-  const nextAppointment =
+  const focusedAppointment =
+    selectedAppointments.find((appointment) => appointment.id === focusedAppointmentId) ??
+    null;
+  const automaticNextAppointment =
     selectedAppointments
       .filter(
         (appointment) =>
@@ -423,6 +559,7 @@ export function AgendaCalendar() {
             timeToMinutes(appointment.endTime) > timeToMinutes(currentTime))
       )
       .sort((a, b) => a.startTime.localeCompare(b.startTime))[0] ?? null;
+  const nextAppointment = focusedAppointment ?? automaticNextAppointment;
   const nextAppointmentStyle = nextAppointment
     ? getStatusStyle(nextAppointment.status)
     : null;
@@ -432,16 +569,45 @@ export function AgendaCalendar() {
     .filter(Boolean) ?? [];
   const selectedClient = clients.find((client) => client.id === form.clientId);
   const selectedClientVehicles = selectedClient?.vehicles ?? [];
+  const clientOptions = clients.map((client) => ({
+    value: client.id,
+    label: client.name,
+    description: client.phone || "Cliente cadastrado",
+  }));
+  const vehicleOptions = selectedClientVehicles.map((vehicle) => ({
+    value: vehicle.id,
+    label: `${vehicle.brand} ${vehicle.model}`,
+    description: `${vehicle.plate}${vehicle.year ? ` • ${vehicle.year}` : ""}`,
+  }));
   const selectedServices = services.filter((service) =>
     form.serviceIds.includes(service.id)
   );
   const availableServices = services.filter(
     (service) => !form.serviceIds.includes(service.id)
   );
+  const availableServiceOptions = availableServices.map((service) => {
+    const duration = formatServiceDuration(service.duration_minutes);
+    const details = [
+      duration,
+      getServicePrice(service) > 0 ? formatCurrency(getServicePrice(service)) : null,
+    ].filter(Boolean);
+
+    return {
+      value: service.id,
+      label: service.name,
+      description: details.length > 0 ? details.join(" • ") : "Serviço cadastrado",
+    };
+  });
   const servicesTotal = selectedServices.reduce(
     (total, service) => total + getServicePrice(service),
     0
   );
+  const customTotalAmount = Number(form.totalAmount.replace(",", "."));
+  const hasCustomTotalAmount = form.totalAmount.trim() !== "";
+  const displayTotalAmount =
+    hasCustomTotalAmount && !Number.isNaN(customTotalAmount)
+      ? customTotalAmount
+      : servicesTotal;
   const busyTimesForFormDate = useMemo(() => {
     const appointmentsForDate = appointments.filter(
       (appointment) =>
@@ -467,14 +633,18 @@ export function AgendaCalendar() {
       clientId: "",
       vehicleId: "",
       serviceIds: [],
+      totalAmount: "",
     });
     setError(null);
     setAddingService(false);
+    setEditingTotalAmount(false);
+    setOpenSelectId(null);
   }
 
   function openCreateForm() {
     resetForm();
     setEditingAppointmentId(null);
+    setFormClosing(false);
     setCreating(true);
   }
 
@@ -487,11 +657,16 @@ export function AgendaCalendar() {
       clientId: appointment.clientId,
       vehicleId: appointment.vehicleId,
       serviceIds: appointment.serviceIds,
+      totalAmount:
+        appointment.totalAmount > 0 ? String(appointment.totalAmount) : "",
     });
     setEditingAppointmentId(appointment.id);
     setError(null);
     setCreating(true);
     setAddingService(false);
+    setEditingTotalAmount(false);
+    setFormClosing(false);
+    setOpenSelectId(null);
   }
 
   function addServiceToForm(serviceId: string) {
@@ -503,6 +678,7 @@ export function AgendaCalendar() {
         : { ...prev, serviceIds: [...prev.serviceIds, serviceId] }
     );
     setAddingService(false);
+    setOpenSelectId(null);
   }
 
   function removeServiceFromForm(serviceId: string) {
@@ -512,29 +688,55 @@ export function AgendaCalendar() {
     }));
   }
 
+  function hasAppointmentConflict(date: string, startTime: string, endTime: string) {
+    return appointments.some(
+      (appointment) =>
+        appointment.date === date &&
+        appointment.id !== editingAppointmentId &&
+        rangesOverlap(
+          startTime,
+          endTime,
+          appointment.startTime,
+          appointment.endTime
+        )
+    );
+  }
+
   function selectTimeSlot(time: string) {
     setError(null);
-    setForm((prev) => {
-      if (
-        !prev.startTime ||
-        prev.endTime ||
-        timeToMinutes(time) <= timeToMinutes(prev.startTime)
-      ) {
-        return { ...prev, startTime: time, endTime: "" };
-      }
 
-      return { ...prev, endTime: time };
-    });
+    if (
+      !form.startTime ||
+      form.endTime ||
+      timeToMinutes(time) <= timeToMinutes(form.startTime)
+    ) {
+      setForm((prev) => ({ ...prev, startTime: time, endTime: "" }));
+      return;
+    }
+
+    if (hasAppointmentConflict(form.date, form.startTime, time)) {
+      setError("Esse intervalo cruza com outro agendamento.");
+      return;
+    }
+
+    setForm((prev) => ({ ...prev, endTime: time }));
   }
 
   function closeForm() {
-    resetForm();
-    setEditingAppointmentId(null);
-    setCreating(false);
+    setOpenSelectId(null);
+    setFormClosing(true);
+
+    window.setTimeout(() => {
+      resetForm();
+      setEditingAppointmentId(null);
+      setCreating(false);
+      setFormClosing(false);
+    }, 220);
   }
 
   function syncSelectedDate(date: string) {
     const nextDate = new Date(`${date}T00:00:00`);
+    setFocusedAppointmentId(null);
     setSelectedDate(nextDate);
     setCurrentMonth(startOfMonth(nextDate));
   }
@@ -556,6 +758,14 @@ export function AgendaCalendar() {
 
     if (timeToMinutes(form.endTime) <= timeToMinutes(form.startTime)) {
       setError("O horário final precisa ser depois do começo.");
+      return;
+    }
+
+    if (
+      hasCustomTotalAmount &&
+      (Number.isNaN(customTotalAmount) || customTotalAmount < 0)
+    ) {
+      setError("Informe um valor válido para o total.");
       return;
     }
 
@@ -590,6 +800,9 @@ export function AgendaCalendar() {
 
     const vehicleLabel = `${appointmentVehicle.brand} ${appointmentVehicle.model} - ${appointmentVehicle.plate}`;
     const serviceLabel = selectedServices.map((service) => service.name).join(", ");
+    const appointmentTotal = hasCustomTotalAmount
+      ? customTotalAmount
+      : servicesTotal;
 
     if (editingAppointmentId) {
       setAppointments((prev) =>
@@ -605,7 +818,7 @@ export function AgendaCalendar() {
                 serviceIds: selectedServices.map((service) => service.id),
                 client: appointmentClient.name,
                 service: serviceLabel,
-                totalAmount: servicesTotal,
+                totalAmount: appointmentTotal,
                 vehicle: vehicleLabel,
               }
             : appointment
@@ -624,7 +837,7 @@ export function AgendaCalendar() {
           serviceIds: selectedServices.map((service) => service.id),
           client: appointmentClient.name,
           service: serviceLabel,
-          totalAmount: servicesTotal,
+          totalAmount: appointmentTotal,
           vehicle: vehicleLabel,
           status: "Pendente",
         },
@@ -677,7 +890,28 @@ export function AgendaCalendar() {
           : appointment
       )
     );
+    closeStatusMenu(appointmentId);
+  }
+
+  function toggleStatusMenu(appointmentId: string) {
+    if (openStatusMenuId === appointmentId) {
+      closeStatusMenu(appointmentId);
+      return;
+    }
+
+    setClosingStatusMenuId(null);
+    setOpenStatusMenuId(appointmentId);
+  }
+
+  function closeStatusMenu(appointmentId: string) {
     setOpenStatusMenuId(null);
+    setClosingStatusMenuId(appointmentId);
+
+    window.setTimeout(() => {
+      setClosingStatusMenuId((current) =>
+        current === appointmentId ? null : current
+      );
+    }, 180);
   }
 
   async function handleCreateClient(data: ClientFormData) {
@@ -721,6 +955,7 @@ export function AgendaCalendar() {
       clientId: client.id,
       vehicleId: client.vehicles?.[0]?.id ?? "",
     }));
+    setOpenSelectId(null);
   }
 
   return (
@@ -729,19 +964,23 @@ export function AgendaCalendar() {
         <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
           <div className="flex items-start justify-between gap-5">
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-muted">Ocupação hoje</p>
-              <div className="relative mt-4 h-7 overflow-hidden rounded-full bg-slate-200 shadow-inner">
-                {timelineBlocks.map(({ appointment, roundedClass, start, width }) => {
+              <p className="text-sm font-medium text-muted">{occupancyTitle}</p>
+              <div className="timeline-track-loading relative mt-4 h-7 overflow-hidden rounded-full bg-slate-200 shadow-inner">
+                {timelineBlocks.map(({ appointment, roundedClass, start, width }, index) => {
                   const style = getStatusStyle(appointment.status);
 
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={appointment.id}
+                      onClick={() => setFocusedAppointmentId(appointment.id)}
                       title={`${appointment.startTime} - ${appointment.endTime} • ${appointment.client} • ${appointment.service}`}
-                      className={`absolute top-0 h-full ${roundedClass} ${style.timelineBlock}`}
+                      aria-label={`Mostrar ${appointment.client} no próximo cliente`}
+                      className={`timeline-block-loading timeline-service-hover absolute top-0 h-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-white/80 ${roundedClass} ${style.timelineBlock}`}
                       style={{
                         left: `${start}%`,
                         width: `${width}%`,
+                        animationDelay: `${index * 70}ms`,
                       }}
                     />
                   );
@@ -752,9 +991,9 @@ export function AgendaCalendar() {
                   <span key={marker}>{marker}</span>
                 ))}
               </div>
-              {todayAppointments.length > 0 ? (
+              {selectedAppointments.length > 0 ? (
                 <div className="mt-4 flex flex-wrap gap-2">
-                  {todayStatusCounts
+                  {selectedStatusCounts
                     .filter(({ count }) => count > 0)
                     .map(({ status, count }) => {
                       const style = getStatusStyle(status);
@@ -774,10 +1013,7 @@ export function AgendaCalendar() {
                 </div>
               ) : null}
               <p className="mt-3 text-sm font-medium text-foreground">
-                {todayAppointments.length} agendamentos
-              </p>
-              <p className="mt-1 text-xs text-muted">
-                {occupiedSlotsToday} de {totalSlots} horários ocupados
+                {selectedAppointments.length} agendamentos
               </p>
             </div>
           </div>
@@ -825,12 +1061,39 @@ export function AgendaCalendar() {
                   >
                     {nextAppointment.startTime} - {nextAppointment.endTime}
                   </span>
-                  <span
-                    className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${nextAppointmentStyle?.statusBadge}`}
-                  >
-                    <span className="h-2 w-2 rounded-full bg-current" />
-                    {nextAppointment.status}
-                  </span>
+                  <div className="flex flex-col items-end gap-2">
+                    <span
+                      className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${nextAppointmentStyle?.statusBadge}`}
+                    >
+                      <span className="h-2 w-2 rounded-full bg-current" />
+                      {nextAppointment.status}
+                    </span>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {appointmentStatuses.map((status) => {
+                        const optionStyle = getStatusStyle(status);
+                        const isCurrentStatus = nextAppointment.status === status;
+
+                        return (
+                          <button
+                            key={status}
+                            type="button"
+                            disabled={isCurrentStatus}
+                            onClick={() =>
+                              handleChangeStatus(nextAppointment.id, status)
+                            }
+                            className={`rounded-full border px-2 py-1 text-[10px] font-semibold transition-all ${
+                              isCurrentStatus
+                                ? "cursor-default border-current opacity-60"
+                                : "border-transparent hover:-translate-y-0.5 hover:shadow-sm"
+                            } ${optionStyle.statusBadge}`}
+                          >
+                            {status}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </>
               )}
             </div>
@@ -838,8 +1101,8 @@ export function AgendaCalendar() {
         </div>
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <section className="rounded-xl border border-border bg-card shadow-sm">
+      <div className="mt-8 grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <section className="self-start rounded-xl border border-border bg-card shadow-sm">
           <div className="flex flex-col gap-4 border-b border-border px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold capitalize text-foreground">
@@ -863,6 +1126,7 @@ export function AgendaCalendar() {
                 type="button"
                 onClick={() => {
                   setCurrentMonth(startOfMonth(today));
+                  setFocusedAppointmentId(null);
                   setSelectedDate(today);
                 }}
                 className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:border-accent"
@@ -886,12 +1150,17 @@ export function AgendaCalendar() {
             ))}
           </div>
 
-          <div className="grid grid-cols-7 p-4">
-            {calendarDays.map((day) => {
+          <div className="grid grid-cols-7 gap-2 p-4">
+            {calendarDays.map((day, index) => {
               const key = dateKey(day);
-              const dayAppointments = appointmentsByDate[key] ?? [];
-              const isCurrentMonth =
-                day.getMonth() === currentMonth.getMonth();
+              const dayAppointments = (appointmentsByDate[key] ?? []).sort((a, b) =>
+                a.startTime.localeCompare(b.startTime)
+              );
+              const visibleAppointments = dayAppointments.slice(0, 2);
+              const hiddenAppointmentsCount = Math.max(
+                dayAppointments.length - visibleAppointments.length,
+                0
+              );
               const isSelected = key === selectedKey;
               const isToday = key === dateKey(today);
 
@@ -899,48 +1168,50 @@ export function AgendaCalendar() {
                 <button
                   type="button"
                   key={key}
-                  onClick={() => setSelectedDate(day)}
-                  className={`min-h-24 rounded-xl border p-2 text-left transition-colors ${
+                  onClick={() => {
+                    setFocusedAppointmentId(null);
+                    setSelectedDate(day);
+                  }}
+                  style={index === 0 ? { gridColumnStart: day.getDay() + 1 } : undefined}
+                  className={`flex min-h-24 flex-col items-stretch rounded-xl border p-2 text-left transition-colors ${
                     isSelected
                       ? "border-primary bg-primary/10 shadow-sm"
                       : "border-transparent hover:border-border hover:bg-background"
-                  } ${isCurrentMonth ? "text-foreground" : "text-muted/40"}`}
+                  }`}
                 >
                   <div className="flex items-center justify-between">
                     <span
-                      className={`flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold ${
-                        isToday ? "bg-success text-white" : ""
+                      className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
+                        isToday ? "bg-success text-white" : "text-foreground"
                       }`}
                     >
                       {day.getDate()}
                     </span>
-                    {dayAppointments.length > 0 && (
-                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
-                        {dayAppointments.length}
-                      </span>
-                    )}
                   </div>
 
-                  <div className="mt-2 space-y-1">
-                    {dayAppointments.slice(0, 2).map((appointment) => {
-                      const style = getStatusStyle(appointment.status);
+                  {dayAppointments.length > 0 && (
+                    <div className="mt-2 space-y-0.5">
+                      {visibleAppointments.map((appointment) => {
+                        const style = getStatusStyle(appointment.status);
 
-                      return (
-                        <div
-                          key={appointment.id}
-                          className={`truncate rounded-md px-2 py-1 text-[11px] font-medium ${style.calendarPill}`}
-                        >
-                          {appointment.startTime} - {appointment.endTime}{" "}
-                          {appointment.client}
-                        </div>
-                      );
-                    })}
-                    {dayAppointments.length > 2 && (
-                      <p className="px-1 text-[11px] text-muted">
-                        +{dayAppointments.length - 2} horários
-                      </p>
-                    )}
-                  </div>
+                        return (
+                          <span
+                            key={appointment.id}
+                            className={`block truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-3 ${style.calendarPill}`}
+                            title={`${appointment.startTime} - ${appointment.endTime} • ${appointment.client}`}
+                          >
+                            {appointment.startTime} {getShortClientName(appointment.client)}
+                          </span>
+                        );
+                      })}
+
+                      {hiddenAppointmentsCount > 0 && (
+                        <span className="block truncate rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold leading-3 text-slate-500">
+                          +{hiddenAppointmentsCount} mais
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </button>
               );
             })}
@@ -978,10 +1249,12 @@ export function AgendaCalendar() {
               </button>
             )}
 
-                {creating && (
+            {creating && (
               <form
                 onSubmit={handleSaveAppointment}
-                className="space-y-4 rounded-xl border border-border bg-background p-4"
+                className={`space-y-4 rounded-xl border border-border bg-background p-4 ${
+                  formClosing ? "agenda-form-exit" : "agenda-form-enter"
+                }`}
               >
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-foreground">
@@ -1024,19 +1297,25 @@ export function AgendaCalendar() {
                         form.endTime &&
                         isTimeBetween(time, form.startTime, form.endTime);
                       const isBusy = busyTimesForFormDate.has(time);
+                      const isConflictingEndTime =
+                        !!form.startTime &&
+                        !form.endTime &&
+                        timeToMinutes(time) > timeToMinutes(form.startTime) &&
+                        hasAppointmentConflict(form.date, form.startTime, time);
+                      const isUnavailable = isBusy || isConflictingEndTime;
 
                       return (
                         <button
                           type="button"
                           key={time}
-                          disabled={isBusy}
+                          disabled={isUnavailable}
                           onClick={() => selectTimeSlot(time)}
                           className={`rounded-full px-2 py-2 text-sm font-semibold transition-all duration-200 ${
                             isSelectedEndpoint
                               ? "bg-success text-white shadow-sm"
                               : isInSelectedRange
                                 ? "bg-success/20 text-success"
-                              : isBusy
+                              : isUnavailable
                                 ? "cursor-not-allowed bg-muted/10 text-muted/50 line-through"
                                 : "bg-background text-foreground hover:-translate-y-0.5 hover:bg-success/10 hover:text-success hover:shadow-sm"
                           }`}
@@ -1061,36 +1340,50 @@ export function AgendaCalendar() {
                     </label>
                     <button
                       type="button"
-                      onClick={() => setClientModalOpen(true)}
+                      onClick={() => {
+                        setOpenSelectId(null);
+                        setClientModalOpen(true);
+                      }}
                       className="text-xs font-semibold text-success transition-colors hover:text-success/80"
                     >
                       Novo cliente
                     </button>
                   </div>
-                  <select
+                  <AgendaDropdown
                     id="agenda-client"
                     value={form.clientId}
+                    placeholder={
+                      loadingClients
+                        ? "Carregando clientes..."
+                        : "Selecione um cliente"
+                    }
+                    emptyMessage="Nenhum cliente cadastrado."
+                    options={clientOptions}
                     disabled={loadingClients}
-                    onChange={(event) =>
+                    open={openSelectId === "client"}
+                    onToggle={() =>
+                      setOpenSelectId((current) =>
+                        current === "client" ? null : "client"
+                      )
+                    }
+                    onSelect={(value) => {
                       setForm((prev) => ({
                         ...prev,
-                        clientId: event.target.value,
+                        clientId: value,
                         vehicleId: "",
-                      }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 text-sm text-foreground shadow-sm transition-all duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="">
-                      {loadingClients
-                        ? "Carregando clientes..."
-                        : "Selecione um cliente"}
-                    </option>
-                    {clients.map((client) => (
-                      <option key={client.id} value={client.id}>
-                        {client.name}
-                      </option>
-                    ))}
-                  </select>
+                      }));
+                      setOpenSelectId(null);
+                    }}
+                    clearLabel="Limpar cliente"
+                    onClear={() => {
+                      setForm((prev) => ({
+                        ...prev,
+                        clientId: "",
+                        vehicleId: "",
+                      }));
+                      setOpenSelectId(null);
+                    }}
+                  />
                   {!loadingClients && clients.length === 0 && (
                     <p className="text-xs text-muted">
                       Nenhum cliente cadastrado. Use Novo cliente para criar.
@@ -1104,33 +1397,47 @@ export function AgendaCalendar() {
                   >
                     Veículo
                   </label>
-                  <select
+                  <AgendaDropdown
                     id="agenda-vehicle"
                     value={form.vehicleId}
-                    disabled={
-                      !form.clientId || selectedClientVehicles.length === 0
-                    }
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        vehicleId: event.target.value,
-                      }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 text-sm text-foreground shadow-sm transition-all duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="">
-                      {!form.clientId
+                    placeholder={
+                      !form.clientId
                         ? "Selecione um cliente primeiro"
                         : selectedClientVehicles.length === 0
                           ? "Cliente sem veículo cadastrado"
-                          : "Selecione um veículo"}
-                    </option>
-                    {selectedClientVehicles.map((vehicle) => (
-                      <option key={vehicle.id} value={vehicle.id}>
-                        {vehicle.brand} {vehicle.model} - {vehicle.plate}
-                      </option>
-                    ))}
-                  </select>
+                          : "Selecione um veículo"
+                    }
+                    emptyMessage={
+                      !form.clientId
+                        ? "Selecione um cliente primeiro."
+                        : "Cliente sem veículo cadastrado."
+                    }
+                    options={vehicleOptions}
+                    disabled={
+                      !form.clientId || selectedClientVehicles.length === 0
+                    }
+                    open={openSelectId === "vehicle"}
+                    onToggle={() =>
+                      setOpenSelectId((current) =>
+                        current === "vehicle" ? null : "vehicle"
+                      )
+                    }
+                    onSelect={(value) => {
+                      setForm((prev) => ({
+                        ...prev,
+                        vehicleId: value,
+                      }));
+                      setOpenSelectId(null);
+                    }}
+                    clearLabel="Limpar veículo"
+                    onClear={() => {
+                      setForm((prev) => ({
+                        ...prev,
+                        vehicleId: "",
+                      }));
+                      setOpenSelectId(null);
+                    }}
+                  />
                   {form.clientId && selectedClientVehicles.length === 0 && (
                     <p className="text-xs text-muted">
                       Cadastre um veículo para este cliente antes de agendar.
@@ -1144,7 +1451,10 @@ export function AgendaCalendar() {
                     </label>
                     <button
                       type="button"
-                      onClick={() => setAddingService(true)}
+                      onClick={() => {
+                        setAddingService(true);
+                        setOpenSelectId("service");
+                      }}
                       disabled={
                         loadingServices ||
                         services.length === 0 ||
@@ -1157,7 +1467,7 @@ export function AgendaCalendar() {
                     </button>
                   </div>
 
-                  {selectedServices.length > 0 ? (
+                  {selectedServices.length > 0 && (
                     <div className="flex flex-wrap gap-2">
                       {selectedServices.map((service) => (
                         <span
@@ -1176,36 +1486,30 @@ export function AgendaCalendar() {
                         </span>
                       ))}
                     </div>
-                  ) : (
-                    <p className="rounded-xl border border-dashed border-border bg-card px-4 py-3 text-center text-xs text-muted">
-                      Nenhum serviço adicionado.
-                    </p>
                   )}
 
                   {addingService && (
-                    <select
-                      autoFocus
-                      defaultValue=""
-                      disabled={loadingServices || availableServices.length === 0}
-                      onChange={(event) => addServiceToForm(event.target.value)}
-                      className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 text-sm text-foreground shadow-sm transition-all duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <option value="">
-                        {loadingServices
+                    <AgendaDropdown
+                      id="agenda-service"
+                      value=""
+                      placeholder={
+                        loadingServices
                           ? "Carregando serviços..."
                           : availableServices.length === 0
                             ? "Todos os serviços já adicionados"
-                            : "Selecione um serviço"}
-                      </option>
-                      {availableServices.map((service) => (
-                        <option key={service.id} value={service.id}>
-                          {service.name}
-                          {service.duration_minutes
-                            ? ` - ${service.duration_minutes} min`
-                            : ""}
-                        </option>
-                      ))}
-                    </select>
+                            : "Selecione um serviço"
+                      }
+                      emptyMessage="Todos os serviços já foram adicionados."
+                      options={availableServiceOptions}
+                      disabled={loadingServices || availableServices.length === 0}
+                      open={openSelectId === "service"}
+                      onToggle={() =>
+                        setOpenSelectId((current) =>
+                          current === "service" ? null : "service"
+                        )
+                      }
+                      onSelect={addServiceToForm}
+                    />
                   )}
 
                   {!loadingServices && services.length === 0 && (
@@ -1214,13 +1518,59 @@ export function AgendaCalendar() {
                     </p>
                   )}
 
-                  <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
-                    <span className="text-sm font-medium text-muted">
-                      Total dos serviços
-                    </span>
-                    <span className="text-base font-bold text-foreground">
-                      {formatCurrency(servicesTotal)}
-                    </span>
+                  <div className="space-y-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-muted">
+                        Total dos serviços
+                      </span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-base font-bold text-foreground">
+                          {formatCurrency(displayTotalAmount)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingTotalAmount((current) => !current);
+                            setForm((prev) =>
+                              prev.totalAmount
+                                ? prev
+                                : { ...prev, totalAmount: String(servicesTotal) }
+                            );
+                          }}
+                          className="text-xs font-semibold text-success transition-colors hover:text-success/80"
+                        >
+                          {editingTotalAmount ? "Fechar" : "Editar"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {editingTotalAmount && (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          label="Valor do agendamento"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={form.totalAmount}
+                          onChange={(event) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              totalAmount: event.target.value,
+                            }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setForm((prev) => ({ ...prev, totalAmount: "" }));
+                            setEditingTotalAmount(false);
+                          }}
+                          className="mt-6 rounded-xl border border-border bg-background px-3 py-2.5 text-xs font-semibold text-muted transition-colors hover:text-foreground"
+                        >
+                          Usar soma
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
                 {error && <p className="text-xs text-danger">{error}</p>}
@@ -1278,23 +1628,30 @@ export function AgendaCalendar() {
                         <div className="relative">
                           <button
                             type="button"
-                            onClick={() =>
-                              setOpenStatusMenuId((current) =>
-                                current === appointment.id
-                                  ? null
-                                  : appointment.id
-                              )
-                            }
+                            onClick={() => toggleStatusMenu(appointment.id)}
                             className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-shadow hover:shadow-sm ${style.statusBadge}`}
                             aria-haspopup="menu"
                             aria-expanded={openStatusMenuId === appointment.id}
                           >
                             {appointment.status}
-                            <ChevronDown className="h-3 w-3" />
+                            <ChevronDown
+                              className={`h-3 w-3 transition-transform duration-200 ${
+                                openStatusMenuId === appointment.id
+                                  ? "rotate-180"
+                                  : ""
+                              }`}
+                            />
                           </button>
 
-                          {openStatusMenuId === appointment.id && (
-                            <div className="absolute bottom-full left-0 z-30 mb-2 w-40 rounded-xl border border-border bg-card p-2 shadow-lg">
+                          {(openStatusMenuId === appointment.id ||
+                            closingStatusMenuId === appointment.id) && (
+                            <div
+                              className={`absolute bottom-full left-0 z-30 mb-2 w-40 rounded-xl border border-border bg-card p-2 shadow-lg ${
+                                closingStatusMenuId === appointment.id
+                                  ? "status-menu-exit"
+                                  : "status-menu-enter"
+                              }`}
+                            >
                               {appointmentStatuses.map((status) => {
                                 const optionStyle = getStatusStyle(status);
 
@@ -1308,9 +1665,6 @@ export function AgendaCalendar() {
                                     className={`mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-semibold transition-colors last:mb-0 hover:bg-background ${optionStyle.statusBadge}`}
                                   >
                                     {status}
-                                    {appointment.status === status && (
-                                      <span className="text-[10px]">Atual</span>
-                                    )}
                                   </button>
                                 );
                               })}
@@ -1352,6 +1706,137 @@ export function AgendaCalendar() {
         onClose={() => setClientModalOpen(false)}
         onSave={handleCreateClient}
       />
+      <style>{`
+        @media (prefers-reduced-motion: no-preference) {
+          .agenda-form-enter {
+            animation: agenda-form-enter 220ms ease-out both;
+          }
+
+          .agenda-form-exit {
+            animation: agenda-form-exit 180ms ease-in both;
+          }
+
+          .timeline-track-loading::after {
+            animation: timeline-track-loading 900ms ease-out both;
+          }
+
+          .timeline-block-loading {
+            animation: timeline-block-loading 620ms ease-out both;
+            transform-origin: left center;
+          }
+
+          .status-menu-enter {
+            animation: status-menu-enter 180ms ease-out both;
+            transform-origin: bottom left;
+          }
+
+          .status-menu-exit {
+            animation: status-menu-exit 160ms ease-in both;
+            transform-origin: bottom left;
+          }
+        }
+
+        .timeline-track-loading::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          background: linear-gradient(
+            90deg,
+            transparent,
+            rgba(255, 255, 255, 0.45),
+            transparent
+          );
+          transform: translateX(-100%);
+        }
+
+        .timeline-service-hover {
+          transition:
+            filter 180ms ease,
+            box-shadow 180ms ease,
+            top 180ms ease,
+            height 180ms ease,
+            transform 180ms ease;
+          transform: perspective(700px) translateY(0) translateZ(0) rotateX(0);
+          transform-origin: center bottom;
+        }
+
+        .timeline-service-hover:hover,
+        .timeline-service-hover:focus-visible {
+          top: -4px;
+          z-index: 10;
+          height: calc(100% + 6px);
+          filter: brightness(1.12) saturate(1.18);
+          transform: perspective(700px) translateY(-2px) translateZ(18px) rotateX(10deg);
+          box-shadow:
+            0 12px 24px rgba(15, 23, 42, 0.24),
+            inset 0 1px 0 rgba(255, 255, 255, 0.28);
+        }
+
+        @keyframes agenda-form-enter {
+          from {
+            opacity: 0;
+            transform: translateY(-10px) scale(0.98);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+
+        @keyframes agenda-form-exit {
+          from {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+          to {
+            opacity: 0;
+            transform: translateY(-8px) scale(0.98);
+          }
+        }
+
+        @keyframes timeline-track-loading {
+          from {
+            transform: translateX(-100%);
+          }
+          to {
+            transform: translateX(100%);
+          }
+        }
+
+        @keyframes timeline-block-loading {
+          from {
+            opacity: 0.2;
+            transform: scaleX(0);
+          }
+          to {
+            opacity: 1;
+            transform: scaleX(1);
+          }
+        }
+
+        @keyframes status-menu-enter {
+          from {
+            opacity: 0;
+            transform: translateY(8px) scale(0.96);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+
+        @keyframes status-menu-exit {
+          from {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+          to {
+            opacity: 0;
+            transform: translateY(8px) scale(0.96);
+          }
+        }
+      `}</style>
     </>
   );
 }

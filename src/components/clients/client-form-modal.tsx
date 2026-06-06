@@ -17,6 +17,7 @@ import {
 interface ClientFormModalProps {
   open: boolean;
   client?: Client | null;
+  startWithNewVehicle?: boolean;
   onClose: () => void;
   onSave: (data: ClientFormData) => Promise<void>;
 }
@@ -57,6 +58,7 @@ function getVehicleKey(vehicle: VehicleFormItem, index: number) {
 export function ClientFormModal({
   open,
   client,
+  startWithNewVehicle = false,
   onClose,
   onSave,
 }: ClientFormModalProps) {
@@ -71,18 +73,27 @@ export function ClientFormModal({
 
   useEffect(() => {
     if (open) {
-      setForm(
-        client
-          ? {
-              name: client.name,
-              phone: client.phone,
-              notes: client.notes ?? "",
-              vehicles: client.vehicles?.map(mapVehicleFromClient) ?? [],
-            }
-          : emptyClientForm
-      );
-      setError(null);
-      setRemovingVehicleKeys(new Set());
+      const nextForm = client
+        ? {
+            name: client.name,
+            phone: client.phone,
+            notes: client.notes ?? "",
+            vehicles: client.vehicles?.map(mapVehicleFromClient) ?? [],
+          }
+        : emptyClientForm;
+
+      void Promise.resolve().then(() => {
+        setForm(
+          startWithNewVehicle
+            ? {
+                ...nextForm,
+                vehicles: [...nextForm.vehicles, createVehicleItem()],
+              }
+            : nextForm
+        );
+        setError(null);
+        setRemovingVehicleKeys(new Set());
+      });
     }
 
     return () => {
@@ -92,7 +103,7 @@ export function ClientFormModal({
       });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, client]);
+  }, [open, client, startWithNewVehicle]);
 
   if (!open) return null;
 
