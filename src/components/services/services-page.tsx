@@ -1,11 +1,36 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Clock, Pencil, Plus, Power, Trash2, Wrench, X } from "lucide-react";
+import {
+  Clock,
+  Pencil,
+  Plus,
+  Power,
+  Trash2,
+  Wrench,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/format";
+import {
+  calculateProductUsageCost,
+  createProductId,
+  createUsageId,
+  emptyProductForm,
+  getProductAmountLabel,
+  getProductTypeLabel,
+  parsePositiveNumber,
+  productTypeOptions,
+  PRODUCTS_STORAGE_KEY,
+  SERVICE_PRODUCT_USAGE_STORAGE_KEY,
+  type ProductForm,
+  type ProductItem,
+  type ProductType,
+  type ServiceProductUsage,
+} from "@/lib/products/catalog";
 
 interface ServiceItem {
   id: string;
@@ -22,6 +47,7 @@ interface ServiceForm {
   description: string;
   price: string;
   durationMinutes: string;
+  productUsages: ServiceProductUsage[];
 }
 
 const emptyForm: ServiceForm = {
@@ -29,6 +55,7 @@ const emptyForm: ServiceForm = {
   description: "",
   price: "",
   durationMinutes: "60",
+  productUsages: [],
 };
 
 const durationOptions = Array.from({ length: 16 }, (_, index) => {
@@ -82,13 +109,25 @@ function formatDuration(minutes: number | null) {
 export function ServicesPage() {
   const supabase = useMemo(() => createClient(), []);
   const [services, setServices] = useState<ServiceItem[]>([]);
+  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [productsLoaded, setProductsLoaded] = useState(false);
+  const [serviceProductUsages, setServiceProductUsages] = useState<
+    Record<string, ServiceProductUsage[]>
+  >({});
+  const [serviceProductUsagesLoaded, setServiceProductUsagesLoaded] =
+    useState(false);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceItem | null>(null);
   const [form, setForm] = useState<ServiceForm>(emptyForm);
+  const [productFormOpen, setProductFormOpen] = useState(false);
+  const [productForm, setProductForm] =
+    useState<ProductForm>(emptyProductForm);
+  const [addingProduct, setAddingProduct] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [productError, setProductError] = useState<string | null>(null);
 
   async function loadServices() {
     setLoading(true);
@@ -126,10 +165,54 @@ export function ServicesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      const storedProducts = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
+      const storedUsages = window.localStorage.getItem(
+        SERVICE_PRODUCT_USAGE_STORAGE_KEY
+      );
+
+      if (storedProducts) {
+        try {
+          setProducts(JSON.parse(storedProducts) as ProductItem[]);
+        } catch {
+          window.localStorage.removeItem(PRODUCTS_STORAGE_KEY);
+        }
+      }
+      setProductsLoaded(true);
+
+      if (storedUsages) {
+        try {
+          setServiceProductUsages(
+            JSON.parse(storedUsages) as Record<string, ServiceProductUsage[]>
+          );
+        } catch {
+          window.localStorage.removeItem(SERVICE_PRODUCT_USAGE_STORAGE_KEY);
+        }
+      }
+      setServiceProductUsagesLoaded(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!productsLoaded) return;
+    window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products));
+  }, [products, productsLoaded]);
+
+  useEffect(() => {
+    if (!serviceProductUsagesLoaded) return;
+    window.localStorage.setItem(
+      SERVICE_PRODUCT_USAGE_STORAGE_KEY,
+      JSON.stringify(serviceProductUsages)
+    );
+  }, [serviceProductUsages, serviceProductUsagesLoaded]);
+
   function openCreateForm() {
     setEditingService(null);
     setForm(emptyForm);
     setError(null);
+    setAddingProduct(false);
+    setProductFormOpen(false);
     setFormOpen(true);
   }
 
@@ -140,8 +223,11 @@ export function ServicesPage() {
       description: service.description ?? "",
       price: String(service.price ?? ""),
       durationMinutes: String(service.duration_minutes ?? 60),
+      productUsages: serviceProductUsages[service.id] ?? [],
     });
     setError(null);
+    setAddingProduct(false);
+    setProductFormOpen(false);
     setFormOpen(true);
   }
 
@@ -149,6 +235,8 @@ export function ServicesPage() {
     setEditingService(null);
     setForm(emptyForm);
     setError(null);
+    setAddingProduct(false);
+    setProductFormOpen(false);
     setFormOpen(false);
   }
 
@@ -169,12 +257,17 @@ export function ServicesPage() {
     setError(null);
 
     try {
+      const productUsages = form.productUsages.filter((usage) => {
+        const product = products.find((item) => item.id === usage.productId);
+        return product && calculateProductUsageCost(product, usage.amount) > 0;
+      });
       const payload = {
         name: form.name.trim(),
         description: form.description.trim() || null,
         price: parsePrice(form.price || "0"),
         duration_minutes: parseDuration(form.durationMinutes),
       };
+      let savedServiceId = editingService?.id;
 
       if (editingService) {
         const { error: updateError } = await supabase
@@ -184,12 +277,24 @@ export function ServicesPage() {
 
         if (updateError) throw updateError;
       } else {
-        const { error: insertError } = await supabase.from("services").insert({
-          ...payload,
-          workshop_id: workshopId,
-        });
+        const { data: insertedService, error: insertError } = await supabase
+          .from("services")
+          .insert({
+            ...payload,
+            workshop_id: workshopId,
+          })
+          .select("id")
+          .single();
 
         if (insertError) throw insertError;
+        savedServiceId = insertedService.id;
+      }
+
+      if (savedServiceId) {
+        setServiceProductUsages((prev) => ({
+          ...prev,
+          [savedServiceId]: productUsages,
+        }));
       }
 
       await loadServices();
@@ -234,8 +339,127 @@ export function ServicesPage() {
       return;
     }
 
+    setServiceProductUsages((prev) => {
+      const next = { ...prev };
+      delete next[service.id];
+      return next;
+    });
     await loadServices();
   }
+
+  function closeProductForm() {
+    setProductForm(emptyProductForm);
+    setProductError(null);
+    setProductFormOpen(false);
+  }
+
+  function updateProductForm(patch: Partial<ProductForm>) {
+    setProductForm((prev) => ({ ...prev, ...patch }));
+  }
+
+  function handleSaveProduct() {
+    setProductError(null);
+
+    if (!productForm.name.trim()) {
+      setProductError("Informe o nome do produto.");
+      return;
+    }
+
+    try {
+      parsePrice(productForm.totalCost || "0");
+
+      if (productForm.type === "liquid") {
+        parsePositiveNumber(productForm.volumeMl);
+      } else {
+        parsePositiveNumber(productForm.quantity);
+      }
+    } catch (err) {
+      setProductError(
+        err instanceof Error ? err.message : "Informe os dados do produto."
+      );
+      return;
+    }
+
+    const nextProduct: ProductItem = {
+      id: createProductId(),
+      name: productForm.name.trim(),
+      type: productForm.type,
+      volumeMl: productForm.type === "liquid" ? productForm.volumeMl : "",
+      usagePerWashMl: "",
+      quantity: productForm.type === "utensil" ? productForm.quantity : "",
+      durabilityWashes: "",
+      totalCost: productForm.totalCost,
+    };
+
+    setProducts((prev) => [nextProduct, ...prev]);
+    setForm((prev) => ({
+      ...prev,
+      productUsages: [
+        ...prev.productUsages,
+        {
+          id: createUsageId(),
+          productId: nextProduct.id,
+          amount: nextProduct.type === "liquid" ? "" : "1",
+        },
+      ],
+    }));
+    setAddingProduct(false);
+
+    closeProductForm();
+  }
+
+  function addProductToService(productId: string) {
+    const product = products.find((item) => item.id === productId);
+    if (!product) return;
+
+    setForm((prev) => {
+      if (prev.productUsages.some((usage) => usage.productId === productId)) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        productUsages: [
+          ...prev.productUsages,
+          {
+            id: createUsageId(),
+            productId,
+            amount: product.type === "liquid" ? "" : "1",
+          },
+        ],
+      };
+    });
+    setAddingProduct(false);
+  }
+
+  function updateProductUsageAmount(usageId: string, amount: string) {
+    setForm((prev) => ({
+      ...prev,
+      productUsages: prev.productUsages.map((usage) =>
+        usage.id === usageId ? { ...usage, amount } : usage
+      ),
+    }));
+  }
+
+  function removeProductUsage(usageId: string) {
+    setForm((prev) => ({
+      ...prev,
+      productUsages: prev.productUsages.filter((usage) => usage.id !== usageId),
+    }));
+  }
+
+  const availableProducts = products.filter(
+    (product) =>
+      !form.productUsages.some((usage) => usage.productId === product.id)
+  );
+  const productOptions = availableProducts.map((product) => ({
+    value: product.id,
+    label: product.name,
+  }));
+  const serviceProductsTotal = form.productUsages.reduce((total, usage) => {
+    const product = products.find((item) => item.id === usage.productId);
+    return product ? total + calculateProductUsageCost(product, usage.amount) : total;
+  }, 0);
 
   return (
     <>
@@ -296,31 +520,18 @@ export function ServicesPage() {
               }
               placeholder="150,00"
             />
-            <div className="space-y-1.5">
-              <label
-                htmlFor="service-duration"
-                className="block text-sm font-semibold text-foreground"
-              >
-                Duração em horas
-              </label>
-              <select
-                id="service-duration"
-                value={form.durationMinutes}
-                onChange={(event) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    durationMinutes: event.target.value,
-                  }))
-                }
-                className="w-full rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm text-foreground transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
-              >
-                {durationOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Dropdown
+              id="service-duration"
+              label="Duração em horas"
+              value={form.durationMinutes}
+              options={durationOptions}
+              onChange={(durationMinutes) =>
+                setForm((prev) => ({
+                  ...prev,
+                  durationMinutes,
+                }))
+              }
+            />
             <Input
               label="Descrição"
               value={form.description}
@@ -333,6 +544,236 @@ export function ServicesPage() {
               }
               placeholder="Detalhes do serviço"
             />
+          </div>
+
+          <div className="mt-5 rounded-xl border border-border bg-background p-5">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  Produtos utilizados neste serviço
+                </h3>
+                <p className="mt-1 text-xs text-muted">
+                  Escolha produtos do catálogo e informe quanto será usado.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddingProduct(true)}
+                disabled={availableProducts.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-3 py-1.5 text-xs font-semibold text-success transition-all hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Adicionar produto
+              </button>
+            </div>
+
+            {addingProduct && (
+              <div className="mt-4">
+                <Dropdown
+                  label="Selecionar produto"
+                  value=""
+                  placeholder={
+                    availableProducts.length === 0
+                      ? "Todos os produtos já foram adicionados"
+                      : "Selecione um produto"
+                  }
+                  options={productOptions}
+                  onChange={addProductToService}
+                  disabled={availableProducts.length === 0}
+                />
+              </div>
+            )}
+
+            {products.length === 0 && (
+              <p className="mt-4 rounded-xl border border-dashed border-border bg-card px-4 py-3 text-center text-xs text-muted">
+                Nenhum produto cadastrado no catálogo.
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setProductForm(emptyProductForm);
+                setProductError(null);
+                setProductFormOpen(true);
+              }}
+              className="mt-3 text-xs font-semibold text-success transition-colors hover:text-success/80"
+            >
+              Cadastrar novo produto
+            </button>
+
+            {productError && (
+              <div className="mt-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
+                {productError}
+              </div>
+            )}
+
+            {productFormOpen && (
+              <div className="mt-4 rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-foreground">
+                    Produto rápido
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={closeProductForm}
+                    className="rounded-lg p-1.5 text-muted transition-colors hover:bg-background hover:text-foreground"
+                    aria-label="Fechar produto rápido"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <Input
+                    label="Nome do produto"
+                    value={productForm.name}
+                    autoComplete="off"
+                    onChange={(event) =>
+                      updateProductForm({ name: event.target.value })
+                    }
+                    placeholder="Shampoo automotivo"
+                  />
+                  <Dropdown
+                    label="Tipo"
+                    value={productForm.type}
+                    options={productTypeOptions}
+                    onChange={(type) =>
+                      updateProductForm({ type: type as ProductType })
+                    }
+                  />
+
+                  {productForm.type === "liquid" ? (
+                    <Input
+                      label="Volume total (ml)"
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={productForm.volumeMl}
+                      onChange={(event) =>
+                        updateProductForm({ volumeMl: event.target.value })
+                      }
+                      placeholder="5000"
+                    />
+                  ) : (
+                    <Input
+                      label="Quantidade"
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={productForm.quantity}
+                      onChange={(event) =>
+                        updateProductForm({ quantity: event.target.value })
+                      }
+                      placeholder="3"
+                    />
+                  )}
+
+                  <Input
+                    label="Custo total do produto"
+                    value={productForm.totalCost}
+                    autoComplete="off"
+                    onChange={(event) =>
+                      updateProductForm({ totalCost: event.target.value })
+                    }
+                    placeholder="80,00"
+                  />
+                </div>
+
+                <div className="mt-4 flex justify-end gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={closeProductForm}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="success"
+                    onClick={handleSaveProduct}
+                  >
+                    Salvar e adicionar
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {form.productUsages.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {form.productUsages.map((usage) => {
+                  const product = products.find(
+                    (item) => item.id === usage.productId
+                  );
+                  if (!product) return null;
+
+                  const usageCost = calculateProductUsageCost(
+                    product,
+                    usage.amount
+                  );
+
+                  return (
+                    <div
+                      key={usage.id}
+                      className="rounded-xl border border-border bg-card p-4 shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">
+                            {product.name}
+                          </p>
+                          <p className="text-xs text-muted">
+                            {getProductTypeLabel(product.type)}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeProductUsage(usage.id)}
+                          className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
+                          aria-label={`Remover ${product.name}`}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                        <Input
+                          label={getProductAmountLabel(product.type)}
+                          type="number"
+                          min="0"
+                          step={product.type === "liquid" ? "1" : "0.01"}
+                          value={usage.amount}
+                          onChange={(event) =>
+                            updateProductUsageAmount(
+                              usage.id,
+                              event.target.value
+                            )
+                          }
+                          placeholder={product.type === "liquid" ? "50" : "1"}
+                        />
+                        <div className="rounded-xl border border-success/20 bg-success/10 px-4 py-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-success">
+                            Custo
+                          </p>
+                          <p className="text-base font-bold text-success">
+                            {formatCurrency(usageCost)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+                  <span className="text-sm font-medium text-muted">
+                    Custo total de produtos
+                  </span>
+                  <span className="text-base font-bold text-foreground">
+                    {formatCurrency(serviceProductsTotal)}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="mt-5 flex justify-end gap-3">
@@ -439,6 +880,7 @@ export function ServicesPage() {
           ))}
         </div>
       )}
+
     </>
   );
 }

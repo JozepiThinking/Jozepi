@@ -73,12 +73,12 @@ const statusStyles: Record<
   }
 > = {
   Confirmado: {
-    calendarPill: "bg-success/10 text-success",
-    timelineBlock: "bg-success",
-    sideCard: "border-success/20 bg-success/5",
-    sideAccent: "border-l-[var(--success)]",
-    statusBadge: "bg-success/10 text-success",
-    timeBadge: "bg-success/10 text-success",
+    calendarPill: "status-confirmed-soft",
+    timelineBlock: "status-confirmed-solid",
+    sideCard: "status-confirmed-card",
+    sideAccent: "status-confirmed-side-accent",
+    statusBadge: "status-confirmed-soft",
+    timeBadge: "status-confirmed-soft",
   },
   Pendente: {
     calendarPill: "bg-warning/10 text-warning",
@@ -97,12 +97,12 @@ const statusStyles: Record<
     timeBadge: "bg-danger/10 text-danger",
   },
   Concluído: {
-    calendarPill: "bg-slate-200 text-slate-700",
-    timelineBlock: "bg-slate-500",
-    sideCard: "border-slate-300 bg-slate-100",
-    sideAccent: "border-l-slate-500",
-    statusBadge: "bg-slate-200 text-slate-700",
-    timeBadge: "bg-slate-200 text-slate-700",
+    calendarPill: "bg-success/10 text-success",
+    timelineBlock: "bg-success",
+    sideCard: "border-success/20 bg-success/5",
+    sideAccent: "border-l-[var(--success)]",
+    statusBadge: "bg-success/10 text-success",
+    timeBadge: "bg-success/10 text-success",
   },
 };
 
@@ -270,7 +270,7 @@ function AgendaDropdown({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 text-left text-sm text-foreground shadow-sm transition-all duration-200 hover:border-success/40 hover:bg-white focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm text-foreground shadow-sm transition-all duration-200 hover:border-success/40 hover:bg-white focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className={selectedOption ? "font-medium" : "text-muted"}>
           {selectedOption?.label ?? placeholder}
@@ -283,7 +283,7 @@ function AgendaDropdown({
       </button>
 
       {open && !disabled && (
-        <div className="absolute left-0 right-0 top-full z-40 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-border bg-card p-2 shadow-xl">
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-border bg-white p-2 shadow-xl ring-1 ring-slate-900/5">
           {selectedOption && onClear && (
             <button
               type="button"
@@ -972,7 +972,7 @@ export function AgendaCalendar() {
                   return (
                     <button
                       type="button"
-                      key={appointment.id}
+                      key={`${appointment.id}-${appointment.status}`}
                       onClick={() => setFocusedAppointmentId(appointment.id)}
                       title={`${appointment.startTime} - ${appointment.endTime} • ${appointment.client} • ${appointment.service}`}
                       aria-label={`Mostrar ${appointment.client} no próximo cliente`}
@@ -1173,7 +1173,7 @@ export function AgendaCalendar() {
                     setSelectedDate(day);
                   }}
                   style={index === 0 ? { gridColumnStart: day.getDay() + 1 } : undefined}
-                  className={`flex min-h-24 flex-col items-stretch rounded-xl border p-2 text-left transition-colors ${
+                  className={`flex min-h-24 flex-col items-start rounded-xl border p-2 text-left transition-colors ${
                     isSelected
                       ? "border-primary bg-primary/10 shadow-sm"
                       : "border-transparent hover:border-border hover:bg-background"
@@ -1190,14 +1190,14 @@ export function AgendaCalendar() {
                   </div>
 
                   {dayAppointments.length > 0 && (
-                    <div className="mt-2 space-y-0.5">
+                    <div className="mt-2 flex w-full flex-col items-start gap-0.5">
                       {visibleAppointments.map((appointment) => {
                         const style = getStatusStyle(appointment.status);
 
                         return (
                           <span
                             key={appointment.id}
-                            className={`block truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-3 ${style.calendarPill}`}
+                            className={`calendar-appointment-pill ${style.calendarPill}`}
                             title={`${appointment.startTime} - ${appointment.endTime} • ${appointment.client}`}
                           >
                             {appointment.startTime} {getShortClientName(appointment.client)}
@@ -1206,7 +1206,7 @@ export function AgendaCalendar() {
                       })}
 
                       {hiddenAppointmentsCount > 0 && (
-                        <span className="block truncate rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold leading-3 text-slate-500">
+                        <span className="calendar-appointment-pill calendar-more-pill">
                           +{hiddenAppointmentsCount} mais
                         </span>
                       )}
@@ -1771,6 +1771,44 @@ export function AgendaCalendar() {
           box-shadow:
             0 12px 24px rgba(15, 23, 42, 0.24),
             inset 0 1px 0 rgba(255, 255, 255, 0.28);
+        }
+
+        .calendar-appointment-pill {
+          display: inline-block;
+          max-width: 4.75rem;
+          width: auto;
+          border-radius: 9999px;
+          padding: 1px 6px;
+          font-size: 9px;
+          line-height: 12px;
+          font-weight: 700;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .calendar-more-pill {
+          max-width: 4rem;
+          background: #f1f5f9;
+          color: #64748b;
+        }
+
+        .status-confirmed-soft {
+          background: rgba(37, 99, 235, 0.14);
+          color: #2563eb;
+        }
+
+        .status-confirmed-solid {
+          background: #2563eb;
+        }
+
+        .status-confirmed-card {
+          border-color: rgba(37, 99, 235, 0.22);
+          background: rgba(37, 99, 235, 0.07);
+        }
+
+        .status-confirmed-side-accent {
+          border-left-color: #2563eb;
         }
 
         @keyframes agenda-form-enter {

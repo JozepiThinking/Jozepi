@@ -1,0 +1,23 @@
+---
+description: Preserve the app visual identity, spacing, colors, and motion
+alwaysApply: true
+---
+
+# Consistência Visual do App
+
+- Preserve o padrão visual existente antes de criar ou alterar componentes.
+- Mantenha cards, botões, inputs e dropdowns com tamanhos proporcionais aos já usados no app.
+- Use as cores do tema atual: `primary`, `success`, `warning`, `danger`, `muted`, `border`, `card` e `background`.
+- Evite introduzir cores soltas quando já existir uma cor semântica equivalente no projeto.
+- Prefira cantos arredondados, sombras suaves e espaçamentos consistentes com os componentes atuais.
+- Dropdowns devem seguir o visual do próprio app, sem usar `<select>` nativo do sistema.
+- Movimentos devem ser suaves e discretos, com `transition`, `transform`, `opacity` ou keyframes curtos.
+- Ao adicionar hover, mantenha efeitos leves como elevação pequena, sombra suave, brilho ou mudança de cor controlada.
+- Não aumente badges, pílulas ou cards em telas maiores apenas porque há mais espaço; use limites de largura quando necessário.
+
+Exemplo de direção visual:
+
+```tsx
+// Bom: mantém identidade, bordas e movimento suave
+className="rounded-xl border border-border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+```

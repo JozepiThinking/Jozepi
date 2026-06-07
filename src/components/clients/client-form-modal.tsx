@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { X, Plus, Trash2, Car } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Dropdown } from "@/components/ui/dropdown";
 import { BrandAutocomplete } from "@/components/clients/brand-autocomplete";
 import { VehiclePhotoUpload } from "@/components/clients/vehicle-photo-upload";
 import {
@@ -21,6 +22,11 @@ interface ClientFormModalProps {
   onClose: () => void;
   onSave: (data: ClientFormData) => Promise<void>;
 }
+
+const vehicleYearOptions = Array.from(
+  { length: new Date().getFullYear() - 1980 + 1 },
+  (_, index) => String(new Date().getFullYear() - index)
+).map((year) => ({ value: year, label: year }));
 
 function mapVehicleFromClient(v: NonNullable<Client["vehicles"]>[0]): VehicleFormItem {
   return {
@@ -346,16 +352,12 @@ export function ClientFormModal({
                         }
                         placeholder="ABC-1D23"
                       />
-                      <Input
+                      <Dropdown
                         label="Ano"
-                        type="number"
-                        min={1900}
-                        max={new Date().getFullYear() + 1}
                         value={vehicle.year}
-                        onChange={(e) =>
-                          updateVehicle(index, { year: e.target.value })
-                        }
-                        placeholder="2020"
+                        placeholder="Selecione o ano"
+                        options={vehicleYearOptions}
+                        onChange={(year) => updateVehicle(index, { year })}
                       />
                     </div>
 

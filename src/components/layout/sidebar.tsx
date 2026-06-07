@@ -9,6 +9,7 @@ import {
   Wrench,
   Wallet,
   Building2,
+  Package,
 } from "lucide-react";
 import { UserMenu } from "./user-menu";
 
@@ -17,6 +18,7 @@ const navigation = [
   { name: "Agenda", href: "/agenda", icon: CalendarDays },
   { name: "Clientes", href: "/clientes", icon: Users },
   { name: "Serviços", href: "/servicos", icon: Wrench },
+  { name: "Produtos", href: "/produtos", icon: Package },
   { name: "Financeiro", href: "/financeiro", icon: Wallet },
   { name: "Perfil da Empresa", href: "/empresa", icon: Building2 },
 ];
