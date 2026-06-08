@@ -1,4 +1,10 @@
-export type ProductType = "liquid" | "utensil";
+export type ProductType = string;
+
+export interface ProductTypeOption {
+  value: string;
+  label: string;
+  custom?: boolean;
+}
 
 export interface ProductItem {
   id: string;
@@ -9,6 +15,7 @@ export interface ProductItem {
   quantity: string;
   durabilityWashes: string;
   totalCost: string;
+  photoUrl?: string;
 }
 
 export interface ProductForm {
@@ -19,6 +26,7 @@ export interface ProductForm {
   quantity: string;
   durabilityWashes: string;
   totalCost: string;
+  photoUrl: string;
 }
 
 export interface ServiceProductUsage {
@@ -28,6 +36,7 @@ export interface ServiceProductUsage {
 }
 
 export const PRODUCTS_STORAGE_KEY = "auto-estetica-products-utensils";
+export const PRODUCT_TYPES_STORAGE_KEY = "auto-estetica-product-types";
 export const SERVICE_PRODUCT_USAGE_STORAGE_KEY =
   "auto-estetica-service-product-usages";
 
@@ -39,12 +48,24 @@ export const emptyProductForm: ProductForm = {
   quantity: "",
   durabilityWashes: "",
   totalCost: "",
+  photoUrl: "",
 };
 
-export const productTypeOptions = [
+export const productTypeOptions: ProductTypeOption[] = [
   { value: "liquid", label: "Produto líquido" },
   { value: "utensil", label: "Utensílio" },
 ];
+
+export function createProductTypeId(label: string) {
+  const slug = label
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return `custom-${slug || "tipo"}-${Date.now()}`;
+}
 
 export function parseMoney(value: string) {
   const normalized = value.replace(/\./g, "").replace(",", ".");
@@ -89,7 +110,10 @@ export function calculateProductUsageCost(
 }
 
 export function getProductTypeLabel(type: ProductType) {
-  return type === "liquid" ? "Produto líquido" : "Utensílio";
+  return (
+    productTypeOptions.find((option) => option.value === type)?.label ??
+    (type === "liquid" ? "Produto líquido" : "Utensílio")
+  );
 }
 
 export function getProductAmountLabel(type: ProductType) {

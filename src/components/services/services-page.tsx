@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Clock,
   Pencil,
@@ -18,17 +18,20 @@ import { formatCurrency } from "@/lib/utils/format";
 import {
   calculateProductUsageCost,
   createProductId,
+  createProductTypeId,
   createUsageId,
   emptyProductForm,
   getProductAmountLabel,
   getProductTypeLabel,
   parsePositiveNumber,
+  PRODUCT_TYPES_STORAGE_KEY,
   productTypeOptions,
   PRODUCTS_STORAGE_KEY,
   SERVICE_PRODUCT_USAGE_STORAGE_KEY,
   type ProductForm,
   type ProductItem,
   type ProductType,
+  type ProductTypeOption,
   type ServiceProductUsage,
 } from "@/lib/products/catalog";
 
@@ -44,6 +47,7 @@ interface ServiceItem {
 
 interface ServiceForm {
   name: string;
+  category: string;
   description: string;
   price: string;
   durationMinutes: string;
@@ -52,6 +56,7 @@ interface ServiceForm {
 
 const emptyForm: ServiceForm = {
   name: "",
+  category: "Outros",
   description: "",
   price: "",
   durationMinutes: "60",
@@ -73,6 +78,33 @@ const durationOptions = Array.from({ length: 16 }, (_, index) => {
           : `${hours}h30`,
   };
 });
+
+const SERVICE_FORM_EXIT_MS = 180;
+const SERVICE_CATEGORIES_STORAGE_KEY = "auto-estetica-service-categories";
+const SERVICE_CATEGORY_OPTIONS_STORAGE_KEY =
+  "auto-estetica-service-category-options";
+
+type ServiceStatusFilter = "all" | "active" | "inactive";
+
+interface ServiceCategoryOption {
+  value: string;
+  label: string;
+  custom?: boolean;
+}
+
+const defaultServiceCategoryOptions: ServiceCategoryOption[] = [
+  { value: "Lavagem", label: "Lavagem" },
+  { value: "Polimento", label: "Polimento" },
+  { value: "Higienização", label: "Higienização" },
+  { value: "Detalhamento", label: "Detalhamento" },
+  { value: "Outros", label: "Outros" },
+];
+
+const statusFilterOptions = [
+  { value: "all", label: "Todos" },
+  { value: "active", label: "Ativo" },
+  { value: "inactive", label: "Inativo" },
+];
 
 function parsePrice(value: string) {
   const normalized = value.replace(/\./g, "").replace(",", ".");
@@ -111,23 +143,50 @@ export function ServicesPage() {
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
+  const [typeOptions, setTypeOptions] =
+    useState<ProductTypeOption[]>(productTypeOptions);
+  const [typeOptionsLoaded, setTypeOptionsLoaded] = useState(false);
   const [serviceProductUsages, setServiceProductUsages] = useState<
     Record<string, ServiceProductUsage[]>
   >({});
   const [serviceProductUsagesLoaded, setServiceProductUsagesLoaded] =
     useState(false);
+  const [serviceCategories, setServiceCategories] = useState<Record<string, string>>(
+    {}
+  );
+  const [serviceCategoriesLoaded, setServiceCategoriesLoaded] = useState(false);
+  const [serviceCategoryOptions, setServiceCategoryOptions] = useState<
+    ServiceCategoryOption[]
+  >(defaultServiceCategoryOptions);
+  const [serviceCategoryOptionsLoaded, setServiceCategoryOptionsLoaded] =
+    useState(false);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<ServiceStatusFilter>("all");
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  const [formClosing, setFormClosing] = useState(false);
+  const [formAnimationKey, setFormAnimationKey] = useState(0);
   const [editingService, setEditingService] = useState<ServiceItem | null>(null);
   const [form, setForm] = useState<ServiceForm>(emptyForm);
   const [productFormOpen, setProductFormOpen] = useState(false);
   const [productForm, setProductForm] =
     useState<ProductForm>(emptyProductForm);
   const [addingProduct, setAddingProduct] = useState(false);
+  const [productTypeError, setProductTypeError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [productError, setProductError] = useState<string | null>(null);
+  const closeFormTimeoutRef = useRef<number | null>(null);
+
+  function clearCloseFormTimeout() {
+    if (closeFormTimeoutRef.current) {
+      window.clearTimeout(closeFormTimeoutRef.current);
+      closeFormTimeoutRef.current = null;
+    }
+  }
 
   async function loadServices() {
     setLoading(true);
@@ -168,8 +227,15 @@ export function ServicesPage() {
   useEffect(() => {
     void Promise.resolve().then(() => {
       const storedProducts = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
+      const storedTypes = window.localStorage.getItem(PRODUCT_TYPES_STORAGE_KEY);
       const storedUsages = window.localStorage.getItem(
         SERVICE_PRODUCT_USAGE_STORAGE_KEY
+      );
+      const storedServiceCategories = window.localStorage.getItem(
+        SERVICE_CATEGORIES_STORAGE_KEY
+      );
+      const storedServiceCategoryOptions = window.localStorage.getItem(
+        SERVICE_CATEGORY_OPTIONS_STORAGE_KEY
       );
 
       if (storedProducts) {
@@ -181,6 +247,16 @@ export function ServicesPage() {
       }
       setProductsLoaded(true);
 
+      if (storedTypes) {
+        try {
+          const customTypes = JSON.parse(storedTypes) as ProductTypeOption[];
+          setTypeOptions([...productTypeOptions, ...customTypes]);
+        } catch {
+          window.localStorage.removeItem(PRODUCT_TYPES_STORAGE_KEY);
+        }
+      }
+      setTypeOptionsLoaded(true);
+
       if (storedUsages) {
         try {
           setServiceProductUsages(
@@ -191,6 +267,32 @@ export function ServicesPage() {
         }
       }
       setServiceProductUsagesLoaded(true);
+
+      if (storedServiceCategories) {
+        try {
+          setServiceCategories(
+            JSON.parse(storedServiceCategories) as Record<string, string>
+          );
+        } catch {
+          window.localStorage.removeItem(SERVICE_CATEGORIES_STORAGE_KEY);
+        }
+      }
+      setServiceCategoriesLoaded(true);
+
+      if (storedServiceCategoryOptions) {
+        try {
+          const customCategories = JSON.parse(
+            storedServiceCategoryOptions
+          ) as ServiceCategoryOption[];
+          setServiceCategoryOptions([
+            ...defaultServiceCategoryOptions,
+            ...customCategories,
+          ]);
+        } catch {
+          window.localStorage.removeItem(SERVICE_CATEGORY_OPTIONS_STORAGE_KEY);
+        }
+      }
+      setServiceCategoryOptionsLoaded(true);
     });
   }, []);
 
@@ -207,37 +309,92 @@ export function ServicesPage() {
     );
   }, [serviceProductUsages, serviceProductUsagesLoaded]);
 
+  useEffect(() => {
+    if (!typeOptionsLoaded) return;
+
+    const customTypes = typeOptions.filter((option) => option.custom);
+    window.localStorage.setItem(
+      PRODUCT_TYPES_STORAGE_KEY,
+      JSON.stringify(customTypes)
+    );
+  }, [typeOptions, typeOptionsLoaded]);
+
+  useEffect(() => {
+    if (!serviceCategoriesLoaded) return;
+
+    window.localStorage.setItem(
+      SERVICE_CATEGORIES_STORAGE_KEY,
+      JSON.stringify(serviceCategories)
+    );
+  }, [serviceCategories, serviceCategoriesLoaded]);
+
+  useEffect(() => {
+    if (!serviceCategoryOptionsLoaded) return;
+
+    const customCategories = serviceCategoryOptions.filter(
+      (option) => option.custom
+    );
+    window.localStorage.setItem(
+      SERVICE_CATEGORY_OPTIONS_STORAGE_KEY,
+      JSON.stringify(customCategories)
+    );
+  }, [serviceCategoryOptions, serviceCategoryOptionsLoaded]);
+
+  useEffect(() => {
+    return clearCloseFormTimeout;
+  }, []);
+
+  function showForm() {
+    clearCloseFormTimeout();
+    setFormClosing(false);
+    setFormOpen(true);
+    setFormAnimationKey((current) => current + 1);
+  }
+
   function openCreateForm() {
     setEditingService(null);
     setForm(emptyForm);
     setError(null);
+    setCategoryError(null);
     setAddingProduct(false);
     setProductFormOpen(false);
-    setFormOpen(true);
+    showForm();
   }
 
   function openEditForm(service: ServiceItem) {
     setEditingService(service);
     setForm({
       name: service.name,
+      category: serviceCategories[service.id] ?? "Outros",
       description: service.description ?? "",
       price: String(service.price ?? ""),
       durationMinutes: String(service.duration_minutes ?? 60),
       productUsages: serviceProductUsages[service.id] ?? [],
     });
     setError(null);
+    setCategoryError(null);
     setAddingProduct(false);
     setProductFormOpen(false);
-    setFormOpen(true);
+    showForm();
   }
 
   function closeForm() {
-    setEditingService(null);
-    setForm(emptyForm);
-    setError(null);
-    setAddingProduct(false);
-    setProductFormOpen(false);
-    setFormOpen(false);
+    if (!formOpen) return;
+
+    clearCloseFormTimeout();
+    setFormClosing(true);
+
+    closeFormTimeoutRef.current = window.setTimeout(() => {
+      setEditingService(null);
+      setForm(emptyForm);
+      setError(null);
+      setCategoryError(null);
+      setAddingProduct(false);
+      setProductFormOpen(false);
+      setFormOpen(false);
+      setFormClosing(false);
+      closeFormTimeoutRef.current = null;
+    }, SERVICE_FORM_EXIT_MS);
   }
 
   async function handleSaveService(event: React.FormEvent<HTMLFormElement>) {
@@ -295,6 +452,10 @@ export function ServicesPage() {
           ...prev,
           [savedServiceId]: productUsages,
         }));
+        setServiceCategories((prev) => ({
+          ...prev,
+          [savedServiceId]: form.category,
+        }));
       }
 
       await loadServices();
@@ -344,17 +505,108 @@ export function ServicesPage() {
       delete next[service.id];
       return next;
     });
+    setServiceCategories((prev) => {
+      const next = { ...prev };
+      delete next[service.id];
+      return next;
+    });
     await loadServices();
   }
 
   function closeProductForm() {
     setProductForm(emptyProductForm);
     setProductError(null);
+    setProductTypeError(null);
     setProductFormOpen(false);
   }
 
   function updateProductForm(patch: Partial<ProductForm>) {
     setProductForm((prev) => ({ ...prev, ...patch }));
+  }
+
+  function getTypeLabel(type: ProductType) {
+    return (
+      typeOptions.find((option) => option.value === type)?.label ??
+      getProductTypeLabel(type)
+    );
+  }
+
+  function handleAddServiceCategory(label: string) {
+    const alreadyExists = serviceCategoryOptions.some(
+      (option) => option.label.toLowerCase() === label.toLowerCase()
+    );
+
+    if (alreadyExists) {
+      return "Essa categoria já existe.";
+    }
+
+    const nextCategory: ServiceCategoryOption = {
+      value: label,
+      label,
+      custom: true,
+    };
+
+    setServiceCategoryOptions((prev) => [...prev, nextCategory]);
+    setForm((prev) => ({ ...prev, category: nextCategory.value }));
+    setCategoryError(null);
+  }
+
+  function handleDeleteServiceCategory(category: string) {
+    const option = serviceCategoryOptions.find((item) => item.value === category);
+    if (!option?.custom) return;
+
+    const categoryInUse =
+      Object.values(serviceCategories).includes(category) ||
+      form.category === category;
+
+    if (categoryInUse) {
+      setCategoryError("Não é possível apagar uma categoria em uso.");
+      return;
+    }
+
+    setServiceCategoryOptions((prev) =>
+      prev.filter((item) => item.value !== category)
+    );
+    setCategoryError(null);
+  }
+
+  function handleAddProductType(label: string) {
+    const alreadyExists = typeOptions.some(
+      (option) => option.label.toLowerCase() === label.toLowerCase()
+    );
+
+    if (alreadyExists) {
+      return "Esse tipo já existe.";
+    }
+
+    const nextType: ProductTypeOption = {
+      value: createProductTypeId(label),
+      label,
+      custom: true,
+    };
+
+    setTypeOptions((prev) => [...prev, nextType]);
+    updateProductForm({ type: nextType.value });
+    setProductTypeError(null);
+  }
+
+  function handleDeleteProductType(type: string) {
+    const option = typeOptions.find((item) => item.value === type);
+    if (!option?.custom) return;
+
+    const typeInUse = products.some((product) => product.type === type);
+    if (typeInUse) {
+      setProductTypeError(
+        "Não é possível apagar um tipo usado em produtos cadastrados."
+      );
+      return;
+    }
+
+    setTypeOptions((prev) => prev.filter((item) => item.value !== type));
+    if (productForm.type === type) {
+      updateProductForm({ type: "liquid" });
+    }
+    setProductTypeError(null);
   }
 
   function handleSaveProduct() {
@@ -460,6 +712,62 @@ export function ServicesPage() {
     const product = products.find((item) => item.id === usage.productId);
     return product ? total + calculateProductUsageCost(product, usage.amount) : total;
   }, 0);
+  const categoryFilterOptions = [
+    { value: "all", label: "Todas" },
+    ...serviceCategoryOptions,
+  ];
+
+  function getServiceCategory(serviceId: string) {
+    return serviceCategories[serviceId] ?? "Outros";
+  }
+
+  function getServiceFinancials(serviceId: string, price: number | string) {
+    const usages = serviceProductUsages[serviceId] ?? [];
+    const cost = usages.reduce((total, usage) => {
+      const product = products.find((item) => item.id === usage.productId);
+      return product ? total + calculateProductUsageCost(product, usage.amount) : total;
+    }, 0);
+    const hasCost = usages.some((usage) => {
+      const product = products.find((item) => item.id === usage.productId);
+      return product ? calculateProductUsageCost(product, usage.amount) > 0 : false;
+    });
+
+    return {
+      cost,
+      hasCost,
+      profit: Number(price) - cost,
+    };
+  }
+
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+  const filteredServices = services.filter((service) => {
+    const category = getServiceCategory(service.id);
+    const matchesSearch =
+      !normalizedSearchTerm ||
+      service.name.toLowerCase().includes(normalizedSearchTerm);
+    const matchesCategory =
+      categoryFilter === "all" || category === categoryFilter;
+    const matchesStatus =
+      statusFilter === "all" ||
+      (statusFilter === "active" && service.active) ||
+      (statusFilter === "inactive" && !service.active);
+
+    return matchesSearch && matchesCategory && matchesStatus;
+  });
+  const servicesByCategory = filteredServices.reduce<Record<string, ServiceItem[]>>(
+    (acc, service) => {
+      const category = getServiceCategory(service.id);
+      acc[category] = [...(acc[category] ?? []), service];
+      return acc;
+    },
+    {}
+  );
+  const orderedCategories = Array.from(
+    new Set([
+      ...serviceCategoryOptions.map((option) => option.value),
+      ...Object.keys(servicesByCategory),
+    ])
+  ).filter((category) => servicesByCategory[category]?.length > 0);
 
   return (
     <>
@@ -478,9 +786,12 @@ export function ServicesPage() {
 
       {formOpen && (
         <form
+          key={formAnimationKey}
           onSubmit={handleSaveService}
           autoComplete="off"
-          className="mb-6 rounded-xl border border-border bg-card p-6 shadow-sm"
+          className={`mb-6 rounded-xl border border-border bg-card p-6 shadow-sm ${
+            formClosing ? "service-form-exit" : "service-form-enter"
+          }`}
         >
           <div className="mb-5 flex items-center justify-between">
             <div>
@@ -511,8 +822,25 @@ export function ServicesPage() {
               }
               placeholder="Lavagem completa"
             />
+            <Dropdown
+              label="Categoria"
+              value={form.category}
+              options={serviceCategoryOptions}
+              onChange={(category) => {
+                setForm((prev) => ({ ...prev, category }));
+                setCategoryError(null);
+              }}
+              actionLabel="Adicionar"
+              createPlaceholder="Ex: Martelinho, Proteção, Inspeção"
+              onCreateOption={handleAddServiceCategory}
+              onDeleteOption={handleDeleteServiceCategory}
+            />
+            {categoryError && (
+              <p className="text-xs font-medium text-danger">{categoryError}</p>
+            )}
             <Input
               label="Preço base"
+              prefix="R$"
               value={form.price}
               autoComplete="off"
               onChange={(event) =>
@@ -595,6 +923,7 @@ export function ServicesPage() {
               onClick={() => {
                 setProductForm(emptyProductForm);
                 setProductError(null);
+                setProductTypeError(null);
                 setProductFormOpen(true);
               }}
               className="mt-3 text-xs font-semibold text-success transition-colors hover:text-success/80"
@@ -637,11 +966,22 @@ export function ServicesPage() {
                   <Dropdown
                     label="Tipo"
                     value={productForm.type}
-                    options={productTypeOptions}
-                    onChange={(type) =>
-                      updateProductForm({ type: type as ProductType })
-                    }
+                    options={typeOptions}
+                    onChange={(type) => {
+                      updateProductForm({ type: type as ProductType });
+                      setProductTypeError(null);
+                    }}
+                    actionLabel="Adicionar"
+                    createPlaceholder="Ex: Cera, Equipamento, Químico"
+                    onCreateOption={handleAddProductType}
+                    onDeleteOption={handleDeleteProductType}
                   />
+
+                  {productTypeError && (
+                    <p className="text-xs font-medium text-danger">
+                      {productTypeError}
+                    </p>
+                  )}
 
                   {productForm.type === "liquid" ? (
                     <Input
@@ -723,7 +1063,7 @@ export function ServicesPage() {
                             {product.name}
                           </p>
                           <p className="text-xs text-muted">
-                            {getProductTypeLabel(product.type)}
+                            {getTypeLabel(product.type)}
                           </p>
                         </div>
                         <button
@@ -787,6 +1127,35 @@ export function ServicesPage() {
         </form>
       )}
 
+      <div className="mb-5 rounded-xl border border-border bg-card p-4 shadow-sm">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,1fr)_190px_150px_160px] md:items-end">
+          <Input
+            label="Buscar serviço"
+            value={searchTerm}
+            autoComplete="off"
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Digite o nome do serviço"
+          />
+          <Dropdown
+            label="Categoria"
+            value={categoryFilter}
+            options={categoryFilterOptions}
+            onChange={setCategoryFilter}
+          />
+          <Dropdown
+            label="Status"
+            value={statusFilter}
+            options={statusFilterOptions}
+            onChange={(status) => setStatusFilter(status as ServiceStatusFilter)}
+          />
+          <div className="rounded-xl bg-background px-4 py-3 text-sm font-semibold text-foreground">
+            {filteredServices.length} serviço
+            {filteredServices.length !== 1 ? "s" : ""} encontrado
+            {filteredServices.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+      </div>
+
       {loading ? (
         <div className="rounded-xl border border-border bg-card py-16 text-center text-sm text-muted shadow-sm">
           Carregando serviços...
@@ -807,80 +1176,172 @@ export function ServicesPage() {
             Novo serviço
           </Button>
         </div>
+      ) : filteredServices.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border bg-card py-14 text-center shadow-sm">
+          <p className="font-medium text-foreground">
+            Nenhum serviço encontrado
+          </p>
+          <p className="mt-1 text-sm text-muted">
+            Ajuste a busca ou os filtros para ver outros resultados.
+          </p>
+        </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {services.map((service) => (
-            <article
-              key={service.id}
-              className={`rounded-xl border border-border bg-card p-5 shadow-sm ${
-                service.active ? "" : "opacity-60"
-              }`}
+        <div className="space-y-5">
+          {orderedCategories.map((category) => (
+            <section
+              key={category}
+              className="overflow-hidden rounded-xl border border-border bg-card shadow-sm"
             >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="font-semibold text-foreground">
-                      {service.name}
-                    </h2>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                        service.active
-                          ? "bg-success/10 text-success"
-                          : "bg-muted/10 text-muted"
+              <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-5 py-3">
+                <h2 className="text-sm font-bold uppercase tracking-wide text-muted">
+                  {category}
+                </h2>
+                <span className="rounded-full bg-success/10 px-3 py-1 text-xs font-semibold text-success">
+                  {servicesByCategory[category].length} serviço
+                  {servicesByCategory[category].length !== 1 ? "s" : ""}
+                </span>
+              </div>
+
+              <div className="hidden grid-cols-[minmax(180px,1fr)_88px_96px_96px_96px_120px] gap-3 border-b border-border px-5 py-3 text-xs font-bold uppercase tracking-wide text-muted md:grid">
+                <span>Serviço</span>
+                <span>Duração</span>
+                <span>Preço</span>
+                <span>Custo</span>
+                <span>Lucro</span>
+                <span className="text-right">Ações</span>
+              </div>
+
+              <div className="divide-y divide-border">
+                {servicesByCategory[category].map((service) => {
+                  const financials = getServiceFinancials(
+                    service.id,
+                    service.price
+                  );
+                  const profitPositive = financials.profit >= 0;
+
+                  return (
+                    <article
+                      key={service.id}
+                      className={`grid grid-cols-1 gap-4 px-5 py-4 transition-colors hover:bg-background/70 md:grid-cols-[minmax(180px,1fr)_88px_96px_96px_96px_120px] md:items-center md:gap-3 ${
+                        service.active ? "" : "opacity-70"
                       }`}
                     >
-                      {service.active ? "Ativo" : "Inativo"}
-                    </span>
-                  </div>
-                  {service.description && (
-                    <p className="mt-1 text-sm text-muted">
-                      {service.description}
-                    </p>
-                  )}
-                </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-semibold text-foreground">
+                            {service.name}
+                          </h3>
+                          <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent">
+                            {getServiceCategory(service.id)}
+                          </span>
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                              service.active
+                                ? "bg-success/10 text-success"
+                                : "bg-muted/10 text-muted"
+                            }`}
+                          >
+                            {service.active ? "Ativo" : "Inativo"}
+                          </span>
+                        </div>
+                        {service.description && (
+                          <p className="mt-1 text-sm text-muted">
+                            {service.description}
+                          </p>
+                        )}
+                      </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openEditForm(service)}
-                    className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
-                    title="Editar serviço"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteService(service)}
-                    className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
-                    title="Excluir serviço"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
+                      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-muted">
+                        <Clock className="h-4 w-4" />
+                        {formatDuration(service.duration_minutes)}
+                      </span>
+                      <span className="text-sm font-semibold text-foreground">
+                        {formatCurrency(Number(service.price))}
+                      </span>
+                      <span className="text-sm font-semibold text-foreground">
+                        {financials.hasCost
+                          ? formatCurrency(financials.cost)
+                          : "—"}
+                      </span>
+                      <span
+                        className={`text-sm font-bold ${
+                          profitPositive ? "text-success" : "text-danger"
+                        }`}
+                      >
+                        {formatCurrency(financials.profit)}
+                      </span>
 
-              <div className="mt-5 flex flex-wrap items-center gap-3 text-sm">
-                <span className="rounded-lg bg-background px-3 py-2 font-semibold text-foreground">
-                  {formatCurrency(Number(service.price))}
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-lg bg-background px-3 py-2 font-medium text-muted">
-                  <Clock className="h-4 w-4" />
-                  {formatDuration(service.duration_minutes)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleToggleActive(service)}
-                  className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 font-medium text-muted transition-colors hover:text-foreground"
-                >
-                  <Power className="h-4 w-4" />
-                  {service.active ? "Desativar" : "Ativar"}
-                </button>
+                      <div className="flex items-center justify-start gap-2 md:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => openEditForm(service)}
+                          className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
+                          title="Editar serviço"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleActive(service)}
+                          className="rounded-lg bg-background p-2 text-muted transition-colors hover:text-foreground"
+                          title={service.active ? "Desativar" : "Ativar"}
+                        >
+                          <Power className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteService(service)}
+                          className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
+                          title="Excluir serviço"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
-            </article>
+            </section>
           ))}
         </div>
       )}
 
+      <style>{`
+        @media (prefers-reduced-motion: no-preference) {
+          .service-form-enter {
+            animation: service-form-enter 220ms ease-out both;
+            transform-origin: top center;
+          }
+
+          .service-form-exit {
+            animation: service-form-exit ${SERVICE_FORM_EXIT_MS}ms ease-in both;
+            pointer-events: none;
+            transform-origin: top center;
+          }
+        }
+
+        @keyframes service-form-enter {
+          from {
+            opacity: 0;
+            transform: translateY(-10px) scale(0.98);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+
+        @keyframes service-form-exit {
+          from {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+          to {
+            opacity: 0;
+            transform: translateY(-8px) scale(0.98);
+          }
+        }
+      `}</style>
     </>
   );
 }

@@ -55,6 +55,42 @@ interface AgendaService {
   active: boolean;
 }
 
+type ServiceOrderStatus =
+  | "aberta"
+  | "em_andamento"
+  | "finalizada"
+  | "cancelada";
+
+interface AppointmentOrderService {
+  id: string;
+  name: string;
+  price: number | string;
+  duration_minutes: number | null;
+}
+
+interface AppointmentOrderItem {
+  service_id: string;
+  unit_price: number | string;
+  services: AppointmentOrderService | AppointmentOrderService[] | null;
+}
+
+interface AppointmentOrderRow {
+  id: string;
+  client_id: string;
+  vehicle_id: string;
+  status: ServiceOrderStatus | string;
+  total_amount: number | string;
+  scheduled_date: string | null;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  clients: { name: string } | { name: string }[] | null;
+  vehicles:
+    | { brand: string; model: string; plate: string }
+    | { brand: string; model: string; plate: string }[]
+    | null;
+  service_order_items: AppointmentOrderItem[] | null;
+}
+
 interface SelectOption {
   value: string;
   label: string;
@@ -204,6 +240,98 @@ function getServicePrice(service: AgendaService) {
   return Number(service.price) || 0;
 }
 
+function firstRelation<T>(value: T | T[] | null | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function normalizeDbTime(value: string | null) {
+  return value?.slice(0, 5) ?? "";
+}
+
+function getAppointmentStatus(status: ServiceOrderStatus | string): AppointmentStatus {
+  if (status === "em_andamento") return "Confirmado";
+  if (status === "finalizada") return "Concluído";
+  if (status === "cancelada") return "Cancelado";
+
+  return "Pendente";
+}
+
+function getServiceOrderStatus(status: AppointmentStatus): ServiceOrderStatus {
+  if (status === "Confirmado") return "em_andamento";
+  if (status === "Concluído") return "finalizada";
+  if (status === "Cancelado") return "cancelada";
+
+  return "aberta";
+}
+
+function createAppointmentId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `appointment-${Date.now()}-${Math.random()}`;
+}
+
+function isMissingAgendaMigrationError(err: unknown) {
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err && "message" in err
+        ? String((err as { message?: unknown }).message)
+        : String(err);
+
+  return (
+    message.includes("scheduled_date") ||
+    message.includes("scheduled_start") ||
+    message.includes("scheduled_end") ||
+    message.includes("schema cache")
+  );
+}
+
+function readLocalAppointments() {
+  if (typeof window === "undefined") return [];
+
+  const storedAppointments = window.localStorage.getItem(AGENDA_STORAGE_KEY);
+  if (!storedAppointments) return [];
+
+  try {
+    return JSON.parse(storedAppointments) as Appointment[];
+  } catch {
+    window.localStorage.removeItem(AGENDA_STORAGE_KEY);
+    return [];
+  }
+}
+
+function writeLocalAppointments(appointments: Appointment[]) {
+  if (typeof window === "undefined") return;
+
+  window.localStorage.setItem(AGENDA_STORAGE_KEY, JSON.stringify(appointments));
+}
+
+function mapOrderToAppointment(order: AppointmentOrderRow): Appointment {
+  const client = firstRelation(order.clients);
+  const vehicle = firstRelation(order.vehicles);
+  const serviceItems = order.service_order_items ?? [];
+  const services = serviceItems
+    .map((item) => firstRelation(item.services))
+    .filter((service): service is AppointmentOrderService => Boolean(service));
+
+  return {
+    id: order.id,
+    date: order.scheduled_date ?? dateKey(new Date()),
+    startTime: normalizeDbTime(order.scheduled_start),
+    endTime: normalizeDbTime(order.scheduled_end),
+    clientId: order.client_id,
+    vehicleId: order.vehicle_id,
+    serviceIds: serviceItems.map((item) => item.service_id),
+    client: client?.name ?? "Cliente não encontrado",
+    service: services.map((service) => service.name).join(", "),
+    totalAmount: Number(order.total_amount) || 0,
+    vehicle: vehicle
+      ? `${vehicle.brand} ${vehicle.model} - ${vehicle.plate}`
+      : "Veículo não encontrado",
+    status: getAppointmentStatus(order.status),
+  };
+}
+
 function formatServiceDuration(minutes: number | null) {
   if (!minutes) return null;
 
@@ -342,12 +470,16 @@ export function AgendaCalendar() {
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(today));
   const [selectedDate, setSelectedDate] = useState(today);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [appointmentsLoaded, setAppointmentsLoaded] = useState(false);
+  const [agendaStorageMode, setAgendaStorageMode] = useState<
+    "supabase" | "local"
+  >("supabase");
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<AgendaService[]>([]);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [loadingClients, setLoadingClients] = useState(true);
   const [loadingServices, setLoadingServices] = useState(true);
+  const [loadingAppointments, setLoadingAppointments] = useState(true);
+  const [savingAppointment, setSavingAppointment] = useState(false);
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [formClosing, setFormClosing] = useState(false);
@@ -378,6 +510,7 @@ export function AgendaCalendar() {
   async function loadAgendaData() {
     setLoadingClients(true);
     setLoadingServices(true);
+    setLoadingAppointments(true);
 
     const { data: profile } = await supabase
       .from("profiles")
@@ -387,6 +520,7 @@ export function AgendaCalendar() {
     if (!profile?.workshop_id) {
       setLoadingClients(false);
       setLoadingServices(false);
+      setLoadingAppointments(false);
       return;
     }
 
@@ -415,8 +549,52 @@ export function AgendaCalendar() {
       setServices((servicesData as AgendaService[]) ?? []);
     }
 
+    const { data: appointmentsData, error: appointmentsError } = await supabase
+      .from("service_orders")
+      .select(
+        `
+        id,
+        client_id,
+        vehicle_id,
+        status,
+        total_amount,
+        scheduled_date,
+        scheduled_start,
+        scheduled_end,
+        clients(name),
+        vehicles(brand, model, plate),
+        service_order_items(
+          service_id,
+          unit_price,
+          services(id, name, price, duration_minutes)
+        )
+      `
+      )
+      .eq("workshop_id", profile.workshop_id)
+      .not("scheduled_date", "is", null)
+      .order("scheduled_date", { ascending: true })
+      .order("scheduled_start", { ascending: true });
+
+    if (appointmentsError) {
+      if (isMissingAgendaMigrationError(appointmentsError)) {
+        setAgendaStorageMode("local");
+        setAppointments(readLocalAppointments());
+        setError(null);
+      } else {
+        setError(appointmentsError.message);
+      }
+    } else {
+      setAgendaStorageMode("supabase");
+      setAppointments(
+        ((appointmentsData as AppointmentOrderRow[] | null) ?? []).map(
+          mapOrderToAppointment
+        )
+      );
+    }
+
     setLoadingClients(false);
     setLoadingServices(false);
+    setLoadingAppointments(false);
   }
 
   useEffect(() => {
@@ -425,54 +603,46 @@ export function AgendaCalendar() {
   }, []);
 
   useEffect(() => {
-    void Promise.resolve().then(() => {
-      const storedAppointments = window.localStorage.getItem(AGENDA_STORAGE_KEY);
-
-      if (storedAppointments) {
-        try {
-          setAppointments(JSON.parse(storedAppointments) as Appointment[]);
-        } catch {
-          window.localStorage.removeItem(AGENDA_STORAGE_KEY);
-        }
-      }
-
-      setAppointmentsLoaded(true);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!appointmentsLoaded) return;
-
-    window.localStorage.setItem(
-      AGENDA_STORAGE_KEY,
-      JSON.stringify(appointments)
-    );
-  }, [appointments, appointmentsLoaded]);
-
-  useEffect(() => {
     const intervalId = window.setInterval(() => {
       const nextNow = new Date();
       setNow(nextNow);
       setAppointments((prev) => {
-        let changed = false;
+        const completedAppointmentIds: string[] = [];
         const next = prev.map((appointment) => {
           if (
             appointment.status === "Confirmado" &&
             isAppointmentPast(appointment, nextNow)
           ) {
-            changed = true;
+            completedAppointmentIds.push(appointment.id);
             return { ...appointment, status: "Concluído" as const };
           }
 
           return appointment;
         });
 
-        return changed ? next : prev;
+        if (completedAppointmentIds.length > 0 && agendaStorageMode === "local") {
+          writeLocalAppointments(next);
+        }
+
+        if (
+          completedAppointmentIds.length > 0 &&
+          agendaStorageMode === "supabase"
+        ) {
+          void supabase
+            .from("service_orders")
+            .update({
+              status: "finalizada",
+              completed_at: nextNow.toISOString(),
+            })
+            .in("id", completedAppointmentIds);
+        }
+
+        return completedAppointmentIds.length > 0 ? next : prev;
       });
     }, 60_000);
 
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [agendaStorageMode, supabase]);
 
   const selectedKey = dateKey(selectedDate);
   const calendarDays = useMemo(
@@ -741,8 +911,13 @@ export function AgendaCalendar() {
     setCurrentMonth(startOfMonth(nextDate));
   }
 
-  function handleSaveAppointment(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSaveAppointment(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!workshopId) {
+      setError("Oficina não encontrada.");
+      return;
+    }
 
     if (
       !form.date ||
@@ -798,63 +973,191 @@ export function AgendaCalendar() {
       return;
     }
 
-    const vehicleLabel = `${appointmentVehicle.brand} ${appointmentVehicle.model} - ${appointmentVehicle.plate}`;
+    const confirmedClient = appointmentClient;
+    const confirmedVehicle = appointmentVehicle;
+    const vehicleLabel = `${confirmedVehicle.brand} ${confirmedVehicle.model} - ${confirmedVehicle.plate}`;
     const serviceLabel = selectedServices.map((service) => service.name).join(", ");
     const appointmentTotal = hasCustomTotalAmount
       ? customTotalAmount
       : servicesTotal;
+    const currentStatus =
+      appointments.find((appointment) => appointment.id === editingAppointmentId)
+        ?.status ?? "Pendente";
+    const payload = {
+      client_id: appointmentClient.id,
+      vehicle_id: appointmentVehicle.id,
+      total_amount: appointmentTotal,
+      scheduled_date: form.date,
+      scheduled_start: form.startTime,
+      scheduled_end: form.endTime,
+      status: getServiceOrderStatus(currentStatus),
+      completed_at:
+        currentStatus === "Concluído" ? new Date().toISOString() : null,
+    };
+    const serviceItems = selectedServices.map((service) => ({
+      service_id: service.id,
+      quantity: 1,
+      unit_price: getServicePrice(service),
+    }));
 
-    if (editingAppointmentId) {
-      setAppointments((prev) =>
-        prev.map((appointment) =>
-          appointment.id === editingAppointmentId
-            ? {
-                ...appointment,
-                date: form.date,
-                startTime: form.startTime,
-                endTime: form.endTime,
-                clientId: appointmentClient.id,
-                vehicleId: appointmentVehicle.id,
-                serviceIds: selectedServices.map((service) => service.id),
-                client: appointmentClient.name,
-                service: serviceLabel,
-                totalAmount: appointmentTotal,
-                vehicle: vehicleLabel,
-              }
-            : appointment
-        )
-      );
-    } else {
-      setAppointments((prev) => [
-        ...prev,
-        {
-          id: `appointment-${Date.now()}`,
-          date: form.date,
-          startTime: form.startTime,
-          endTime: form.endTime,
-          clientId: appointmentClient.id,
-          vehicleId: appointmentVehicle.id,
-          serviceIds: selectedServices.map((service) => service.id),
-          client: appointmentClient.name,
-          service: serviceLabel,
-          totalAmount: appointmentTotal,
-          vehicle: vehicleLabel,
-          status: "Pendente",
-        },
-      ]);
+    function saveAppointmentLocally(appointmentId: string) {
+      const savedAppointment: Appointment = {
+        id: appointmentId,
+        date: form.date,
+        startTime: form.startTime,
+        endTime: form.endTime,
+        clientId: confirmedClient.id,
+        vehicleId: confirmedVehicle.id,
+        serviceIds: selectedServices.map((service) => service.id),
+        client: confirmedClient.name,
+        service: serviceLabel,
+        totalAmount: appointmentTotal,
+        vehicle: vehicleLabel,
+        status: currentStatus,
+      };
+
+      setAppointments((prev) => {
+        const next = editingAppointmentId
+          ? prev.map((appointment) =>
+              appointment.id === editingAppointmentId
+                ? savedAppointment
+                : appointment
+            )
+          : [...prev, savedAppointment];
+
+        writeLocalAppointments(next);
+        return next;
+      });
+      syncSelectedDate(form.date);
+      closeForm();
     }
 
-    syncSelectedDate(form.date);
-    closeForm();
+    if (agendaStorageMode === "local") {
+      saveAppointmentLocally(editingAppointmentId ?? createAppointmentId());
+      return;
+    }
+
+    setSavingAppointment(true);
+    setError(null);
+
+    try {
+      let savedAppointmentId = editingAppointmentId;
+
+      if (editingAppointmentId) {
+        const { error: updateError } = await supabase
+          .from("service_orders")
+          .update(payload)
+          .eq("id", editingAppointmentId);
+
+        if (updateError) throw updateError;
+
+        const { error: deleteItemsError } = await supabase
+          .from("service_order_items")
+          .delete()
+          .eq("service_order_id", editingAppointmentId);
+
+        if (deleteItemsError) throw deleteItemsError;
+      } else {
+        const { data: insertedOrder, error: insertError } = await supabase
+          .from("service_orders")
+          .insert({
+            ...payload,
+            workshop_id: workshopId,
+            payment_status: "pendente",
+          })
+          .select("id")
+          .single();
+
+        if (insertError) throw insertError;
+        savedAppointmentId = insertedOrder.id;
+      }
+
+      if (!savedAppointmentId) {
+        throw new Error("Erro ao salvar agendamento.");
+      }
+
+      const { error: insertItemsError } = await supabase
+        .from("service_order_items")
+        .insert(
+          serviceItems.map((item) => ({
+            ...item,
+            service_order_id: savedAppointmentId,
+          }))
+        );
+
+      if (insertItemsError) throw insertItemsError;
+
+      const savedAppointment: Appointment = {
+        id: savedAppointmentId,
+        date: form.date,
+        startTime: form.startTime,
+        endTime: form.endTime,
+        clientId: appointmentClient.id,
+        vehicleId: appointmentVehicle.id,
+        serviceIds: selectedServices.map((service) => service.id),
+        client: appointmentClient.name,
+        service: serviceLabel,
+        totalAmount: appointmentTotal,
+        vehicle: vehicleLabel,
+        status: currentStatus,
+      };
+
+      setAppointments((prev) =>
+        editingAppointmentId
+          ? prev.map((appointment) =>
+              appointment.id === editingAppointmentId
+                ? savedAppointment
+                : appointment
+            )
+          : [...prev, savedAppointment]
+      );
+      syncSelectedDate(form.date);
+      closeForm();
+    } catch (err) {
+      if (isMissingAgendaMigrationError(err)) {
+        setAgendaStorageMode("local");
+        saveAppointmentLocally(editingAppointmentId ?? createAppointmentId());
+        return;
+      }
+
+      setError(
+        err instanceof Error ? err.message : "Erro ao salvar agendamento."
+      );
+    } finally {
+      setSavingAppointment(false);
+    }
   }
 
-  function handleDeleteAppointment(appointment: Appointment) {
+  async function handleDeleteAppointment(appointment: Appointment) {
     setOpenStatusMenuId(null);
     const confirmed = window.confirm(
       `Deseja excluir o horário de ${appointment.client}?`
     );
 
     if (!confirmed) return;
+
+    if (agendaStorageMode === "local") {
+      setAppointments((prev) => {
+        const next = prev.filter((item) => item.id !== appointment.id);
+        writeLocalAppointments(next);
+        return next;
+      });
+
+      if (editingAppointmentId === appointment.id) {
+        closeForm();
+      }
+      return;
+    }
+
+    const { error: deleteError } = await supabase
+      .from("service_orders")
+      .delete()
+      .eq("id", appointment.id);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
 
     setAppointments((prev) =>
       prev.filter((item) => item.id !== appointment.id)
@@ -865,7 +1168,7 @@ export function AgendaCalendar() {
     }
   }
 
-  function handleClearSelectedDay() {
+  async function handleClearSelectedDay() {
     setOpenStatusMenuId(null);
     const confirmed = window.confirm(
       "Deseja excluir todos os horários deste dia?"
@@ -873,16 +1176,67 @@ export function AgendaCalendar() {
 
     if (!confirmed) return;
 
+    const appointmentIds = selectedAppointments.map((appointment) => appointment.id);
+
+    if (agendaStorageMode === "local") {
+      setAppointments((prev) => {
+        const next = prev.filter((appointment) => appointment.date !== selectedKey);
+        writeLocalAppointments(next);
+        return next;
+      });
+      closeForm();
+      return;
+    }
+
+    if (appointmentIds.length > 0) {
+      const { error: deleteError } = await supabase
+        .from("service_orders")
+        .delete()
+        .in("id", appointmentIds);
+
+      if (deleteError) {
+        setError(deleteError.message);
+        return;
+      }
+    }
+
     setAppointments((prev) =>
       prev.filter((appointment) => appointment.date !== selectedKey)
     );
     closeForm();
   }
 
-  function handleChangeStatus(
+  async function handleChangeStatus(
     appointmentId: string,
     status: AppointmentStatus
   ) {
+    if (agendaStorageMode === "local") {
+      setAppointments((prev) => {
+        const next = prev.map((appointment) =>
+          appointment.id === appointmentId
+            ? { ...appointment, status }
+            : appointment
+        );
+        writeLocalAppointments(next);
+        return next;
+      });
+      closeStatusMenu(appointmentId);
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from("service_orders")
+      .update({
+        status: getServiceOrderStatus(status),
+        completed_at: status === "Concluído" ? new Date().toISOString() : null,
+      })
+      .eq("id", appointmentId);
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+
     setAppointments((prev) =>
       prev.map((appointment) =>
         appointment.id === appointmentId
@@ -1577,16 +1931,27 @@ export function AgendaCalendar() {
                 <Button
                   type="submit"
                   variant="success"
+                  disabled={savingAppointment}
                   className="w-full bg-gradient-to-r from-success to-emerald-500 text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:from-success hover:to-emerald-600 hover:shadow-md"
                 >
                   <Check className="h-4 w-4" />
-                  {editingAppointmentId ? "Salvar alterações" : "Salvar na agenda"}
+                  {savingAppointment
+                    ? "Salvando..."
+                    : editingAppointmentId
+                      ? "Salvar alterações"
+                      : "Salvar na agenda"}
                 </Button>
               </form>
             )}
 
             <div className="space-y-3">
-              {selectedAppointments.length === 0 ? (
+              {loadingAppointments ? (
+                <div className="rounded-xl border border-dashed border-border bg-background px-4 py-8 text-center">
+                  <p className="text-sm font-medium text-foreground">
+                    Carregando horários...
+                  </p>
+                </div>
+              ) : selectedAppointments.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-border bg-background px-4 py-8 text-center">
                   <p className="text-sm font-medium text-foreground">
                     Nenhum horário neste dia
