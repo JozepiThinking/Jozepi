@@ -23,7 +23,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         </label>
         <div className="relative">
           {prefix && (
-            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted">
+            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-base font-semibold text-muted sm:text-sm">
               {prefix}
             </span>
           )}
@@ -31,7 +31,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             ref={ref}
             id={inputId}
             className={cn(
-              "w-full rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm text-foreground",
+              "w-full rounded-lg border border-border bg-slate-50 px-4 py-3 text-base text-foreground sm:py-2.5 sm:text-sm",
               prefix && "pl-11",
               "placeholder:text-muted/60 transition-colors",
               "focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20",

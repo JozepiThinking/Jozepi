@@ -771,8 +771,8 @@ export function ServicesPage() {
 
   return (
     <>
-      <div className="mb-6 flex justify-end">
-        <Button variant="success" onClick={openCreateForm}>
+      <div className="mb-5 flex justify-stretch sm:mb-6 sm:justify-end">
+        <Button variant="success" onClick={openCreateForm} className="w-full sm:w-auto">
           <Plus className="h-4 w-4" />
           Novo serviço
         </Button>
@@ -789,11 +789,11 @@ export function ServicesPage() {
           key={formAnimationKey}
           onSubmit={handleSaveService}
           autoComplete="off"
-          className={`mb-6 rounded-xl border border-border bg-card p-6 shadow-sm ${
+          className={`mb-6 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6 ${
             formClosing ? "service-form-exit" : "service-form-enter"
           }`}
         >
-          <div className="mb-5 flex items-center justify-between">
+          <div className="mb-5 flex items-start justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold text-foreground">
                 {editingService ? "Editar serviço" : "Novo serviço"}
@@ -805,7 +805,7 @@ export function ServicesPage() {
             <button
               type="button"
               onClick={closeForm}
-              className="rounded-lg p-2 text-muted transition-colors hover:bg-background hover:text-foreground"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-muted transition-colors hover:bg-background hover:text-foreground sm:min-h-0 sm:min-w-0 sm:p-2"
               aria-label="Fechar formulário"
             >
               <X className="h-5 w-5" />
@@ -874,8 +874,8 @@ export function ServicesPage() {
             />
           </div>
 
-          <div className="mt-5 rounded-xl border border-border bg-background p-5">
-            <div className="flex items-center justify-between gap-4">
+          <div className="mt-5 rounded-xl border border-border bg-background p-4 sm:p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-foreground">
                   Produtos utilizados neste serviço
@@ -888,7 +888,7 @@ export function ServicesPage() {
                 type="button"
                 onClick={() => setAddingProduct(true)}
                 disabled={availableProducts.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-3 py-1.5 text-xs font-semibold text-success transition-all hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:justify-start sm:py-1.5 sm:text-xs"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Adicionar produto
@@ -926,7 +926,7 @@ export function ServicesPage() {
                 setProductTypeError(null);
                 setProductFormOpen(true);
               }}
-              className="mt-3 text-xs font-semibold text-success transition-colors hover:text-success/80"
+              className="mt-3 min-h-11 text-sm font-semibold text-success transition-colors hover:text-success/80 sm:min-h-0 sm:text-xs"
             >
               Cadastrar novo produto
             </button>
@@ -1020,11 +1020,12 @@ export function ServicesPage() {
                   />
                 </div>
 
-                <div className="mt-4 flex justify-end gap-3">
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:justify-end">
                   <Button
                     type="button"
                     variant="secondary"
                     onClick={closeProductForm}
+                    className="w-full sm:w-auto"
                   >
                     Cancelar
                   </Button>
@@ -1032,6 +1033,7 @@ export function ServicesPage() {
                     type="button"
                     variant="success"
                     onClick={handleSaveProduct}
+                    className="w-full sm:w-auto"
                   >
                     Salvar e adicionar
                   </Button>
@@ -1057,7 +1059,7 @@ export function ServicesPage() {
                       key={usage.id}
                       className="rounded-xl border border-border bg-card p-4 shadow-sm"
                     >
-                      <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-semibold text-foreground">
                             {product.name}
@@ -1069,7 +1071,7 @@ export function ServicesPage() {
                         <button
                           type="button"
                           onClick={() => removeProductUsage(usage.id)}
-                          className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
+                          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:min-w-0"
                           aria-label={`Remover ${product.name}`}
                         >
                           <X className="h-4 w-4" />
@@ -1104,7 +1106,7 @@ export function ServicesPage() {
                   );
                 })}
 
-                <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+                <div className="flex flex-col gap-1 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                   <span className="text-sm font-medium text-muted">
                     Custo total de produtos
                   </span>
@@ -1116,11 +1118,21 @@ export function ServicesPage() {
             )}
           </div>
 
-          <div className="mt-5 flex justify-end gap-3">
-            <Button type="button" variant="secondary" onClick={closeForm}>
+          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={closeForm}
+              className="w-full sm:w-auto"
+            >
               Cancelar
             </Button>
-            <Button type="submit" variant="success" loading={saving}>
+            <Button
+              type="submit"
+              variant="success"
+              loading={saving}
+              className="w-full sm:w-auto"
+            >
               Salvar serviço
             </Button>
           </div>
@@ -1148,7 +1160,7 @@ export function ServicesPage() {
             options={statusFilterOptions}
             onChange={(status) => setStatusFilter(status as ServiceStatusFilter)}
           />
-          <div className="rounded-xl bg-background px-4 py-3 text-sm font-semibold text-foreground">
+          <div className="rounded-xl bg-background px-4 py-3 text-base font-semibold text-foreground sm:text-sm">
             {filteredServices.length} serviço
             {filteredServices.length !== 1 ? "s" : ""} encontrado
             {filteredServices.length !== 1 ? "s" : ""}
@@ -1171,7 +1183,11 @@ export function ServicesPage() {
           <p className="mt-1 text-sm text-muted">
             Crie sua lista para usar os serviços na agenda.
           </p>
-          <Button variant="success" className="mt-4" onClick={openCreateForm}>
+          <Button
+            variant="success"
+            className="mt-4 w-full sm:w-auto"
+            onClick={openCreateForm}
+          >
             <Plus className="h-4 w-4" />
             Novo serviço
           </Button>
@@ -1192,7 +1208,7 @@ export function ServicesPage() {
               key={category}
               className="overflow-hidden rounded-xl border border-border bg-card shadow-sm"
             >
-              <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-5 py-3">
+              <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-3 sm:px-5">
                 <h2 className="text-sm font-bold uppercase tracking-wide text-muted">
                   {category}
                 </h2>
@@ -1211,7 +1227,7 @@ export function ServicesPage() {
                 <span className="text-right">Ações</span>
               </div>
 
-              <div className="divide-y divide-border">
+              <div className="space-y-3 p-3 md:space-y-0 md:divide-y md:divide-border md:p-0">
                 {servicesByCategory[category].map((service) => {
                   const financials = getServiceFinancials(
                     service.id,
@@ -1222,13 +1238,13 @@ export function ServicesPage() {
                   return (
                     <article
                       key={service.id}
-                      className={`grid grid-cols-1 gap-4 px-5 py-4 transition-colors hover:bg-background/70 md:grid-cols-[minmax(180px,1fr)_88px_96px_96px_96px_120px] md:items-center md:gap-3 ${
+                      className={`grid grid-cols-1 gap-4 rounded-2xl border border-border bg-background/50 px-4 py-4 shadow-sm transition-colors hover:bg-background/70 md:rounded-none md:border-0 md:bg-transparent md:px-5 md:shadow-none md:grid-cols-[minmax(180px,1fr)_88px_96px_96px_96px_120px] md:items-center md:gap-3 ${
                         service.active ? "" : "opacity-70"
                       }`}
                     >
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="font-semibold text-foreground">
+                          <h3 className="text-base font-semibold text-foreground md:text-sm">
                             {service.name}
                           </h3>
                           <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent">
@@ -1251,50 +1267,69 @@ export function ServicesPage() {
                         )}
                       </div>
 
-                      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-muted">
-                        <Clock className="h-4 w-4" />
-                        {formatDuration(service.duration_minutes)}
-                      </span>
-                      <span className="text-sm font-semibold text-foreground">
-                        {formatCurrency(Number(service.price))}
-                      </span>
-                      <span className="text-sm font-semibold text-foreground">
-                        {financials.hasCost
-                          ? formatCurrency(financials.cost)
-                          : "—"}
-                      </span>
-                      <span
-                        className={`text-sm font-bold ${
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-card px-3 py-2 text-sm font-semibold md:block md:bg-transparent md:p-0">
+                        <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
+                          Duração
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 font-medium text-muted">
+                          <Clock className="h-4 w-4" />
+                          {formatDuration(service.duration_minutes)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-card px-3 py-2 text-sm font-semibold text-foreground md:block md:bg-transparent md:p-0">
+                        <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
+                          Preço
+                        </span>
+                        <span>{formatCurrency(Number(service.price))}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-card px-3 py-2 text-sm font-semibold text-foreground md:block md:bg-transparent md:p-0">
+                        <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
+                          Custo
+                        </span>
+                        <span>
+                          {financials.hasCost
+                            ? formatCurrency(financials.cost)
+                            : "—"}
+                        </span>
+                      </div>
+                      <div
+                        className={`flex items-center justify-between gap-3 rounded-xl bg-card px-3 py-2 text-sm font-bold md:block md:bg-transparent md:p-0 ${
                           profitPositive ? "text-success" : "text-danger"
                         }`}
                       >
-                        {formatCurrency(financials.profit)}
-                      </span>
+                        <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
+                          Lucro
+                        </span>
+                        <span>{formatCurrency(financials.profit)}</span>
+                      </div>
 
-                      <div className="flex items-center justify-start gap-2 md:justify-end">
+                      <div className="grid grid-cols-3 gap-2 md:flex md:items-center md:justify-end">
                         <button
                           type="button"
                           onClick={() => openEditForm(service)}
-                          className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
+                          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white md:min-h-0 md:min-w-0"
                           title="Editar serviço"
+                          aria-label="Editar serviço"
                         >
-                          <Pencil className="h-4 w-4" />
+                          <Pencil className="h-5 w-5 md:h-4 md:w-4" />
                         </button>
                         <button
                           type="button"
                           onClick={() => handleToggleActive(service)}
-                          className="rounded-lg bg-background p-2 text-muted transition-colors hover:text-foreground"
+                          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-card p-2 text-muted transition-colors hover:text-foreground md:min-h-0 md:min-w-0 md:bg-background"
                           title={service.active ? "Desativar" : "Ativar"}
+                          aria-label={service.active ? "Desativar serviço" : "Ativar serviço"}
                         >
-                          <Power className="h-4 w-4" />
+                          <Power className="h-5 w-5 md:h-4 md:w-4" />
                         </button>
                         <button
                           type="button"
                           onClick={() => handleDeleteService(service)}
-                          className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
+                          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white md:min-h-0 md:min-w-0"
                           title="Excluir serviço"
+                          aria-label="Excluir serviço"
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-5 w-5 md:h-4 md:w-4" />
                         </button>
                       </div>
                     </article>

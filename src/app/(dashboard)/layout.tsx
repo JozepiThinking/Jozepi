@@ -33,8 +33,10 @@ export default async function DashboardLayout({
             : null
         }
       />
-      <main className="pl-20">
-        <div className="mx-auto max-w-7xl px-8 py-8">{children}</div>
+      <main className="pb-24 md:pl-20 md:pb-0">
+        <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 md:px-8 md:py-8">
+          {children}
+        </div>
       </main>
     </div>
   );

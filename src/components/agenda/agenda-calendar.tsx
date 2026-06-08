@@ -398,7 +398,7 @@ function AgendaDropdown({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm text-foreground shadow-sm transition-all duration-200 hover:border-success/40 hover:bg-white focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-base text-foreground shadow-sm transition-all duration-200 hover:border-success/40 hover:bg-white focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-2.5 sm:text-sm"
       >
         <span className={selectedOption ? "font-medium" : "text-muted"}>
           {selectedOption?.label ?? placeholder}
@@ -416,7 +416,7 @@ function AgendaDropdown({
             <button
               type="button"
               onClick={onClear}
-              className="mb-2 flex w-full items-center justify-between rounded-xl border border-danger/10 bg-danger/5 px-3 py-2.5 text-left text-sm font-semibold text-danger transition-colors hover:bg-danger hover:text-white"
+              className="mb-2 flex min-h-11 w-full items-center justify-between rounded-xl border border-danger/10 bg-danger/5 px-3 py-3 text-left text-base font-semibold text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:py-2.5 sm:text-sm"
             >
               {clearLabel}
               <X className="h-4 w-4" />
@@ -434,7 +434,7 @@ function AgendaDropdown({
                     role="option"
                     aria-selected={selected}
                     onClick={() => onSelect(option.value)}
-                    className={`w-full rounded-xl px-3 py-2.5 text-left transition-colors ${
+                    className={`min-h-11 w-full rounded-xl px-3 py-3 text-left text-base transition-colors sm:min-h-0 sm:py-2.5 sm:text-sm ${
                       selected
                         ? "bg-success/10 text-success"
                         : "text-foreground hover:bg-background"
@@ -469,6 +469,7 @@ export function AgendaCalendar() {
   const [now, setNow] = useState(today);
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(today));
   const [selectedDate, setSelectedDate] = useState(today);
+  const [dayDrawerOpen, setDayDrawerOpen] = useState(false);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [agendaStorageMode, setAgendaStorageMode] = useState<
     "supabase" | "local"
@@ -1314,9 +1315,9 @@ export function AgendaCalendar() {
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-          <div className="flex items-start justify-between gap-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
+        <div className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6">
+          <div className="flex items-start justify-between gap-4 sm:gap-5">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-muted">{occupancyTitle}</p>
               <div className="timeline-track-loading relative mt-4 h-7 overflow-hidden rounded-full bg-slate-200 shadow-inner">
@@ -1374,16 +1375,16 @@ export function AgendaCalendar() {
         </div>
 
         <div
-          className={`rounded-xl border-l-4 bg-card p-6 shadow-sm ${
+          className={`rounded-xl border-l-4 bg-card p-4 shadow-sm sm:p-6 ${
             nextAppointmentStyle?.sideAccent ?? "border-l-border"
           }`}
         >
-          <div className="flex items-start justify-between gap-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-5">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-muted">Próximo cliente</p>
               {nextAppointment ? (
                 <>
-                  <p className="mt-2 text-3xl font-bold leading-tight text-foreground">
+                  <p className="mt-2 text-2xl font-bold leading-tight text-foreground sm:text-3xl">
                     {nextAppointment.client}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -1407,15 +1408,15 @@ export function AgendaCalendar() {
                 </p>
               )}
             </div>
-            <div className="flex shrink-0 flex-col items-end gap-3">
+            <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
               {nextAppointment && (
                 <>
                   <span
-                    className={`min-w-44 whitespace-nowrap rounded-2xl px-5 py-4 text-center text-xl font-bold leading-tight shadow-sm ${nextAppointmentStyle?.timeBadge}`}
+                    className={`w-full whitespace-nowrap rounded-2xl px-5 py-4 text-center text-xl font-bold leading-tight shadow-sm sm:min-w-44 ${nextAppointmentStyle?.timeBadge}`}
                   >
                     {nextAppointment.startTime} - {nextAppointment.endTime}
                   </span>
-                  <div className="flex flex-col items-end gap-2">
+                  <div className="flex w-full flex-col items-start gap-2 sm:items-end">
                     <span
                       className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${nextAppointmentStyle?.statusBadge}`}
                     >
@@ -1423,7 +1424,7 @@ export function AgendaCalendar() {
                       {nextAppointment.status}
                     </span>
 
-                    <div className="grid grid-cols-2 gap-1.5">
+                    <div className="grid w-full grid-cols-2 gap-1.5 sm:w-auto">
                       {appointmentStatuses.map((status) => {
                         const optionStyle = getStatusStyle(status);
                         const isCurrentStatus = nextAppointment.status === status;
@@ -1436,7 +1437,7 @@ export function AgendaCalendar() {
                             onClick={() =>
                               handleChangeStatus(nextAppointment.id, status)
                             }
-                            className={`rounded-full border px-2 py-1 text-[10px] font-semibold transition-all ${
+                            className={`min-h-9 rounded-full border px-2 py-1 text-[10px] font-semibold transition-all sm:min-h-0 ${
                               isCurrentStatus
                                 ? "cursor-default border-current opacity-60"
                                 : "border-transparent hover:-translate-y-0.5 hover:shadow-sm"
@@ -1455,9 +1456,9 @@ export function AgendaCalendar() {
         </div>
       </div>
 
-      <div className="mt-8 grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="mt-6 grid grid-cols-1 items-start gap-6 md:mt-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <section className="self-start rounded-xl border border-border bg-card shadow-sm">
-          <div className="flex flex-col gap-4 border-b border-border px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-4 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div>
               <h2 className="text-lg font-semibold capitalize text-foreground">
                 {formatMonthTitle(currentMonth)}
@@ -1467,11 +1468,11 @@ export function AgendaCalendar() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="grid grid-cols-[44px_1fr_44px] items-center gap-2 sm:flex">
               <button
                 type="button"
                 onClick={() => setCurrentMonth((prev) => addMonths(prev, -1))}
-                className="rounded-lg border border-border bg-background p-2 text-muted transition-colors hover:text-foreground"
+                className="flex min-h-11 items-center justify-center rounded-lg border border-border bg-background p-2 text-muted transition-colors hover:text-foreground sm:min-h-0"
                 aria-label="Mês anterior"
               >
                 <ChevronLeft className="h-4 w-4" />
@@ -1482,15 +1483,16 @@ export function AgendaCalendar() {
                   setCurrentMonth(startOfMonth(today));
                   setFocusedAppointmentId(null);
                   setSelectedDate(today);
+                  setDayDrawerOpen(true);
                 }}
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:border-accent"
+                className="min-h-11 rounded-lg border border-border bg-background px-3 py-2 text-base font-medium text-foreground transition-colors hover:border-accent sm:min-h-0 sm:text-sm"
               >
                 Hoje
               </button>
               <button
                 type="button"
                 onClick={() => setCurrentMonth((prev) => addMonths(prev, 1))}
-                className="rounded-lg border border-border bg-background p-2 text-muted transition-colors hover:text-foreground"
+                className="flex min-h-11 items-center justify-center rounded-lg border border-border bg-background p-2 text-muted transition-colors hover:text-foreground sm:min-h-0"
                 aria-label="Próximo mês"
               >
                 <ChevronRight className="h-4 w-4" />
@@ -1498,13 +1500,13 @@ export function AgendaCalendar() {
             </div>
           </div>
 
-          <div className="grid grid-cols-7 border-b border-border bg-background/60 px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-muted">
+          <div className="grid grid-cols-7 border-b border-border bg-background/60 px-2 py-3 text-center text-[10px] font-semibold uppercase tracking-wide text-muted sm:px-4 sm:text-xs">
             {weekdays.map((weekday) => (
               <span key={weekday}>{weekday}</span>
             ))}
           </div>
 
-          <div className="grid grid-cols-7 gap-2 p-4">
+          <div className="grid grid-cols-7 gap-1 p-2 sm:gap-2 sm:p-4">
             {calendarDays.map((day, index) => {
               const key = dateKey(day);
               const dayAppointments = (appointmentsByDate[key] ?? []).sort((a, b) =>
@@ -1525,26 +1527,32 @@ export function AgendaCalendar() {
                   onClick={() => {
                     setFocusedAppointmentId(null);
                     setSelectedDate(day);
+                    setDayDrawerOpen(true);
                   }}
                   style={index === 0 ? { gridColumnStart: day.getDay() + 1 } : undefined}
-                  className={`flex min-h-24 flex-col items-start rounded-xl border p-2 text-left transition-colors ${
+                  className={`flex min-h-14 flex-col items-start rounded-xl border p-1 text-left transition-colors sm:min-h-24 sm:p-2 ${
                     isSelected
                       ? "border-primary bg-primary/10 shadow-sm"
                       : "border-transparent hover:border-border hover:bg-background"
                   }`}
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex w-full items-center justify-between">
                     <span
-                      className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
+                      className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold sm:h-6 sm:w-6 ${
                         isToday ? "bg-success text-white" : "text-foreground"
                       }`}
                     >
                       {day.getDate()}
                     </span>
+                    {dayAppointments.length > 0 && (
+                      <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-success/10 px-1.5 text-[10px] font-bold text-success sm:hidden">
+                        {dayAppointments.length}
+                      </span>
+                    )}
                   </div>
 
                   {dayAppointments.length > 0 && (
-                    <div className="mt-2 flex w-full flex-col items-start gap-0.5">
+                    <div className="mt-2 hidden w-full flex-col items-start gap-0.5 sm:flex">
                       {visibleAppointments.map((appointment) => {
                         const style = getStatusStyle(appointment.status);
 
@@ -1572,17 +1580,40 @@ export function AgendaCalendar() {
           </div>
         </section>
 
-        <aside className="rounded-xl border border-border bg-card shadow-sm">
-          <div className="border-b border-border px-6 py-4">
+        {dayDrawerOpen && (
+          <button
+            type="button"
+            aria-label="Fechar detalhes do dia"
+            className="fixed inset-0 z-40 bg-slate-950/35 md:hidden"
+            onClick={() => setDayDrawerOpen(false)}
+          />
+        )}
+
+        <aside
+          className={`fixed inset-x-0 bottom-0 z-50 max-h-[88vh] overflow-y-auto rounded-t-3xl border border-border bg-card shadow-2xl transition-transform duration-300 md:static md:z-auto md:max-h-none md:translate-y-0 md:overflow-visible md:rounded-xl md:shadow-sm ${
+            dayDrawerOpen ? "translate-y-0" : "translate-y-full"
+          }`}
+        >
+          <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
+            <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-muted">
               Dia selecionado
             </p>
             <h2 className="mt-1 text-lg font-semibold capitalize text-foreground">
               {formatLongDate(selectedDate)}
             </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDayDrawerOpen(false)}
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-full bg-background text-muted transition-colors hover:text-foreground md:hidden"
+              aria-label="Fechar painel do dia"
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
 
-          <div className="space-y-4 p-6">
+          <div className="space-y-4 p-5 sm:p-6">
             <Button
               variant="success"
               className="w-full"
@@ -1596,7 +1627,7 @@ export function AgendaCalendar() {
               <button
                 type="button"
                 onClick={handleClearSelectedDay}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border border-danger/20 bg-danger/5 px-4 py-2.5 text-sm font-medium text-danger transition-colors hover:bg-danger hover:text-white"
+                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-base font-medium text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:py-2.5 sm:text-sm"
               >
                 <Trash2 className="h-4 w-4" />
                 Limpar dia
@@ -1617,7 +1648,7 @@ export function AgendaCalendar() {
                   <button
                     type="button"
                     onClick={closeForm}
-                    className="rounded-lg p-1 text-muted transition-colors hover:bg-card hover:text-foreground"
+                    className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-muted transition-colors hover:bg-card hover:text-foreground sm:min-h-0 sm:min-w-0 sm:p-1"
                     aria-label="Fechar formulário"
                   >
                     <X className="h-4 w-4" />
@@ -1664,7 +1695,7 @@ export function AgendaCalendar() {
                           key={time}
                           disabled={isUnavailable}
                           onClick={() => selectTimeSlot(time)}
-                          className={`rounded-full px-2 py-2 text-sm font-semibold transition-all duration-200 ${
+                          className={`min-h-11 rounded-full px-2 py-2 text-sm font-semibold transition-all duration-200 sm:min-h-0 ${
                             isSelectedEndpoint
                               ? "bg-success text-white shadow-sm"
                               : isInSelectedRange
@@ -1698,7 +1729,7 @@ export function AgendaCalendar() {
                         setOpenSelectId(null);
                         setClientModalOpen(true);
                       }}
-                      className="text-xs font-semibold text-success transition-colors hover:text-success/80"
+                      className="min-h-11 text-sm font-semibold text-success transition-colors hover:text-success/80 sm:min-h-0 sm:text-xs"
                     >
                       Novo cliente
                     </button>
@@ -1814,7 +1845,7 @@ export function AgendaCalendar() {
                         services.length === 0 ||
                         availableServices.length === 0
                       }
-                      className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-3 py-1.5 text-xs font-semibold text-success transition-all duration-200 hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all duration-200 hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-1.5 sm:text-xs"
                     >
                       <Plus className="h-3.5 w-3.5" />
                       Adicionar serviço
@@ -1832,7 +1863,7 @@ export function AgendaCalendar() {
                           <button
                             type="button"
                             onClick={() => removeServiceFromForm(service.id)}
-                            className="rounded-full p-0.5 transition-colors hover:bg-success/20"
+                            className="rounded-full p-1 transition-colors hover:bg-success/20"
                             aria-label={`Remover ${service.name}`}
                           >
                             <X className="h-3 w-3" />
@@ -1891,7 +1922,7 @@ export function AgendaCalendar() {
                                 : { ...prev, totalAmount: String(servicesTotal) }
                             );
                           }}
-                          className="text-xs font-semibold text-success transition-colors hover:text-success/80"
+                          className="min-h-11 text-sm font-semibold text-success transition-colors hover:text-success/80 sm:min-h-0 sm:text-xs"
                         >
                           {editingTotalAmount ? "Fechar" : "Editar"}
                         </button>
@@ -1899,7 +1930,7 @@ export function AgendaCalendar() {
                     </div>
 
                     {editingTotalAmount && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <Input
                           label="Valor do agendamento"
                           type="number"
@@ -1919,7 +1950,7 @@ export function AgendaCalendar() {
                             setForm((prev) => ({ ...prev, totalAmount: "" }));
                             setEditingTotalAmount(false);
                           }}
-                          className="mt-6 rounded-xl border border-border bg-background px-3 py-2.5 text-xs font-semibold text-muted transition-colors hover:text-foreground"
+                          className="rounded-xl border border-border bg-background px-3 py-3 text-sm font-semibold text-muted transition-colors hover:text-foreground sm:mt-6 sm:py-2.5 sm:text-xs"
                         >
                           Usar soma
                         </button>
@@ -1969,7 +2000,7 @@ export function AgendaCalendar() {
                       key={appointment.id}
                       className={`rounded-xl border border-l-4 p-4 shadow-sm transition-shadow hover:shadow-md ${style.sideCard} ${style.sideAccent}`}
                     >
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
                           <p className="text-sm font-semibold text-foreground">
                             {appointment.client}
@@ -1984,17 +2015,17 @@ export function AgendaCalendar() {
                           )}
                         </div>
                         <span
-                          className={`rounded-lg px-2 py-1 text-xs font-semibold ${style.timeBadge}`}
+                          className={`w-fit rounded-lg px-2 py-1 text-xs font-semibold ${style.timeBadge}`}
                         >
                           {appointment.startTime} - {appointment.endTime}
                         </span>
                       </div>
-                      <div className="mt-3 flex items-center justify-between gap-3">
+                      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="relative">
                           <button
                             type="button"
                             onClick={() => toggleStatusMenu(appointment.id)}
-                            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-shadow hover:shadow-sm ${style.statusBadge}`}
+                            className={`inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-shadow hover:shadow-sm sm:min-h-0 sm:py-1 sm:text-xs ${style.statusBadge}`}
                             aria-haspopup="menu"
                             aria-expanded={openStatusMenuId === appointment.id}
                           >
@@ -2027,7 +2058,7 @@ export function AgendaCalendar() {
                                     onClick={() =>
                                       handleChangeStatus(appointment.id, status)
                                     }
-                                    className={`mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-semibold transition-colors last:mb-0 hover:bg-background ${optionStyle.statusBadge}`}
+                                    className={`mb-1 flex min-h-11 w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors last:mb-0 hover:bg-background sm:min-h-0 sm:text-xs ${optionStyle.statusBadge}`}
                                   >
                                     {status}
                                   </button>
@@ -2036,11 +2067,11 @@ export function AgendaCalendar() {
                             </div>
                           )}
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
                           <button
                             type="button"
                             onClick={() => openEditForm(appointment)}
-                            className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
+                            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white sm:min-h-0 sm:min-w-0"
                             title="Editar agendamento"
                             aria-label="Editar agendamento"
                           >
@@ -2049,7 +2080,7 @@ export function AgendaCalendar() {
                           <button
                             type="button"
                             onClick={() => handleDeleteAppointment(appointment)}
-                            className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
+                            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:min-w-0"
                             title="Excluir agendamento"
                             aria-label="Excluir agendamento"
                           >

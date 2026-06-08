@@ -147,7 +147,7 @@ export function Dropdown({
         aria-haspopup="listbox"
         aria-expanded={open && !closing}
         onClick={toggleDropdown}
-        className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-left text-sm text-foreground transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-border bg-slate-50 px-4 py-3 text-left text-base text-foreground transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-2.5 sm:text-sm"
       >
         <span className={selectedOption ? "font-medium" : "text-muted/70"}>
           {selectedOption?.label ?? placeholder}
@@ -185,7 +185,7 @@ export function Dropdown({
                     aria-selected={selected}
                     onClick={() => selectOption(option.value)}
                     className={cn(
-                      "min-w-0 flex-1 px-3 py-2.5 text-left text-sm font-semibold transition-colors",
+                      "min-h-11 min-w-0 flex-1 px-3 py-3 text-left text-base font-semibold transition-colors sm:min-h-0 sm:py-2.5 sm:text-sm",
                       selected ? "text-success" : "text-foreground"
                     )}
                   >
@@ -198,7 +198,7 @@ export function Dropdown({
                         event.stopPropagation();
                         onDeleteOption(option.value);
                       }}
-                      className="mr-1 rounded-lg px-2 py-1.5 text-xs font-semibold text-danger transition-colors hover:bg-danger/10"
+                      className="mr-1 min-h-11 rounded-lg px-3 py-2 text-sm font-semibold text-danger transition-colors hover:bg-danger/10 sm:min-h-0 sm:px-2 sm:py-1.5 sm:text-xs"
                       aria-label={`Apagar ${option.label}`}
                       title={`Apagar ${option.label}`}
                     >
@@ -229,7 +229,7 @@ export function Dropdown({
                 }}
                 autoFocus
                 placeholder={createPlaceholder}
-                className="w-full rounded-lg border border-border bg-slate-50 px-3 py-2 text-sm font-medium text-foreground placeholder:text-muted/60 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                className="w-full rounded-lg border border-border bg-slate-50 px-3 py-3 text-base font-medium text-foreground placeholder:text-muted/60 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:py-2 sm:text-sm"
               />
               {createError && (
                 <p className="mt-2 text-xs font-medium text-danger">
@@ -240,14 +240,14 @@ export function Dropdown({
                 <button
                   type="button"
                   onClick={cancelCreating}
-                  className="rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-background"
+                  className="min-h-11 rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-background sm:min-h-0 sm:text-xs"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
                   onClick={submitCreatedOption}
-                  className="rounded-lg bg-success px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-success/90"
+                  className="min-h-11 rounded-lg bg-success px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-success/90 sm:min-h-0 sm:text-xs"
                 >
                   Adicionar
                 </button>
@@ -265,7 +265,7 @@ export function Dropdown({
                 onAction?.();
                 closeDropdown();
               }}
-              className="mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed border-success/30 px-3 py-2.5 text-left text-sm font-semibold text-success transition-colors hover:bg-success/10"
+              className="mt-2 flex min-h-11 w-full items-center gap-2 rounded-xl border border-dashed border-success/30 px-3 py-3 text-left text-base font-semibold text-success transition-colors hover:bg-success/10 sm:min-h-0 sm:py-2.5 sm:text-sm"
             >
               <Plus className="h-4 w-4" />
               {actionLabel}
