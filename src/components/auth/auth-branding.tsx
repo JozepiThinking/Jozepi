@@ -1,4 +1,4 @@
-import { Sparkles, CheckCircle2 } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 
 const features = [
   "Gestão completa de clientes e veículos",
@@ -15,10 +15,22 @@ export function AuthBranding() {
       <div className="absolute -bottom-20 -left-20 h-80 w-80 rounded-full bg-accent/5 blur-3xl" />
 
       <div className="relative z-10 flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent">
-          <Sparkles className="h-5 w-5 text-white" />
+        <div className="font-brand flex h-14 w-16 flex-col justify-center rounded-xl border border-white/15 bg-white/10 px-2 leading-none text-white">
+          <span className="text-[10px] font-bold uppercase tracking-[0.18em]">
+            Jozep&apos;s
+          </span>
+          <span className="mt-0.5 text-[13px] font-bold uppercase tracking-[0.16em]">
+            Garage
+          </span>
         </div>
-        <span className="text-xl font-bold text-white">AutoEstética</span>
+        <div className="font-brand">
+          <span className="block text-2xl font-bold uppercase leading-none tracking-[0.12em] text-white">
+            Jozep&apos;s Garage
+          </span>
+          <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[0.42em] text-muted">
+            ESTÉTICA AUTOMOTIVA
+          </span>
+        </div>
       </div>
 
       <div className="relative z-10 space-y-6">
@@ -40,7 +52,7 @@ export function AuthBranding() {
       </div>
 
       <p className="relative z-10 text-sm text-white/40">
-        © 2026 AutoEstética SaaS
+        © 2026 Jozep&apos;s Garage
       </p>
     </div>
   );

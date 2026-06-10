@@ -33,6 +33,14 @@ import {
 
 const PRODUCT_FORM_EXIT_MS = 180;
 
+type ProductTypeFilter = "all" | "liquid" | "utensil";
+
+const productTypeFilterOptions = [
+  { value: "all", label: "Todos" },
+  { value: "liquid", label: "Líquidos" },
+  { value: "utensil", label: "Utensílios" },
+];
+
 export function ProductsPage() {
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
@@ -40,6 +48,7 @@ export function ProductsPage() {
     useState<ProductTypeOption[]>(productTypeOptions);
   const [typeOptionsLoaded, setTypeOptionsLoaded] = useState(false);
   const [typeError, setTypeError] = useState<string | null>(null);
+  const [typeFilter, setTypeFilter] = useState<ProductTypeFilter>("all");
   const [formOpen, setFormOpen] = useState(false);
   const [formClosing, setFormClosing] = useState(false);
   const [formAnimationKey, setFormAnimationKey] = useState(0);
@@ -274,10 +283,30 @@ export function ProductsPage() {
     }
   }
 
+  const filteredProducts = products.filter((product) => {
+    if (typeFilter === "all") return true;
+    if (typeFilter === "liquid") return product.type === "liquid";
+    return product.type !== "liquid";
+  });
+
   return (
     <>
-      <div className="mb-6 flex justify-end">
-        <Button variant="success" onClick={openCreateForm}>
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:grid-cols-[minmax(220px,280px)_auto] sm:items-end">
+          <Dropdown
+            label="Filtrar por tipo"
+            value={typeFilter}
+            options={productTypeFilterOptions}
+            onChange={(value) => setTypeFilter(value as ProductTypeFilter)}
+          />
+          <div className="rounded-xl bg-background px-4 py-3 text-base font-semibold text-foreground sm:text-sm">
+            {filteredProducts.length} produto
+            {filteredProducts.length !== 1 ? "s" : ""} encontrado
+            {filteredProducts.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+
+        <Button variant="success" onClick={openCreateForm} className="w-full sm:w-auto">
           <Plus className="h-4 w-4" />
           Adicionar produto
         </Button>
@@ -307,9 +336,18 @@ export function ProductsPage() {
                 Novo produto
               </Button>
             </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border bg-card py-14 text-center shadow-sm">
+              <p className="font-medium text-foreground">
+                Nenhum produto encontrado
+              </p>
+              <p className="mt-1 text-sm text-muted">
+                Troque o filtro para ver outros produtos cadastrados.
+              </p>
+            </div>
           ) : (
             <div className="space-y-4">
-              {products.map((product) => {
+              {filteredProducts.map((product) => {
                 const isLiquid = product.type === "liquid";
 
                 return (

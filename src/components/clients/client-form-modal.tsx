@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { X, Plus, Trash2, Car, Pencil } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -144,8 +145,10 @@ function VehicleEditorModal({
     onSave(form);
   }
 
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6">
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6">
       <button
         type="button"
         aria-label="Fechar formulário de veículo"
@@ -156,7 +159,7 @@ function VehicleEditorModal({
       />
       <form
         onSubmit={handleSubmit}
-        className={`relative z-[61] max-h-[82vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-4 shadow-2xl sm:p-5 ${
+        className={`relative z-[111] max-h-[82vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-4 shadow-2xl sm:p-5 ${
           closing ? "client-vehicle-card-exit" : "client-vehicle-card-enter"
         }`}
       >
@@ -246,7 +249,8 @@ function VehicleEditorModal({
           </Button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body
   );
 }
 

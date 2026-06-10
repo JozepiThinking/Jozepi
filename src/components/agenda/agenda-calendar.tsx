@@ -371,6 +371,9 @@ function AgendaDropdown({
   options,
   disabled = false,
   open,
+  searchable = false,
+  searchPlaceholder = "Digite para pesquisar",
+  noResultsMessage = "Nenhum resultado encontrado.",
   onToggle,
   onSelect,
   onClear,
@@ -383,12 +386,34 @@ function AgendaDropdown({
   options: SelectOption[];
   disabled?: boolean;
   open: boolean;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  noResultsMessage?: string;
   onToggle: () => void;
   onSelect: (value: string) => void;
   onClear?: () => void;
   clearLabel?: string;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const selectedOption = options.find((option) => option.value === value);
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const filteredOptions =
+    searchable && normalizedSearchQuery
+      ? options.filter((option) =>
+          [option.label, option.description]
+            .filter(Boolean)
+            .some((field) =>
+              field?.toLowerCase().includes(normalizedSearchQuery)
+            )
+        )
+      : options;
+
+  useEffect(() => {
+    if (searchable) {
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    }
+  }, [open, searchable]);
 
   return (
     <div className="relative">
@@ -398,7 +423,10 @@ function AgendaDropdown({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={onToggle}
+        onClick={() => {
+          if (open) setSearchQuery("");
+          onToggle();
+        }}
         className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-base text-foreground shadow-sm transition-all duration-200 hover:border-success/40 hover:bg-white focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-2.5 sm:text-sm"
       >
         <span className={selectedOption ? "font-medium" : "text-muted"}>
@@ -413,19 +441,38 @@ function AgendaDropdown({
 
       {open && !disabled && (
         <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-border bg-white p-2 shadow-xl ring-1 ring-slate-900/5">
+          {searchable && (
+            <input
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setSearchQuery("");
+                  onToggle();
+                }
+              }}
+              placeholder={searchPlaceholder}
+              className="mb-2 min-h-11 w-full rounded-xl border border-slate-200 bg-background px-3 py-3 text-base font-medium text-foreground placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:min-h-0 sm:py-2.5 sm:text-sm"
+            />
+          )}
           {selectedOption && onClear && (
             <button
               type="button"
-              onClick={onClear}
+              onClick={() => {
+                setSearchQuery("");
+                onClear();
+              }}
               className="mb-2 flex min-h-11 w-full items-center justify-between rounded-xl border border-danger/10 bg-danger/5 px-3 py-3 text-left text-base font-semibold text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:py-2.5 sm:text-sm"
             >
               {clearLabel}
               <X className="h-4 w-4" />
             </button>
           )}
-          {options.length > 0 ? (
+          {filteredOptions.length > 0 ? (
             <div role="listbox" aria-labelledby={id} className="space-y-1">
-              {options.map((option) => {
+              {filteredOptions.map((option) => {
                 const selected = option.value === value;
 
                 return (
@@ -434,7 +481,10 @@ function AgendaDropdown({
                     type="button"
                     role="option"
                     aria-selected={selected}
-                    onClick={() => onSelect(option.value)}
+                    onClick={() => {
+                      setSearchQuery("");
+                      onSelect(option.value);
+                    }}
                     className={`min-h-11 w-full rounded-xl px-3 py-3 text-left text-base transition-colors sm:min-h-0 sm:py-2.5 sm:text-sm ${
                       selected
                         ? "bg-success/10 text-success"
@@ -455,7 +505,7 @@ function AgendaDropdown({
             </div>
           ) : (
             <p className="rounded-xl bg-background px-3 py-2.5 text-sm text-muted">
-              {emptyMessage}
+              {options.length > 0 ? noResultsMessage : emptyMessage}
             </p>
           )}
         </div>
@@ -1790,6 +1840,9 @@ export function AgendaCalendar() {
                     options={clientOptions}
                     disabled={loadingClients}
                     open={openSelectId === "client"}
+                    searchable
+                    searchPlaceholder="Digite nome ou telefone"
+                    noResultsMessage="Nenhum cliente encontrado."
                     onToggle={() =>
                       setOpenSelectId((current) =>
                         current === "client" ? null : "client"

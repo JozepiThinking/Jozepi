@@ -3,16 +3,16 @@
 :root {
   --background: #f8fafc;
   --foreground: #0f172a;
-  --sidebar: #0c1e3d;
-  --sidebar-hover: #152a52;
-  --sidebar-active: #1e3a6e;
-  --primary: #1e40af;
-  --primary-hover: #1d4ed8;
-  --accent: #3b82f6;
+  --sidebar: #1a2744;
+  --sidebar-hover: #ffffff14;
+  --sidebar-active: #ffffff24;
+  --primary: #1a2744;
+  --primary-hover: #111b33;
+  --accent: #1a2744;
   --card: #ffffff;
   --border: #e2e8f0;
-  --muted: #64748b;
-  --success: #059669;
+  --muted: #9ca3af;
+  --success: #1a2744;
   --warning: #d97706;
   --danger: #dc2626;
 }
@@ -34,10 +34,22 @@
   --color-danger: var(--danger);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-brand: var(--font-rajdhani);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-brand), var(--font-sans), system-ui, sans-serif;
+  letter-spacing: 0.01em;
+}
+
+.font-brand {
+  font-family: var(--font-brand), var(--font-sans), system-ui, sans-serif;
 }
