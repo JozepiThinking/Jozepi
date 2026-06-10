@@ -24,7 +24,7 @@ export function UserMenu({ email, fullName, avatarUrl }: UserMenuProps) {
   }
 
   return (
-    <div className="border-t border-white/10 p-3">
+    <div className="p-3">
       <Link
         href="/perfil"
         className="mb-3 flex h-11 items-center rounded-lg px-0 text-white/70 transition-colors duration-300 hover:bg-sidebar-hover hover:text-white"

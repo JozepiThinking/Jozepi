@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Car,
   Check,
@@ -465,6 +466,9 @@ function AgendaDropdown({
 
 export function AgendaCalendar() {
   const supabase = useMemo(() => createClient(), []);
+  const searchParams = useSearchParams();
+  const linkedClientId = searchParams.get("clientId");
+  const linkedClientHandledRef = useRef<string | null>(null);
   const today = useMemo(() => new Date(), []);
   const [now, setNow] = useState(today);
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(today));
@@ -818,6 +822,46 @@ export function AgendaCalendar() {
     setFormClosing(false);
     setCreating(true);
   }
+
+  useEffect(() => {
+    if (
+      !linkedClientId ||
+      loadingClients ||
+      linkedClientHandledRef.current === linkedClientId
+    ) {
+      return;
+    }
+
+    const linkedClient = clients.find((client) => client.id === linkedClientId);
+    if (!linkedClient) return;
+
+    void Promise.resolve().then(() => {
+      const targetDate = new Date();
+      const targetKey = dateKey(targetDate);
+
+      linkedClientHandledRef.current = linkedClientId;
+      setCurrentMonth(startOfMonth(targetDate));
+      setSelectedDate(targetDate);
+      setFocusedAppointmentId(null);
+      setDayDrawerOpen(true);
+      setEditingAppointmentId(null);
+      setForm({
+        date: targetKey,
+        startTime: "",
+        endTime: "",
+        clientId: linkedClient.id,
+        vehicleId: linkedClient.vehicles?.[0]?.id ?? "",
+        serviceIds: [],
+        totalAmount: "",
+      });
+      setError(null);
+      setAddingService(false);
+      setEditingTotalAmount(false);
+      setOpenSelectId(null);
+      setFormClosing(false);
+      setCreating(true);
+    });
+  }, [clients, linkedClientId, loadingClients]);
 
   function openEditForm(appointment: Appointment) {
     setOpenStatusMenuId(null);
@@ -1903,15 +1947,36 @@ export function AgendaCalendar() {
                     </p>
                   )}
 
-                  <div className="space-y-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-muted">
+                  <div className="rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+                    <div className="grid grid-cols-[minmax(0,1fr)_minmax(6rem,auto)] items-center gap-3">
+                      <span className="min-w-0 text-sm font-medium text-muted">
                         Total dos serviços
                       </span>
-                      <div className="flex items-center gap-3">
-                        <span className="text-base font-bold text-foreground">
-                          {formatCurrency(displayTotalAmount)}
-                        </span>
+                      <div className="min-w-0 justify-self-end">
+                        {editingTotalAmount ? (
+                          <input
+                            aria-label="Valor do agendamento"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={form.totalAmount}
+                            onChange={(event) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                totalAmount: event.target.value,
+                              }))
+                            }
+                            className="h-9 w-full max-w-28 rounded-lg border border-border bg-background px-2 text-right text-sm font-bold text-foreground outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20"
+                          />
+                        ) : (
+                          <span className="text-base font-bold text-foreground">
+                            {formatCurrency(displayTotalAmount)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap justify-end gap-3">
                         <button
                           type="button"
                           onClick={() => {
@@ -1926,36 +1991,19 @@ export function AgendaCalendar() {
                         >
                           {editingTotalAmount ? "Fechar" : "Editar"}
                         </button>
-                      </div>
+                        {editingTotalAmount && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setForm((prev) => ({ ...prev, totalAmount: "" }));
+                              setEditingTotalAmount(false);
+                            }}
+                            className="text-xs font-semibold text-muted transition-colors hover:text-foreground"
+                          >
+                            Usar soma
+                          </button>
+                        )}
                     </div>
-
-                    {editingTotalAmount && (
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <Input
-                          label="Valor do agendamento"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={form.totalAmount}
-                          onChange={(event) =>
-                            setForm((prev) => ({
-                              ...prev,
-                              totalAmount: event.target.value,
-                            }))
-                          }
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setForm((prev) => ({ ...prev, totalAmount: "" }));
-                            setEditingTotalAmount(false);
-                          }}
-                          className="rounded-xl border border-border bg-background px-3 py-3 text-sm font-semibold text-muted transition-colors hover:text-foreground sm:mt-6 sm:py-2.5 sm:text-xs"
-                        >
-                          Usar soma
-                        </button>
-                      </div>
-                    )}
                   </div>
                 </div>
                 {error && <p className="text-xs text-danger">{error}</p>}

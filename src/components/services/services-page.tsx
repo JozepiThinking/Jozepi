@@ -470,17 +470,28 @@ export function ServicesPage() {
   }
 
   async function handleToggleActive(service: ServiceItem) {
+    const nextActive = !service.active;
+
+    setError(null);
+    setServices((prev) =>
+      prev.map((item) =>
+        item.id === service.id ? { ...item, active: nextActive } : item
+      )
+    );
+
     const { error: updateError } = await supabase
       .from("services")
-      .update({ active: !service.active })
+      .update({ active: nextActive })
       .eq("id", service.id);
 
     if (updateError) {
+      setServices((prev) =>
+        prev.map((item) =>
+          item.id === service.id ? { ...item, active: service.active } : item
+        )
+      );
       setError(updateError.message);
-      return;
     }
-
-    await loadServices();
   }
 
   async function handleDeleteService(service: ServiceItem) {
@@ -1316,7 +1327,11 @@ export function ServicesPage() {
                         <button
                           type="button"
                           onClick={() => handleToggleActive(service)}
-                          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-card p-2 text-muted transition-colors hover:text-foreground md:min-h-0 md:min-w-0 md:bg-background"
+                          className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 transition-colors md:min-h-0 md:min-w-0 ${
+                            service.active
+                              ? "bg-primary/10 text-primary hover:bg-primary hover:text-white"
+                              : "bg-card text-muted hover:bg-background hover:text-foreground md:bg-background"
+                          }`}
                           title={service.active ? "Desativar" : "Ativar"}
                           aria-label={service.active ? "Desativar serviço" : "Ativar serviço"}
                         >

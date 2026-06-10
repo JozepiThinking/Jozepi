@@ -16,11 +16,22 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
+import { Dropdown } from "@/components/ui/dropdown";
+import { Input } from "@/components/ui/input";
+import { BrandAutocomplete } from "@/components/clients/brand-autocomplete";
+import { ModelAutocomplete } from "@/components/clients/model-autocomplete";
 import { ClientFormModal } from "@/components/clients/client-form-modal";
+import { VehiclePhotoUpload } from "@/components/clients/vehicle-photo-upload";
 import { formatDate, formatPhone, getWhatsAppUrl } from "@/lib/utils/format";
 import { syncVehicles } from "@/lib/clients/sync-vehicles";
 import { deleteVehiclePhotoByUrl } from "@/lib/supabase/vehicle-photos";
-import { type Client, type ClientFormData, type Vehicle } from "@/types/client";
+import {
+  emptyVehicle,
+  type Client,
+  type ClientFormData,
+  type Vehicle,
+  type VehicleFormItem,
+} from "@/types/client";
 
 function WhatsAppIcon({ className }: { className?: string }) {
   return (
@@ -37,6 +48,242 @@ function WhatsAppIcon({ className }: { className?: string }) {
 
 const clientInfoCardClass =
   "inline-flex h-11 min-w-[12rem] items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium shadow-sm";
+
+const VEHICLE_MODAL_EXIT_MS = 180;
+
+const vehicleYearOptions = Array.from(
+  { length: new Date().getFullYear() - 1980 + 1 },
+  (_, index) => String(new Date().getFullYear() - index)
+).map((year) => ({ value: year, label: year }));
+
+function createVehicleFormItem(vehicle?: Vehicle | null): VehicleFormItem {
+  if (vehicle) {
+    return {
+      uiKey: vehicle.id,
+      id: vehicle.id,
+      brand: vehicle.brand,
+      model: vehicle.model,
+      plate: vehicle.plate,
+      year: vehicle.year ? String(vehicle.year) : "",
+      photoUrl1: vehicle.photo_url_1,
+      photoUrl2: vehicle.photo_url_2,
+      photoFile1: null,
+      photoFile2: null,
+      previewUrl1: vehicle.photo_url_1,
+      previewUrl2: vehicle.photo_url_2,
+      removePhoto1: false,
+      removePhoto2: false,
+    };
+  }
+
+  return {
+    ...emptyVehicle,
+    uiKey:
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `vehicle-${Date.now()}-${Math.random()}`,
+  };
+}
+
+function VehicleFormModal({
+  client,
+  vehicle,
+  closing,
+  onClose,
+  onSave,
+}: {
+  client: Client;
+  vehicle?: Vehicle | null;
+  closing: boolean;
+  onClose: () => void;
+  onSave: (vehicle: VehicleFormItem) => Promise<void>;
+}) {
+  const [form, setForm] = useState<VehicleFormItem>(() =>
+    createVehicleFormItem(vehicle)
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isEditing = !!vehicle;
+
+  useEffect(() => {
+    return () => {
+      if (form.previewUrl1?.startsWith("blob:")) URL.revokeObjectURL(form.previewUrl1);
+      if (form.previewUrl2?.startsWith("blob:")) URL.revokeObjectURL(form.previewUrl2);
+    };
+  }, [form.previewUrl1, form.previewUrl2]);
+
+  function updateVehicle(patch: Partial<VehicleFormItem>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+  }
+
+  function handlePhoto(slot: 1 | 2, file: File) {
+    const previewKey = slot === 1 ? "previewUrl1" : "previewUrl2";
+    const currentPreview = form[previewKey];
+    if (currentPreview?.startsWith("blob:")) URL.revokeObjectURL(currentPreview);
+
+    if (slot === 1) {
+      updateVehicle({
+        photoFile1: file,
+        previewUrl1: URL.createObjectURL(file),
+        removePhoto1: false,
+      });
+      return;
+    }
+
+    updateVehicle({
+      photoFile2: file,
+      previewUrl2: URL.createObjectURL(file),
+      removePhoto2: false,
+    });
+  }
+
+  function removePhoto(slot: 1 | 2) {
+    const previewKey = slot === 1 ? "previewUrl1" : "previewUrl2";
+    const currentPreview = form[previewKey];
+    if (currentPreview?.startsWith("blob:")) URL.revokeObjectURL(currentPreview);
+
+    if (slot === 1) {
+      updateVehicle({
+        photoFile1: null,
+        previewUrl1: null,
+        removePhoto1: true,
+      });
+      return;
+    }
+
+    updateVehicle({
+      photoFile2: null,
+      previewUrl2: null,
+      removePhoto2: true,
+    });
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setSaving(true);
+
+    try {
+      await onSave(form);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar veículo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+      <button
+        type="button"
+        aria-label="Fechar formulário de veículo"
+        className={`absolute inset-0 bg-slate-950/45 backdrop-blur-sm ${
+          closing ? "vehicle-modal-overlay-exit" : "vehicle-modal-overlay-enter"
+        }`}
+        onClick={onClose}
+      />
+      <form
+        onSubmit={handleSubmit}
+        className={`relative z-[101] max-h-[82vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-4 shadow-2xl sm:p-5 ${
+          closing ? "vehicle-modal-card-exit" : "vehicle-modal-card-enter"
+        }`}
+      >
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-success">
+              {client.name}
+            </p>
+            <h2 className="mt-1 text-lg font-bold text-foreground">
+              {isEditing ? "Editar veículo" : "Adicionar veículo"}
+            </h2>
+            <p className="mt-1 text-xs text-muted">
+              Preencha somente os dados do veículo.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-full bg-background text-muted transition-colors hover:text-foreground"
+            aria-label="Fechar"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 rounded-xl border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
+            {error}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <BrandAutocomplete
+            label="Marca"
+            value={form.brand}
+            onChange={(brand) => updateVehicle({ brand })}
+            placeholder="Digite para buscar"
+          />
+          <ModelAutocomplete
+            label="Modelo"
+            brand={form.brand}
+            value={form.model}
+            onChange={(model) => updateVehicle({ model })}
+            placeholder="S10"
+          />
+          <Input
+            label="Placa"
+            value={form.plate}
+            onChange={(event) =>
+              updateVehicle({ plate: event.target.value.toUpperCase() })
+            }
+            placeholder="ABC-1D23"
+            required
+          />
+          <Dropdown
+            label="Ano"
+            value={form.year}
+            placeholder="Selecione o ano"
+            options={vehicleYearOptions}
+            onChange={(year) => updateVehicle({ year })}
+          />
+        </div>
+
+        <div className="mt-4">
+          <VehiclePhotoUpload
+            preview1={form.previewUrl1}
+            preview2={form.previewUrl2}
+            onPhoto1={(file) => handlePhoto(1, file)}
+            onPhoto2={(file) => handlePhoto(2, file)}
+            onRemove1={() => removePhoto(1)}
+            onRemove2={() => removePhoto(2)}
+            onError={setError}
+            compact
+          />
+        </div>
+
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={onClose}
+            className="w-full sm:w-auto"
+          >
+            Cancelar
+          </Button>
+          <Button
+            type="submit"
+            variant="success"
+            loading={saving}
+            className="w-full sm:w-auto"
+          >
+            {isEditing ? "Salvar veículo" : "Adicionar veículo"}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
 
 function ClientVehiclesPanel({
   client,
@@ -223,6 +470,11 @@ export function ClientsPage() {
   const [startWithNewVehicle, setStartWithNewVehicle] = useState(false);
   const [vehiclesClient, setVehiclesClient] = useState<Client | null>(null);
   const [vehiclesPanelClosing, setVehiclesPanelClosing] = useState(false);
+  const [vehicleModalClient, setVehicleModalClient] = useState<Client | null>(
+    null
+  );
+  const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
+  const [vehicleModalClosing, setVehicleModalClosing] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletingVehicleId, setDeletingVehicleId] = useState<string | null>(null);
 
@@ -312,19 +564,63 @@ export function ClientsPage() {
   }
 
   function openAddVehicleModal(client: Client) {
-    setVehiclesClient(null);
-    setVehiclesPanelClosing(false);
-    setEditingClient(client);
-    setStartWithNewVehicle(true);
-    setModalOpen(true);
+    setVehicleModalClosing(false);
+    setVehicleModalClient(client);
+    setEditingVehicle(null);
   }
 
-  function openEditVehicleModal(client: Client) {
-    setVehiclesClient(null);
-    setVehiclesPanelClosing(false);
-    setEditingClient(client);
-    setStartWithNewVehicle(false);
-    setModalOpen(true);
+  function openEditVehicleModal(client: Client, vehicle: Vehicle) {
+    setVehicleModalClosing(false);
+    setVehicleModalClient(client);
+    setEditingVehicle(vehicle);
+  }
+
+  function closeVehicleModal() {
+    if (!vehicleModalClient || vehicleModalClosing) return;
+
+    setVehicleModalClosing(true);
+    window.setTimeout(() => {
+      setVehicleModalClient(null);
+      setEditingVehicle(null);
+      setVehicleModalClosing(false);
+    }, VEHICLE_MODAL_EXIT_MS);
+  }
+
+  async function refreshClientVehicles(clientId: string) {
+    const { data, error } = await supabase
+      .from("vehicles")
+      .select("id, client_id, brand, model, plate, year, photo_url_1, photo_url_2")
+      .eq("client_id", clientId)
+      .order("brand", { ascending: true })
+      .order("model", { ascending: true });
+
+    if (error) throw new Error(error.message);
+
+    const vehicles = (data as Vehicle[]) ?? [];
+    const updateClientVehicles = (item: Client) =>
+      item.id === clientId ? { ...item, vehicles } : item;
+
+    setClients((prev) => prev.map(updateClientVehicles));
+    setVehiclesClient((prev) => (prev ? updateClientVehicles(prev) : prev));
+  }
+
+  async function handleSaveVehicle(vehicle: VehicleFormItem) {
+    if (!workshopId || !vehicleModalClient) {
+      throw new Error("Oficina ou cliente não encontrado.");
+    }
+
+    if (!vehicle.brand.trim() || !vehicle.model.trim() || !vehicle.plate.trim()) {
+      throw new Error("Preencha marca, modelo e placa do veículo.");
+    }
+
+    await syncVehicles(
+      supabase,
+      workshopId,
+      vehicleModalClient.id,
+      [vehicle],
+      vehicle.id ? [vehicle.id] : []
+    );
+    await refreshClientVehicles(vehicleModalClient.id);
   }
 
   async function handleSave(data: ClientFormData) {
@@ -538,11 +834,11 @@ export function ClientsPage() {
                 </div>
 
                 <Link
-                  href={`/servicos?clientId=${client.id}`}
+                  href={`/agenda?clientId=${client.id}`}
                   className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md"
                 >
                   <ClipboardList className="h-4 w-4" />
-                  Criar serviço com cliente
+                  Agendar com cliente
                 </Link>
                 {client.notes && (
                   <p className="mt-4 line-clamp-2 rounded-lg bg-background/70 px-3 py-2 text-sm text-muted">
@@ -573,6 +869,17 @@ export function ClientsPage() {
         onSave={handleSave}
       />
 
+      {vehicleModalClient && (
+        <VehicleFormModal
+          key={editingVehicle?.id ?? vehicleModalClient.id}
+          client={vehicleModalClient}
+          vehicle={editingVehicle}
+          closing={vehicleModalClosing}
+          onClose={closeVehicleModal}
+          onSave={handleSaveVehicle}
+        />
+      )}
+
       {vehiclesClient && (
         <ClientVehiclesPanel
           client={vehiclesClient}
@@ -601,6 +908,24 @@ export function ClientsPage() {
 
           .vehicle-panel-drawer-exit {
             animation: vehicle-panel-slide-out 180ms ease-in both;
+          }
+
+          .vehicle-modal-overlay-enter {
+            animation: vehicle-modal-fade-in 220ms ease-out both;
+          }
+
+          .vehicle-modal-overlay-exit {
+            animation: vehicle-modal-fade-out ${VEHICLE_MODAL_EXIT_MS}ms ease-in both;
+            pointer-events: none;
+          }
+
+          .vehicle-modal-card-enter {
+            animation: vehicle-modal-card-enter 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+          }
+
+          .vehicle-modal-card-exit {
+            animation: vehicle-modal-card-exit ${VEHICLE_MODAL_EXIT_MS}ms ease-in both;
+            pointer-events: none;
           }
         }
 
@@ -633,6 +958,38 @@ export function ClientsPage() {
           to {
             opacity: 0;
             transform: translateX(28px);
+          }
+        }
+
+        @keyframes vehicle-modal-fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes vehicle-modal-fade-out {
+          from { opacity: 1; }
+          to { opacity: 0; }
+        }
+
+        @keyframes vehicle-modal-card-enter {
+          from {
+            opacity: 0;
+            transform: translateY(14px) scale(0.96);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+
+        @keyframes vehicle-modal-card-exit {
+          from {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+          to {
+            opacity: 0;
+            transform: translateY(10px) scale(0.97);
           }
         }
       `}</style>

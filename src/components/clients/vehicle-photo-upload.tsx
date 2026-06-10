@@ -3,6 +3,7 @@
 import { useRef } from "react";
 import Image from "next/image";
 import { Camera, X } from "lucide-react";
+import { cn } from "@/lib/utils/cn";
 import { validatePhotoFile } from "@/lib/supabase/vehicle-photos";
 
 interface PhotoSlotProps {
@@ -11,9 +12,17 @@ interface PhotoSlotProps {
   onSelect: (file: File) => void;
   onRemove: () => void;
   onError: (msg: string) => void;
+  compact?: boolean;
 }
 
-function PhotoSlot({ label, preview, onSelect, onRemove, onError }: PhotoSlotProps) {
+function PhotoSlot({
+  label,
+  preview,
+  onSelect,
+  onRemove,
+  onError,
+  compact = false,
+}: PhotoSlotProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -33,7 +42,12 @@ function PhotoSlot({ label, preview, onSelect, onRemove, onError }: PhotoSlotPro
     <div className="space-y-1.5">
       <span className="text-xs text-muted">{label}</span>
       {preview ? (
-        <div className="relative h-64 overflow-hidden rounded-lg border border-border bg-slate-100">
+        <div
+          className={cn(
+            "relative overflow-hidden rounded-lg border border-border bg-slate-100",
+            compact ? "h-32 sm:h-36" : "h-64"
+          )}
+        >
           <Image
             src={preview}
             alt={label}
@@ -53,7 +67,10 @@ function PhotoSlot({ label, preview, onSelect, onRemove, onError }: PhotoSlotPro
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          className="flex h-64 w-full flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border bg-slate-50 text-muted transition-colors hover:border-accent hover:text-accent"
+          className={cn(
+            "flex w-full flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border bg-slate-50 text-muted transition-colors hover:border-accent hover:text-accent",
+            compact ? "h-32 sm:h-36" : "h-64"
+          )}
         >
           <Camera className="h-5 w-5" />
           <span className="text-xs">Tirar ou carregar foto</span>
@@ -82,6 +99,7 @@ interface VehiclePhotoUploadProps {
   onRemove1: () => void;
   onRemove2: () => void;
   onError: (msg: string) => void;
+  compact?: boolean;
 }
 
 export function VehiclePhotoUpload({
@@ -92,6 +110,7 @@ export function VehiclePhotoUpload({
   onRemove1,
   onRemove2,
   onError,
+  compact = false,
 }: VehiclePhotoUploadProps) {
   return (
     <div className="space-y-1.5">
@@ -105,6 +124,7 @@ export function VehiclePhotoUpload({
           onSelect={onPhoto1}
           onRemove={onRemove1}
           onError={onError}
+          compact={compact}
         />
         <PhotoSlot
           label="Foto 2"
@@ -112,6 +132,7 @@ export function VehiclePhotoUpload({
           onSelect={onPhoto2}
           onRemove={onRemove2}
           onError={onError}
+          compact={compact}
         />
       </div>
       <p className="text-xs text-muted">JPG, PNG ou WEBP — até 5MB cada</p>
