@@ -38,21 +38,15 @@ export function Sidebar({ userEmail, userName, avatarUrl }: SidebarProps) {
         <div className="flex h-20 items-center px-3">
           <div className="font-brand flex h-14 w-52 shrink-0 items-center overflow-hidden leading-none text-white">
             <div className="flex w-14 shrink-0 flex-col justify-center text-left transition-opacity duration-300 group-hover:opacity-0">
-              <span className="text-[8px] font-bold uppercase tracking-[0.12em]">
+              <span className="text-[8.5px] font-bold uppercase tracking-[0.11em]">
                 Jozep&apos;s
               </span>
-              <span className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.1em]">
+              <span className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.09em]">
                 Garage
-              </span>
-              <span className="mt-1 text-[4.5px] font-semibold uppercase tracking-[0.16em] text-white/45">
-                Estética
-              </span>
-              <span className="mt-0.5 text-[4.5px] font-semibold uppercase tracking-[0.12em] text-white/45">
-                Automotiva
               </span>
             </div>
             <div className="-ml-14 translate-x-3 whitespace-nowrap text-left opacity-0 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:ml-0 group-hover:translate-x-0 group-hover:opacity-100">
-              <p className="text-[0.95rem] font-bold uppercase leading-none tracking-[0.06em] text-white">
+              <p className="text-[1.08rem] font-bold uppercase leading-none tracking-[0.06em] text-white">
                 Jozep&apos;s Garage
               </p>
               <p className="mt-1.5 text-[7px] font-semibold uppercase tracking-[0.34em] text-white/45">
