@@ -514,7 +514,7 @@ function AgendaDropdown({
           {selectedOption?.label ?? placeholder}
         </span>
         <ChevronDown
-          className={`h-4 w-4 shrink-0 text-muted transition-transform ${
+          className={`h-4 w-4 shrink-0 text-muted transition-transform duration-200 ${
             open ? "rotate-180" : ""
           }`}
         />

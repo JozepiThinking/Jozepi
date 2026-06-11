@@ -12,6 +12,7 @@ import {
   Trash2,
   Wrench,
   X,
+  ZoomIn,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dropdown } from "@/components/ui/dropdown";
@@ -33,8 +34,10 @@ import {
   PRODUCT_TYPES_STORAGE_KEY,
   productTypeOptions,
   PRODUCTS_STORAGE_KEY,
+  SERVICE_PRODUCT_USAGE_STORAGE_KEY,
   type ProductForm,
   type ProductItem,
+  type ServiceProductUsage,
   type ProductType,
   type ProductTypeOption,
 } from "@/lib/products/catalog";
@@ -49,12 +52,78 @@ const productTypeFilterOptions = [
   { value: "utensil", label: "Utensílios" },
 ];
 
+const PRODUCT_PHOTO_MAX_SIZE = 480;
+const PRODUCT_PHOTO_QUALITY = 0.72;
+const PRODUCT_PHOTO_COMPACT_THRESHOLD = 180_000;
+
+function isQuotaExceededError(err: unknown) {
+  return (
+    err instanceof DOMException &&
+    (err.name === "QuotaExceededError" || err.code === 22)
+  );
+}
+
+function resizeProductImage(source: File | string) {
+  return new Promise<string>((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = source instanceof File ? URL.createObjectURL(source) : null;
+
+    image.onload = () => {
+      const scale = Math.min(
+        1,
+        PRODUCT_PHOTO_MAX_SIZE / Math.max(image.width, image.height)
+      );
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+
+      const context = canvas.getContext("2d");
+      if (!context) {
+        reject(new Error("Não foi possível processar a foto."));
+        return;
+      }
+
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", PRODUCT_PHOTO_QUALITY));
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+
+    image.onerror = () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      reject(new Error("Não foi possível carregar a foto."));
+    };
+
+    image.src = objectUrl ?? source;
+  });
+}
+
+async function compactProductPhoto(product: ProductItem) {
+  if (
+    !product.photoUrl?.startsWith("data:image/") ||
+    product.photoUrl.length <= PRODUCT_PHOTO_COMPACT_THRESHOLD
+  ) {
+    return product;
+  }
+
+  try {
+    return {
+      ...product,
+      photoUrl: await resizeProductImage(product.photoUrl),
+    };
+  } catch {
+    return product;
+  }
+}
+
 export function ProductsPage() {
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [typeOptions, setTypeOptions] =
     useState<ProductTypeOption[]>(productTypeOptions);
   const [typeOptionsLoaded, setTypeOptionsLoaded] = useState(false);
+  const [serviceProductUsages, setServiceProductUsages] = useState<
+    Record<string, ServiceProductUsage[]>
+  >({});
   const [typeError, setTypeError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<ProductTypeFilter>("all");
   const [formOpen, setFormOpen] = useState(false);
@@ -82,13 +151,17 @@ export function ProductsPage() {
   }
 
   useEffect(() => {
-    void Promise.resolve().then(() => {
+    void Promise.resolve().then(async () => {
       const storedProducts = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
       const storedTypes = window.localStorage.getItem(PRODUCT_TYPES_STORAGE_KEY);
+      const storedServiceProductUsages = window.localStorage.getItem(
+        SERVICE_PRODUCT_USAGE_STORAGE_KEY
+      );
       if (storedProducts) {
         try {
           const parsedProducts = JSON.parse(storedProducts) as ProductItem[];
-          setProducts(parsedProducts.map(normalizeProductStock));
+          const normalizedProducts = parsedProducts.map(normalizeProductStock);
+          setProducts(await Promise.all(normalizedProducts.map(compactProductPhoto)));
         } catch {
           window.localStorage.removeItem(PRODUCTS_STORAGE_KEY);
         }
@@ -103,6 +176,19 @@ export function ProductsPage() {
         }
       }
 
+      if (storedServiceProductUsages) {
+        try {
+          setServiceProductUsages(
+            JSON.parse(storedServiceProductUsages) as Record<
+              string,
+              ServiceProductUsage[]
+            >
+          );
+        } catch {
+          window.localStorage.removeItem(SERVICE_PRODUCT_USAGE_STORAGE_KEY);
+        }
+      }
+
       setProductsLoaded(true);
       setTypeOptionsLoaded(true);
     });
@@ -110,7 +196,20 @@ export function ProductsPage() {
 
   useEffect(() => {
     if (!productsLoaded) return;
-    window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products));
+    try {
+      window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products));
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        window.setTimeout(() => {
+          setError(
+            "O armazenamento do navegador ficou cheio. Remova fotos grandes de produtos ou use imagens menores."
+          );
+        }, 0);
+        return;
+      }
+
+      throw err;
+    }
   }, [products, productsLoaded]);
 
   useEffect(() => {
@@ -234,7 +333,9 @@ export function ProductsPage() {
     setTypeError(null);
   }
 
-  function handleProductPhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleProductPhotoChange(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -243,12 +344,12 @@ export function ProductsPage() {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      updateForm({ photoUrl: typeof reader.result === "string" ? reader.result : "" });
+    try {
+      updateForm({ photoUrl: await resizeProductImage(file) });
       setError(null);
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao processar a foto.");
+    }
     event.target.value = "";
   }
 
@@ -386,6 +487,38 @@ export function ProductsPage() {
     );
   }
 
+  function getProductUsageSummary(product: ProductItem) {
+    const summary = Object.values(serviceProductUsages).reduce(
+      (acc, usages) => {
+        const usage = usages.find((item) => item.productId === product.id);
+        if (!usage) return acc;
+
+        try {
+          const amount = parsePositiveNumber(usage.amount);
+          return {
+            serviceCount: acc.serviceCount + 1,
+            totalUsage: acc.totalUsage + amount,
+          };
+        } catch {
+          return acc;
+        }
+      },
+      { serviceCount: 0, totalUsage: 0 }
+    );
+    const averageUsage =
+      summary.serviceCount > 0 ? summary.totalUsage / summary.serviceCount : 0;
+    const estimatedUses =
+      averageUsage > 0
+        ? Math.floor(getProductRemainingStock(product) / averageUsage)
+        : null;
+
+    return {
+      ...summary,
+      averageUsage,
+      estimatedUses,
+    };
+  }
+
   const filteredProducts = products.filter((product) => {
     if (typeFilter === "all") return true;
     if (typeFilter === "liquid") return product.type === "liquid";
@@ -467,18 +600,29 @@ export function ProductsPage() {
                 return (
                   <article
                     key={product.id}
-                    className="rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+                    className="relative z-0 rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:z-50 hover:-translate-y-0.5 hover:shadow-md"
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-center gap-3">
                         {product.photoUrl ? (
-                          <span className="h-10 w-10 shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+                          <span className="product-photo-preview group/photo relative h-10 w-10 shrink-0 cursor-zoom-in overflow-visible rounded-xl border border-border bg-card shadow-sm transition-all duration-300 hover:border-success/40 hover:shadow-md hover:ring-2 hover:ring-success/15">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={product.photoUrl}
                               alt={`Foto de ${product.name}`}
-                              className="h-full w-full object-cover"
+                              className="h-full w-full rounded-xl object-cover transition duration-300 group-hover/photo:scale-105 group-hover/photo:brightness-110"
                             />
+                            <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl bg-slate-950/0 text-white opacity-0 transition-all duration-300 group-hover/photo:bg-slate-950/25 group-hover/photo:opacity-100">
+                              <ZoomIn className="h-4 w-4 drop-shadow-sm" />
+                            </span>
+                            <span className="pointer-events-none absolute left-0 top-12 z-[999] hidden h-44 w-44 overflow-hidden rounded-2xl border border-border bg-card p-1 opacity-0 shadow-2xl ring-1 ring-slate-900/5 group-hover/photo:block product-photo-preview-popover">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={product.photoUrl}
+                                alt={`Prévia ampliada de ${product.name}`}
+                                className="h-full w-full rounded-xl object-cover"
+                              />
+                            </span>
                           </span>
                         ) : (
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-success/10 text-success">
@@ -687,7 +831,7 @@ export function ProductsPage() {
               </div>
             </form>
           ) : products.length > 0 ? (
-            <div className="max-h-[calc(100vh-6rem)] overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-sm">
+            <div className="flex h-[calc(100vh-6rem)] flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm">
               <div className="mb-5 flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-muted">
@@ -721,7 +865,7 @@ export function ProductsPage() {
                 </div>
               </div>
 
-              <div className="mt-5 space-y-3">
+              <div className="mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                 {stockProducts.length === 0 ? (
                   <p className="rounded-xl border border-dashed border-border bg-background px-4 py-6 text-center text-sm text-muted">
                     Nenhum produto líquido no estoque.
@@ -730,6 +874,7 @@ export function ProductsPage() {
                   const initialStock = getProductInitialStock(product);
                   const remainingStock = getProductRemainingStock(product);
                   const stockPercent = getProductStockPercent(product);
+                  const usageSummary = getProductUsageSummary(product);
                   const progressWidth = Math.max(
                     0,
                     Math.min(100, stockPercent)
@@ -852,6 +997,21 @@ export function ProductsPage() {
                         </div>
                       )}
 
+                      {usageSummary.serviceCount > 0 ? (
+                        <div className="mt-3 rounded-xl bg-card px-3 py-2">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-muted">
+                            Autonomia
+                          </p>
+                          <p className="mt-0.5 text-sm font-bold text-foreground">
+                            {usageSummary.estimatedUses ?? 0} usos
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="mt-3 rounded-xl border border-dashed border-border bg-card px-3 py-2 text-xs text-muted">
+                          Ainda não vinculado a serviços.
+                        </p>
+                      )}
+
                       {replenishingProductId === product.id && (
                         <div className="mt-3 rounded-xl border border-border bg-card p-3">
                           <Input
@@ -939,6 +1099,19 @@ export function ProductsPage() {
           cursor: pointer;
         }
 
+        @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+          .product-photo-preview-popover {
+            animation: product-photo-preview-popover 180ms ease-out 1s both;
+          }
+        }
+
+        @media (hover: hover) and (prefers-reduced-motion: reduce) {
+          .product-photo-preview:hover .product-photo-preview-popover {
+            display: block;
+            opacity: 1;
+          }
+        }
+
         @keyframes product-form-enter {
           from {
             opacity: 0;
@@ -958,6 +1131,17 @@ export function ProductsPage() {
           to {
             opacity: 0;
             transform: translateY(-8px) scale(0.98);
+          }
+        }
+
+        @keyframes product-photo-preview-popover {
+          from {
+            opacity: 0;
+            transform: translateY(-4px) scale(0.96);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
           }
         }
       `}</style>

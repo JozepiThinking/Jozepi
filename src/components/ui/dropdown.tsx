@@ -155,7 +155,7 @@ export function Dropdown({
         <ChevronDown
           className={cn(
             "h-4 w-4 shrink-0 text-muted transition-transform duration-200",
-            open && !closing && "translate-y-0.5"
+            open && !closing && "rotate-180"
           )}
         />
       </button>
