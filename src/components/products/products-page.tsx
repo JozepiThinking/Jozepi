@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Camera,
   Droplets,
   Package,
   Pencil,
   Plus,
+  RotateCcw,
   Trash2,
   Wrench,
   X,
@@ -19,7 +21,13 @@ import {
   createProductId,
   createProductTypeId,
   emptyProductForm,
+  formatStockAmount,
+  getProductInitialStock,
+  getProductRemainingStock,
+  getProductStockPercent,
+  getProductStockUnit,
   getProductTypeLabel,
+  normalizeProductStock,
   parseMoney,
   parsePositiveNumber,
   PRODUCT_TYPES_STORAGE_KEY,
@@ -55,6 +63,15 @@ export function ProductsPage() {
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null);
   const [form, setForm] = useState<ProductForm>(emptyProductForm);
   const [error, setError] = useState<string | null>(null);
+  const [replenishingProductId, setReplenishingProductId] = useState<string | null>(
+    null
+  );
+  const [replenishAmount, setReplenishAmount] = useState("");
+  const [replenishError, setReplenishError] = useState<string | null>(null);
+  const [editingStockProductId, setEditingStockProductId] = useState<string | null>(
+    null
+  );
+  const [stockEditValue, setStockEditValue] = useState("");
   const closeFormTimeoutRef = useRef<number | null>(null);
 
   function clearCloseFormTimeout() {
@@ -70,7 +87,8 @@ export function ProductsPage() {
       const storedTypes = window.localStorage.getItem(PRODUCT_TYPES_STORAGE_KEY);
       if (storedProducts) {
         try {
-          setProducts(JSON.parse(storedProducts) as ProductItem[]);
+          const parsedProducts = JSON.parse(storedProducts) as ProductItem[];
+          setProducts(parsedProducts.map(normalizeProductStock));
         } catch {
           window.localStorage.removeItem(PRODUCTS_STORAGE_KEY);
         }
@@ -121,6 +139,11 @@ export function ProductsPage() {
     setForm(emptyProductForm);
     setError(null);
     setTypeError(null);
+    setReplenishingProductId(null);
+    setReplenishAmount("");
+    setReplenishError(null);
+    setEditingStockProductId(null);
+    setStockEditValue("");
     showForm();
   }
 
@@ -138,6 +161,11 @@ export function ProductsPage() {
     });
     setError(null);
     setTypeError(null);
+    setReplenishingProductId(null);
+    setReplenishAmount("");
+    setReplenishError(null);
+    setEditingStockProductId(null);
+    setStockEditValue("");
     showForm();
   }
 
@@ -250,7 +278,7 @@ export function ProductsPage() {
       return;
     }
 
-    const nextProduct: ProductItem = {
+    const baseProduct: ProductItem = {
       id: editingProduct?.id ?? createProductId(),
       name: form.name.trim(),
       type: form.type,
@@ -260,6 +288,15 @@ export function ProductsPage() {
       durabilityWashes: "",
       totalCost: form.totalCost,
       photoUrl: form.photoUrl || undefined,
+    };
+    const initialStock = getProductInitialStock(baseProduct);
+    const preservedRemaining =
+      editingProduct && editingProduct.type === baseProduct.type
+        ? getProductRemainingStock(editingProduct)
+        : initialStock;
+    const nextProduct: ProductItem = {
+      ...baseProduct,
+      stockRemaining: String(Math.min(initialStock, preservedRemaining)),
     };
 
     setProducts((prev) =>
@@ -283,11 +320,82 @@ export function ProductsPage() {
     }
   }
 
+  function openReplenish(productId: string) {
+    setReplenishingProductId(productId);
+    setReplenishAmount("");
+    setReplenishError(null);
+    setEditingStockProductId(null);
+    setStockEditValue("");
+  }
+
+  function closeReplenish() {
+    setReplenishingProductId(null);
+    setReplenishAmount("");
+    setReplenishError(null);
+  }
+
+  function handleReplenishProduct(product: ProductItem) {
+    setReplenishError(null);
+
+    let addedAmount: number;
+    try {
+      addedAmount = parsePositiveNumber(replenishAmount);
+    } catch {
+      setReplenishError("Informe uma quantidade válida para repor.");
+      return;
+    }
+
+    const initialStock = getProductInitialStock(product);
+    const currentStock = getProductRemainingStock(product);
+    const nextStock = Math.min(initialStock, currentStock + addedAmount);
+
+    setProducts((prev) =>
+      prev.map((item) =>
+        item.id === product.id
+          ? { ...item, stockRemaining: String(nextStock) }
+          : item
+      )
+    );
+    closeReplenish();
+  }
+
+  function openStockEdit(product: ProductItem) {
+    setEditingStockProductId(product.id);
+    setStockEditValue(String(getProductRemainingStock(product)));
+    setReplenishingProductId(null);
+    setReplenishAmount("");
+    setReplenishError(null);
+  }
+
+  function closeStockEdit() {
+    setEditingStockProductId(null);
+    setStockEditValue("");
+  }
+
+  function updateCurrentStock(product: ProductItem, value: string) {
+    const currentStock = Number(value);
+    const maxStock = getProductInitialStock(product);
+    const nextStock = Math.min(maxStock, Math.max(0, currentStock));
+
+    setProducts((prev) =>
+      prev.map((item) =>
+        item.id === product.id
+          ? { ...item, stockRemaining: String(nextStock) }
+          : item
+      )
+    );
+  }
+
   const filteredProducts = products.filter((product) => {
     if (typeFilter === "all") return true;
     if (typeFilter === "liquid") return product.type === "liquid";
     return product.type !== "liquid";
   });
+  const totalInvested = products.reduce(
+    (total, product) => total + parseMoney(product.totalCost || "0"),
+    0
+  );
+  const stockProducts = products.filter((product) => product.type === "liquid");
 
   return (
     <>
@@ -306,10 +414,16 @@ export function ProductsPage() {
           </div>
         </div>
 
-        <Button variant="success" onClick={openCreateForm} className="w-full sm:w-auto">
-          <Plus className="h-4 w-4" />
-          Adicionar produto
-        </Button>
+        {products.length > 0 && (
+          <Button
+            variant="success"
+            onClick={openCreateForm}
+            className="w-full sm:w-auto"
+          >
+            <Plus className="h-4 w-4" />
+            Adicionar produto
+          </Button>
+        )}
       </div>
 
       {error && (
@@ -333,7 +447,7 @@ export function ProductsPage() {
               </p>
               <Button variant="success" className="mt-4" onClick={openCreateForm}>
                 <Plus className="h-4 w-4" />
-                Novo produto
+                Adicionar produto
               </Button>
             </div>
           ) : filteredProducts.length === 0 ? (
@@ -572,20 +686,215 @@ export function ProductsPage() {
                 </Button>
               </div>
             </form>
-          ) : (
-            <div className="rounded-xl border border-dashed border-border bg-card p-6 text-center shadow-sm">
-              <p className="text-sm font-semibold text-foreground">
-                Novo cadastro
-              </p>
-              <p className="mt-1 text-sm text-muted">
-                Clique em adicionar para cadastrar um produto.
-              </p>
-              <Button variant="success" className="mt-4" onClick={openCreateForm}>
-                <Plus className="h-4 w-4" />
-                Adicionar produto
-              </Button>
+          ) : products.length > 0 ? (
+            <div className="max-h-[calc(100vh-6rem)] overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-sm">
+              <div className="mb-5 flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-muted">
+                    Estoque
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold text-foreground">
+                    Produtos disponíveis
+                  </h2>
+                </div>
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-success/10 text-success">
+                  <Package className="h-5 w-5" />
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                <div className="rounded-xl bg-background px-4 py-3">
+                  <p className="text-xs font-semibold text-muted">
+                    Total investido
+                  </p>
+                  <p className="mt-1 text-lg font-bold text-foreground">
+                    {formatCurrency(totalInvested)}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-background px-4 py-3">
+                  <p className="text-xs font-semibold text-muted">
+                    Produtos no estoque
+                  </p>
+                  <p className="mt-1 text-lg font-bold text-foreground">
+                    {stockProducts.length}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                {stockProducts.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-border bg-background px-4 py-6 text-center text-sm text-muted">
+                    Nenhum produto líquido no estoque.
+                  </p>
+                ) : stockProducts.map((product) => {
+                  const initialStock = getProductInitialStock(product);
+                  const remainingStock = getProductRemainingStock(product);
+                  const stockPercent = getProductStockPercent(product);
+                  const progressWidth = Math.max(
+                    0,
+                    Math.min(100, stockPercent)
+                  );
+                  const stockUnit = getProductStockUnit(product);
+                  const criticalStock = stockPercent < 20;
+                  const warningStock = stockPercent >= 20 && stockPercent <= 50;
+                  const progressClass = criticalStock
+                    ? "bg-danger"
+                    : warningStock
+                      ? "bg-warning"
+                      : "bg-success";
+
+                  return (
+                    <div
+                      key={product.id}
+                      className={`rounded-xl border p-4 transition-colors ${
+                        criticalStock
+                          ? "border-danger/25 bg-danger/5"
+                          : "border-border bg-background"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-foreground">
+                            {product.name}
+                          </p>
+                          <p className="mt-0.5 text-xs text-muted">
+                            {editingStockProductId === product.id
+                              ? `${formatStockAmount(Number(stockEditValue) || 0)} ${stockUnit} / ${formatStockAmount(initialStock)} ${stockUnit}`
+                              : `${formatStockAmount(remainingStock)} ${stockUnit} / ${formatStockAmount(initialStock)} ${stockUnit}`}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => openStockEdit(product)}
+                            className="mt-2 inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-card px-2.5 py-1.5 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            Editar estoque
+                          </button>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {criticalStock && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-1 text-[10px] font-bold text-danger">
+                              <AlertTriangle className="h-3 w-3" />
+                              Repor estoque
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => openReplenish(product.id)}
+                            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-card px-2.5 py-1.5 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            Repor
+                          </button>
+                        </div>
+                      </div>
+
+                      {editingStockProductId === product.id ? (
+                        <div className="mt-3">
+                          <input
+                            type="range"
+                            min="0"
+                            max={initialStock}
+                            step={product.type === "liquid" ? "1" : "0.01"}
+                            value={stockEditValue}
+                            onChange={(event) => {
+                              setStockEditValue(event.target.value);
+                            }}
+                            onMouseUp={(event) => {
+                              updateCurrentStock(product, event.currentTarget.value);
+                              closeStockEdit();
+                            }}
+                            onTouchEnd={(event) => {
+                              updateCurrentStock(product, event.currentTarget.value);
+                              closeStockEdit();
+                            }}
+                            onBlur={(event) => {
+                              updateCurrentStock(product, event.currentTarget.value);
+                              closeStockEdit();
+                            }}
+                            className="stock-range-slider w-full"
+                            style={{
+                              background: `linear-gradient(to right, var(--primary) 0%, var(--primary) ${
+                                initialStock > 0
+                                  ? Math.max(
+                                      0,
+                                      Math.min(
+                                        100,
+                                        ((Number(stockEditValue) || 0) /
+                                          initialStock) *
+                                          100
+                                      )
+                                    )
+                                  : 0
+                              }%, #e2e8f0 ${
+                                initialStock > 0
+                                  ? Math.max(
+                                      0,
+                                      Math.min(
+                                        100,
+                                        ((Number(stockEditValue) || 0) /
+                                          initialStock) *
+                                          100
+                                      )
+                                    )
+                                  : 0
+                              }%, #e2e8f0 100%)`,
+                            }}
+                            aria-label={`Ajustar estoque atual de ${product.name}`}
+                          />
+                        </div>
+                      ) : (
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                          <div
+                            className={`h-full rounded-full transition-all ${progressClass}`}
+                            style={{ width: `${progressWidth}%` }}
+                          />
+                        </div>
+                      )}
+
+                      {replenishingProductId === product.id && (
+                        <div className="mt-3 rounded-xl border border-border bg-card p-3">
+                          <Input
+                            label={`Adicionar ao estoque (${stockUnit})`}
+                            type="number"
+                            min="0"
+                            step={product.type === "liquid" ? "1" : "0.01"}
+                            value={replenishAmount}
+                            onChange={(event) => {
+                              setReplenishAmount(event.target.value);
+                              setReplenishError(null);
+                            }}
+                            placeholder={product.type === "liquid" ? "500" : "1"}
+                          />
+                          {replenishError && (
+                            <p className="mt-2 text-xs font-medium text-danger">
+                              {replenishError}
+                            </p>
+                          )}
+                          <div className="mt-3 flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={closeReplenish}
+                            >
+                              Cancelar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="success"
+                              onClick={() => handleReplenishProduct(product)}
+                            >
+                              Salvar
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          )}
+          ) : null}
         </aside>
       </div>
       <style>{`
@@ -600,6 +909,34 @@ export function ProductsPage() {
             transform-origin: top center;
             pointer-events: none;
           }
+        }
+
+        .stock-range-slider {
+          appearance: none;
+          height: 0.5rem;
+          border-radius: 9999px;
+          outline: none;
+        }
+
+        .stock-range-slider::-webkit-slider-thumb {
+          appearance: none;
+          height: 1.15rem;
+          width: 1.15rem;
+          border-radius: 9999px;
+          border: 3px solid #ffffff;
+          background: var(--primary);
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+          cursor: pointer;
+        }
+
+        .stock-range-slider::-moz-range-thumb {
+          height: 1.15rem;
+          width: 1.15rem;
+          border-radius: 9999px;
+          border: 3px solid #ffffff;
+          background: var(--primary);
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+          cursor: pointer;
         }
 
         @keyframes product-form-enter {

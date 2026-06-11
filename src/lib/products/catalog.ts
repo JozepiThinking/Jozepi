@@ -16,6 +16,7 @@ export interface ProductItem {
   durabilityWashes: string;
   totalCost: string;
   photoUrl?: string;
+  stockRemaining?: string;
 }
 
 export interface ProductForm {
@@ -39,6 +40,7 @@ export const PRODUCTS_STORAGE_KEY = "auto-estetica-products-utensils";
 export const PRODUCT_TYPES_STORAGE_KEY = "auto-estetica-product-types";
 export const SERVICE_PRODUCT_USAGE_STORAGE_KEY =
   "auto-estetica-service-product-usages";
+export const STOCK_DISCOUNTS_STORAGE_KEY = "auto-estetica-stock-discounts";
 
 export const emptyProductForm: ProductForm = {
   name: "",
@@ -87,6 +89,59 @@ export function parsePositiveNumber(value: string) {
   }
 
   return number;
+}
+
+function parseStockNumber(value: string | undefined) {
+  if (!value) return 0;
+
+  const normalized = value.replace(/\./g, "").replace(",", ".");
+  const number = Number(normalized);
+
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+export function formatStockAmount(value: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+export function getProductInitialStock(product: ProductItem) {
+  return product.type === "liquid"
+    ? parseStockNumber(product.volumeMl)
+    : parseStockNumber(product.quantity);
+}
+
+export function getProductRemainingStock(product: ProductItem) {
+  const initialStock = getProductInitialStock(product);
+  const remainingStock =
+    product.stockRemaining === undefined
+      ? initialStock
+      : parseStockNumber(product.stockRemaining);
+
+  if (initialStock <= 0) return 0;
+
+  return Math.min(initialStock, Math.max(0, remainingStock));
+}
+
+export function getProductStockPercent(product: ProductItem) {
+  const initialStock = getProductInitialStock(product);
+  if (initialStock <= 0) return 0;
+
+  return (getProductRemainingStock(product) / initialStock) * 100;
+}
+
+export function getProductStockUnit(product: ProductItem) {
+  return product.type === "liquid" ? "ml" : "un.";
+}
+
+export function normalizeProductStock(product: ProductItem): ProductItem {
+  if (product.stockRemaining !== undefined) return product;
+
+  return {
+    ...product,
+    stockRemaining: String(getProductInitialStock(product)),
+  };
 }
 
 export function calculateProductUsageCost(

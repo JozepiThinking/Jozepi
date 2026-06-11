@@ -19,6 +19,16 @@ import { ClientFormModal } from "@/components/clients/client-form-modal";
 import { syncVehicles } from "@/lib/clients/sync-vehicles";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/format";
+import {
+  getProductRemainingStock,
+  normalizeProductStock,
+  parsePositiveNumber,
+  PRODUCTS_STORAGE_KEY,
+  SERVICE_PRODUCT_USAGE_STORAGE_KEY,
+  STOCK_DISCOUNTS_STORAGE_KEY,
+  type ProductItem,
+  type ServiceProductUsage,
+} from "@/lib/products/catalog";
 import { type Client, type ClientFormData } from "@/types/client";
 
 type AppointmentStatus = "Confirmado" | "Pendente" | "Cancelado" | "Concluído";
@@ -305,6 +315,77 @@ function writeLocalAppointments(appointments: Appointment[]) {
   if (typeof window === "undefined") return;
 
   window.localStorage.setItem(AGENDA_STORAGE_KEY, JSON.stringify(appointments));
+}
+
+function applyStockDiscountForAppointment(appointment: Appointment) {
+  if (typeof window === "undefined") return;
+
+  let discountedAppointmentIds: string[] = [];
+  try {
+    discountedAppointmentIds = JSON.parse(
+      window.localStorage.getItem(STOCK_DISCOUNTS_STORAGE_KEY) ?? "[]"
+    ) as string[];
+  } catch {
+    window.localStorage.removeItem(STOCK_DISCOUNTS_STORAGE_KEY);
+  }
+
+  if (discountedAppointmentIds.includes(appointment.id)) return;
+
+  let products: ProductItem[] = [];
+  let serviceProductUsages: Record<string, ServiceProductUsage[]> = {};
+
+  try {
+    products = (
+      JSON.parse(window.localStorage.getItem(PRODUCTS_STORAGE_KEY) ?? "[]") as
+        | ProductItem[]
+        | null
+    )?.map(normalizeProductStock) ?? [];
+  } catch {
+    return;
+  }
+
+  try {
+    serviceProductUsages = JSON.parse(
+      window.localStorage.getItem(SERVICE_PRODUCT_USAGE_STORAGE_KEY) ?? "{}"
+    ) as Record<string, ServiceProductUsage[]>;
+  } catch {
+    return;
+  }
+
+  const usageByProductId = new Map<string, number>();
+  appointment.serviceIds.forEach((serviceId) => {
+    (serviceProductUsages[serviceId] ?? []).forEach((usage) => {
+      try {
+        const amount = parsePositiveNumber(usage.amount);
+        usageByProductId.set(
+          usage.productId,
+          (usageByProductId.get(usage.productId) ?? 0) + amount
+        );
+      } catch {
+        // Ignore incomplete service usage rows.
+      }
+    });
+  });
+
+  if (usageByProductId.size === 0) return;
+
+  const updatedProducts = products.map((product) => {
+    const discountAmount = usageByProductId.get(product.id);
+    if (!discountAmount) return product;
+
+    return {
+      ...product,
+      stockRemaining: String(
+        Math.max(0, getProductRemainingStock(product) - discountAmount)
+      ),
+    };
+  });
+
+  window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updatedProducts));
+  window.localStorage.setItem(
+    STOCK_DISCOUNTS_STORAGE_KEY,
+    JSON.stringify([...discountedAppointmentIds, appointment.id])
+  );
 }
 
 function mapOrderToAppointment(order: AppointmentOrderRow): Appointment {
@@ -669,6 +750,7 @@ export function AgendaCalendar() {
             isAppointmentPast(appointment, nextNow)
           ) {
             completedAppointmentIds.push(appointment.id);
+            applyStockDiscountForAppointment(appointment);
             return { ...appointment, status: "Concluído" as const };
           }
 
@@ -1305,6 +1387,12 @@ export function AgendaCalendar() {
     appointmentId: string,
     status: AppointmentStatus
   ) {
+    const currentAppointment = appointments.find(
+      (appointment) => appointment.id === appointmentId
+    );
+    const shouldDiscountStock =
+      status === "Concluído" && currentAppointment?.status !== "Concluído";
+
     if (agendaStorageMode === "local") {
       setAppointments((prev) => {
         const next = prev.map((appointment) =>
@@ -1315,6 +1403,9 @@ export function AgendaCalendar() {
         writeLocalAppointments(next);
         return next;
       });
+      if (currentAppointment && shouldDiscountStock) {
+        applyStockDiscountForAppointment(currentAppointment);
+      }
       closeStatusMenu(appointmentId);
       return;
     }
@@ -1339,6 +1430,9 @@ export function AgendaCalendar() {
           : appointment
       )
     );
+    if (currentAppointment && shouldDiscountStock) {
+      applyStockDiscountForAppointment(currentAppointment);
+    }
     closeStatusMenu(appointmentId);
   }
 

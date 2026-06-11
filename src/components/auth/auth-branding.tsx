@@ -14,20 +14,12 @@ export function AuthBranding() {
       <div className="absolute -right-20 -top-20 h-80 w-80 rounded-full bg-accent/10 blur-3xl" />
       <div className="absolute -bottom-20 -left-20 h-80 w-80 rounded-full bg-accent/5 blur-3xl" />
 
-      <div className="relative z-10 flex items-center gap-3">
-        <div className="font-brand flex h-14 w-16 flex-col justify-center rounded-xl border border-white/15 bg-white/10 px-2 leading-none text-white">
-          <span className="text-[10px] font-bold uppercase tracking-[0.18em]">
-            Jozep&apos;s
-          </span>
-          <span className="mt-0.5 text-[13px] font-bold uppercase tracking-[0.16em]">
-            Garage
-          </span>
-        </div>
-        <div className="font-brand">
-          <span className="block text-2xl font-bold uppercase leading-none tracking-[0.12em] text-white">
+      <div className="relative z-10 font-brand">
+        <div className="inline-flex flex-col">
+          <span className="block text-[2.15rem] font-bold uppercase leading-none tracking-[0.16em] text-white">
             Jozep&apos;s Garage
           </span>
-          <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[0.42em] text-muted">
+          <span className="mt-3 block text-[0.7rem] font-semibold uppercase tracking-[0.58em] text-white/45">
             ESTÉTICA AUTOMOTIVA
           </span>
         </div>
