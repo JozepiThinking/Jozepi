@@ -514,6 +514,7 @@ function TransactionFormCard({
   buttonLabel,
   onChange,
   onSubmit,
+  onCancel,
 }: {
   title: string;
   description: string;
@@ -524,12 +525,13 @@ function TransactionFormCard({
   buttonLabel: string;
   onChange: (patch: Partial<TransactionForm>) => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onCancel: () => void;
 }) {
   return (
     <form
       onSubmit={onSubmit}
       autoComplete="off"
-      className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5"
+      className="finance-manual-form-enter rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5"
     >
       <div className="mb-4">
         <h2 className="text-lg font-semibold text-foreground">{title}</h2>
@@ -565,7 +567,15 @@ function TransactionFormCard({
           {error}
         </p>
       )}
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={onCancel}
+          className="w-full sm:w-auto"
+        >
+          Cancelar
+        </Button>
         <Button type="submit" variant="success" loading={loading} className="w-full sm:w-auto">
           <Plus className="h-4 w-4" />
           {buttonLabel}
@@ -644,6 +654,8 @@ export function FinancePage() {
   const [error, setError] = useState<string | null>(null);
   const [revenueForm, setRevenueForm] = useState<TransactionForm>(initialRevenueForm);
   const [expenseForm, setExpenseForm] = useState<TransactionForm>(initialExpenseForm);
+  const [showRevenueForm, setShowRevenueForm] = useState(false);
+  const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [savingRevenue, setSavingRevenue] = useState(false);
   const [savingExpense, setSavingExpense] = useState(false);
   const [revenueError, setRevenueError] = useState<string | null>(null);
@@ -935,6 +947,19 @@ export function FinancePage() {
     setExpenseForm({ ...initialExpenseForm, date: dateKey(today) });
   }
 
+  function closeManualForm(type: TransactionType) {
+    resetForm(type);
+
+    if (type === "receita") {
+      setRevenueError(null);
+      setShowRevenueForm(false);
+      return;
+    }
+
+    setExpenseError(null);
+    setShowExpenseForm(false);
+  }
+
   async function handleSaveManualTransaction(
     event: React.FormEvent<HTMLFormElement>,
     type: TransactionType
@@ -988,7 +1013,7 @@ export function FinancePage() {
     if (data) {
       setTransactions((prev) => [data as FinancialTransaction, ...prev]);
     }
-    resetForm(type);
+    closeManualForm(type);
   }
 
   async function handleDeleteTransaction(entry: FinanceEntry) {
@@ -1244,17 +1269,42 @@ export function FinancePage() {
 
           {activeTab === "revenues" && (
             <div className="space-y-5">
-              <TransactionFormCard
-                title="Lançar receita manual"
-                description="Use para gorjetas, receitas avulsas ou ajustes."
-                form={revenueForm}
-                categories={revenueCategoryOptions}
-                loading={savingRevenue}
-                error={revenueError}
-                buttonLabel="Salvar receita"
-                onChange={(patch) => setRevenueForm((prev) => ({ ...prev, ...patch }))}
-                onSubmit={(event) => handleSaveManualTransaction(event, "receita")}
-              />
+              <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">
+                    Receitas
+                  </h2>
+                  <p className="mt-1 text-sm text-muted">
+                    Consulte receitas da agenda e lançamentos manuais.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="success"
+                  onClick={() => {
+                    setShowRevenueForm(true);
+                    setRevenueError(null);
+                  }}
+                  className="w-full sm:w-auto"
+                >
+                  <Plus className="h-4 w-4" />
+                  Nova receita
+                </Button>
+              </div>
+              {showRevenueForm && (
+                <TransactionFormCard
+                  title="Lançar receita manual"
+                  description="Use para gorjetas, receitas avulsas ou ajustes."
+                  form={revenueForm}
+                  categories={revenueCategoryOptions}
+                  loading={savingRevenue}
+                  error={revenueError}
+                  buttonLabel="Salvar receita"
+                  onChange={(patch) => setRevenueForm((prev) => ({ ...prev, ...patch }))}
+                  onSubmit={(event) => handleSaveManualTransaction(event, "receita")}
+                  onCancel={() => closeManualForm("receita")}
+                />
+              )}
               <PeriodControls
                 value={revenuePeriod}
                 customStart={revenueCustomStart}
@@ -1273,17 +1323,42 @@ export function FinancePage() {
 
           {activeTab === "expenses" && (
             <div className="space-y-5">
-              <TransactionFormCard
-                title="Lançar despesa"
-                description="Registre compras, custos fixos e investimentos."
-                form={expenseForm}
-                categories={expenseCategoryOptions}
-                loading={savingExpense}
-                error={expenseError}
-                buttonLabel="Salvar despesa"
-                onChange={(patch) => setExpenseForm((prev) => ({ ...prev, ...patch }))}
-                onSubmit={(event) => handleSaveManualTransaction(event, "despesa")}
-              />
+              <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">
+                    Despesas
+                  </h2>
+                  <p className="mt-1 text-sm text-muted">
+                    Consulte gastos e registre novos lançamentos manuais.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="success"
+                  onClick={() => {
+                    setShowExpenseForm(true);
+                    setExpenseError(null);
+                  }}
+                  className="w-full sm:w-auto"
+                >
+                  <Plus className="h-4 w-4" />
+                  Nova despesa
+                </Button>
+              </div>
+              {showExpenseForm && (
+                <TransactionFormCard
+                  title="Lançar despesa"
+                  description="Registre compras, custos fixos e investimentos."
+                  form={expenseForm}
+                  categories={expenseCategoryOptions}
+                  loading={savingExpense}
+                  error={expenseError}
+                  buttonLabel="Salvar despesa"
+                  onChange={(patch) => setExpenseForm((prev) => ({ ...prev, ...patch }))}
+                  onSubmit={(event) => handleSaveManualTransaction(event, "despesa")}
+                  onCancel={() => closeManualForm("despesa")}
+                />
+              )}
               <PeriodControls
                 value={expensePeriod}
                 customStart={expenseCustomStart}
@@ -1450,6 +1525,25 @@ export function FinancePage() {
           )}
         </>
       )}
+      <style>{`
+        @media (prefers-reduced-motion: no-preference) {
+          .finance-manual-form-enter {
+            animation: finance-manual-form-enter 180ms ease-out both;
+            transform-origin: top center;
+          }
+        }
+
+        @keyframes finance-manual-form-enter {
+          from {
+            opacity: 0;
+            transform: translateY(-8px) scale(0.98);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+      `}</style>
     </div>
   );
 }

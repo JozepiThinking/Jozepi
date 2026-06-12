@@ -144,12 +144,12 @@ const statusStyles: Record<
     timeBadge: "bg-danger/10 text-danger",
   },
   Concluído: {
-    calendarPill: "bg-success/10 text-success",
-    timelineBlock: "bg-success",
-    sideCard: "border-success/20 bg-success/5",
-    sideAccent: "border-l-[var(--success)]",
-    statusBadge: "bg-success/10 text-success",
-    timeBadge: "bg-success/10 text-success",
+    calendarPill: "status-completed-soft",
+    timelineBlock: "status-completed-solid",
+    sideCard: "status-completed-card",
+    sideAccent: "status-completed-side-accent",
+    statusBadge: "status-completed-soft",
+    timeBadge: "status-completed-soft",
   },
 };
 
@@ -1154,6 +1154,17 @@ export function AgendaCalendar() {
     setCurrentMonth(startOfMonth(nextDate));
   }
 
+  function selectCalendarDate(day: Date) {
+    const key = dateKey(day);
+    setFocusedAppointmentId(null);
+    setSelectedDate(day);
+    setDayDrawerOpen(true);
+
+    if (creating) {
+      setForm((prev) => ({ ...prev, date: key }));
+    }
+  }
+
   async function handleSaveAppointment(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -1757,9 +1768,7 @@ export function AgendaCalendar() {
                 type="button"
                 onClick={() => {
                   setCurrentMonth(startOfMonth(today));
-                  setFocusedAppointmentId(null);
-                  setSelectedDate(today);
-                  setDayDrawerOpen(true);
+                  selectCalendarDate(today);
                 }}
                 className="min-h-11 rounded-lg border border-border bg-background px-3 py-2 text-base font-medium text-foreground transition-colors hover:border-accent sm:min-h-0 sm:text-sm"
               >
@@ -1800,11 +1809,7 @@ export function AgendaCalendar() {
                 <button
                   type="button"
                   key={key}
-                  onClick={() => {
-                    setFocusedAppointmentId(null);
-                    setSelectedDate(day);
-                    setDayDrawerOpen(true);
-                  }}
+                  onClick={() => selectCalendarDate(day)}
                   style={index === 0 ? { gridColumnStart: day.getDay() + 1 } : undefined}
                   className={`flex min-h-14 flex-col items-start rounded-xl border p-1 text-left transition-colors sm:min-h-24 sm:p-2 ${
                     isSelected
@@ -1906,7 +1911,7 @@ export function AgendaCalendar() {
                 className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-base font-medium text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:py-2.5 sm:text-sm"
               >
                 <Trash2 className="h-4 w-4" />
-                Limpar dia
+                Remover agendamentos do dia
               </button>
             )}
 
@@ -1934,63 +1939,12 @@ export function AgendaCalendar() {
                   label="Data"
                   type="date"
                   value={form.date}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, date: event.target.value }))
-                  }
+                  onChange={(event) => {
+                    const nextDate = event.target.value;
+                    setForm((prev) => ({ ...prev, date: nextDate }));
+                    if (nextDate) syncSelectedDate(nextDate);
+                  }}
                 />
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-sm font-semibold text-foreground">
-                      Horário
-                    </label>
-                    {(form.startTime || form.endTime) && (
-                      <span className="text-xs font-medium text-success">
-                        {form.startTime || "--:--"} até {form.endTime || "--:--"}
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto rounded-2xl border border-slate-200 bg-card p-2.5 shadow-sm sm:grid-cols-4">
-                    {timeSlots.map((time) => {
-                      const isSelectedEndpoint =
-                        form.startTime === time || form.endTime === time;
-                      const isInSelectedRange =
-                        form.startTime &&
-                        form.endTime &&
-                        isTimeBetween(time, form.startTime, form.endTime);
-                      const isBusy = busyTimesForFormDate.has(time);
-                      const isConflictingEndTime =
-                        !!form.startTime &&
-                        !form.endTime &&
-                        timeToMinutes(time) > timeToMinutes(form.startTime) &&
-                        hasAppointmentConflict(form.date, form.startTime, time);
-                      const isUnavailable = isBusy || isConflictingEndTime;
-
-                      return (
-                        <button
-                          type="button"
-                          key={time}
-                          disabled={isUnavailable}
-                          onClick={() => selectTimeSlot(time)}
-                          className={`min-h-11 rounded-full px-2 py-2 text-sm font-semibold transition-all duration-200 sm:min-h-0 ${
-                            isSelectedEndpoint
-                              ? "bg-success text-white shadow-sm"
-                              : isInSelectedRange
-                                ? "bg-success/20 text-success"
-                              : isUnavailable
-                                ? "cursor-not-allowed bg-muted/10 text-muted/50 line-through"
-                                : "bg-background text-foreground hover:-translate-y-0.5 hover:bg-success/10 hover:text-success hover:shadow-sm"
-                          }`}
-                        >
-                          {time}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="text-[11px] text-muted">
-                    Clique no começo e depois no final. Expediente das{" "}
-                    {BUSINESS_START_TIME} às {BUSINESS_END_TIME}.
-                  </p>
-                </div>
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between gap-3">
                     <label
@@ -2241,6 +2195,59 @@ export function AgendaCalendar() {
                     </div>
                   </div>
                 </div>
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-semibold text-foreground">
+                      Horário
+                    </label>
+                    {(form.startTime || form.endTime) && (
+                      <span className="text-xs font-medium text-success">
+                        {form.startTime || "--:--"} até {form.endTime || "--:--"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto rounded-2xl border border-slate-200 bg-card p-2.5 shadow-sm sm:grid-cols-4">
+                    {timeSlots.map((time) => {
+                      const isSelectedEndpoint =
+                        form.startTime === time || form.endTime === time;
+                      const isInSelectedRange =
+                        form.startTime &&
+                        form.endTime &&
+                        isTimeBetween(time, form.startTime, form.endTime);
+                      const isBusy = busyTimesForFormDate.has(time);
+                      const isConflictingEndTime =
+                        !!form.startTime &&
+                        !form.endTime &&
+                        timeToMinutes(time) > timeToMinutes(form.startTime) &&
+                        hasAppointmentConflict(form.date, form.startTime, time);
+                      const isUnavailable = isBusy || isConflictingEndTime;
+
+                      return (
+                        <button
+                          type="button"
+                          key={time}
+                          disabled={isUnavailable}
+                          onClick={() => selectTimeSlot(time)}
+                          className={`min-h-11 rounded-full px-2 py-2 text-sm font-semibold transition-all duration-200 sm:min-h-0 ${
+                            isSelectedEndpoint
+                              ? "bg-success text-white shadow-sm"
+                              : isInSelectedRange
+                                ? "bg-success/20 text-success"
+                              : isUnavailable
+                                ? "cursor-not-allowed bg-muted/10 text-muted/50 line-through"
+                                : "bg-background text-foreground hover:-translate-y-0.5 hover:bg-success/10 hover:text-success hover:shadow-sm"
+                          }`}
+                        >
+                          {time}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted">
+                    Clique no começo e depois no final. Expediente das{" "}
+                    {BUSINESS_START_TIME} às {BUSINESS_END_TIME}.
+                  </p>
+                </div>
                 {error && <p className="text-xs text-danger">{error}</p>}
                 <Button
                   type="submit"
@@ -2488,6 +2495,24 @@ export function AgendaCalendar() {
 
         .status-confirmed-side-accent {
           border-left-color: #2563eb;
+        }
+
+        .status-completed-soft {
+          background: rgba(5, 150, 105, 0.12);
+          color: #047857;
+        }
+
+        .status-completed-solid {
+          background: #059669;
+        }
+
+        .status-completed-card {
+          border-color: rgba(5, 150, 105, 0.24);
+          background: rgba(5, 150, 105, 0.08);
+        }
+
+        .status-completed-side-accent {
+          border-left-color: #059669;
         }
 
         @keyframes agenda-form-enter {

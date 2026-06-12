@@ -769,7 +769,7 @@ export function ProductsPage() {
           )}
         </section>
 
-        <aside className="order-1 xl:order-2 xl:sticky xl:top-8">
+        <aside className="order-1 xl:order-2 xl:sticky xl:top-4 xl:self-start">
           {formOpen ? (
             <form
               key={formAnimationKey}
@@ -914,7 +914,7 @@ export function ProductsPage() {
               </div>
             </form>
           ) : products.length > 0 ? (
-            <div className="flex h-[calc(100vh-6rem)] flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm">
+            <div className="flex h-[calc(100vh-2rem)] min-h-[28rem] flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm">
               <div className="mb-5 flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-muted">
@@ -948,7 +948,7 @@ export function ProductsPage() {
                 </div>
               </div>
 
-              <div className="mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+              <div className="mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
                 {stockProducts.length === 0 ? (
                   <p className="rounded-xl border border-dashed border-border bg-background px-4 py-6 text-center text-sm text-muted">
                     Nenhum produto líquido no estoque.
