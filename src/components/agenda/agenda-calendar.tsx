@@ -144,12 +144,12 @@ const statusStyles: Record<
     timeBadge: "bg-danger/10 text-danger",
   },
   Concluído: {
-    calendarPill: "bg-emerald-50 text-emerald-700",
-    timelineBlock: "bg-emerald-600",
-    sideCard: "border-emerald-200 bg-emerald-50",
-    sideAccent: "border-l-emerald-600",
-    statusBadge: "bg-emerald-50 text-emerald-700",
-    timeBadge: "bg-emerald-50 text-emerald-700",
+    calendarPill: "bg-success/10 text-success",
+    timelineBlock: "bg-success",
+    sideCard: "border-success/20 bg-success/5",
+    sideAccent: "border-l-[var(--success)]",
+    statusBadge: "bg-success/10 text-success",
+    timeBadge: "bg-success/10 text-success",
   },
 };
 

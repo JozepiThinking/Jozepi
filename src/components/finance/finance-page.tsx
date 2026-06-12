@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -37,21 +37,14 @@ interface FinancialTransaction {
 }
 
 interface CompletedOrderItem {
-  service_id: string | null;
   quantity: number | string | null;
   unit_price: number | string | null;
   services: { name: string } | { name: string }[] | null;
 }
 
-interface CompletedOrderService {
-  id: string;
-  name: string;
-}
-
 interface CompletedOrder {
   id: string;
   total_amount: number | string;
-  scheduled_date: string | null;
   completed_at: string | null;
   opened_at: string | null;
   clients: { name: string } | { name: string }[] | null;
@@ -137,8 +130,6 @@ const initialExpenseForm: TransactionForm = {
   date: dateKey(new Date()),
   category: "Produtos",
 };
-const SUPPRESSED_AUTO_REVENUES_STORAGE_KEY =
-  "auto-estetica-suppressed-auto-revenues";
 
 function dateKey(date: Date) {
   const year = date.getFullYear();
@@ -245,53 +236,7 @@ function firstRelation<T>(value: T | T[] | null | undefined) {
 }
 
 function getOrderDate(order: CompletedOrder) {
-  return (order.scheduled_date ?? order.completed_at ?? order.opened_at ?? "").slice(
-    0,
-    10
-  );
-}
-
-function getOrderServiceNames(order: CompletedOrder) {
-  return (order.service_order_items ?? [])
-    .map((item) => firstRelation(item.services)?.name)
-    .filter((name): name is string => Boolean(name));
-}
-
-function getAutomaticRevenueDescription(order: CompletedOrder) {
-  const clientName = firstRelation(order.clients)?.name ?? "Cliente não encontrado";
-  const serviceNames = getOrderServiceNames(order);
-  const serviceLabel =
-    serviceNames.length > 0
-      ? serviceNames.join(", ")
-      : `Ordem finalizada ${order.id.slice(0, 8)}`;
-
-  return `${clientName} - ${serviceLabel}`;
-}
-
-function readSuppressedAutoRevenueIds() {
-  if (typeof window === "undefined") return new Set<string>();
-
-  try {
-    const parsed = JSON.parse(
-      window.localStorage.getItem(SUPPRESSED_AUTO_REVENUES_STORAGE_KEY) ?? "[]"
-    ) as string[];
-
-    return new Set(parsed);
-  } catch {
-    window.localStorage.removeItem(SUPPRESSED_AUTO_REVENUES_STORAGE_KEY);
-    return new Set<string>();
-  }
-}
-
-function suppressAutoRevenue(serviceOrderId: string) {
-  if (typeof window === "undefined") return;
-
-  const suppressedIds = readSuppressedAutoRevenueIds();
-  suppressedIds.add(serviceOrderId);
-  window.localStorage.setItem(
-    SUPPRESSED_AUTO_REVENUES_STORAGE_KEY,
-    JSON.stringify([...suppressedIds])
-  );
+  return (order.completed_at ?? order.opened_at ?? "").slice(0, 10);
 }
 
 function sumEntries(entries: FinanceEntry[]) {
@@ -329,7 +274,6 @@ function SummaryCard({
   icon,
   tone,
   valueTone,
-  onClick,
 }: {
   title: string;
   value: string;
@@ -337,7 +281,6 @@ function SummaryCard({
   icon: React.ReactNode;
   tone: "primary" | "success" | "danger" | "muted";
   valueTone?: "success" | "danger";
-  onClick?: () => void;
 }) {
   const toneStyles = {
     primary: {
@@ -365,11 +308,9 @@ function SummaryCard({
         : "text-foreground";
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       style={{ borderLeftColor: toneStyles.borderLeftColor }}
-      className="group relative w-full rounded-xl border border-l-4 border-border bg-card p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-accent/20"
+      className="group relative rounded-xl border border-l-4 border-border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
       aria-label={detail ? `${title}: ${detail}` : title}
     >
       <div className="flex items-start justify-between gap-4">
@@ -393,7 +334,7 @@ function SummaryCard({
           {detail}
         </div>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -573,7 +514,6 @@ function TransactionFormCard({
   buttonLabel,
   onChange,
   onSubmit,
-  onCancel,
 }: {
   title: string;
   description: string;
@@ -584,13 +524,12 @@ function TransactionFormCard({
   buttonLabel: string;
   onChange: (patch: Partial<TransactionForm>) => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
-  onCancel: () => void;
 }) {
   return (
     <form
       onSubmit={onSubmit}
       autoComplete="off"
-      className="finance-manual-form-enter rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5"
+      className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5"
     >
       <div className="mb-4">
         <h2 className="text-lg font-semibold text-foreground">{title}</h2>
@@ -626,15 +565,7 @@ function TransactionFormCard({
           {error}
         </p>
       )}
-      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={onCancel}
-          className="w-full sm:w-auto"
-        >
-          Cancelar
-        </Button>
+      <div className="mt-4 flex justify-end">
         <Button type="submit" variant="success" loading={loading} className="w-full sm:w-auto">
           <Plus className="h-4 w-4" />
           {buttonLabel}
@@ -705,7 +636,6 @@ function MonthlyBarChart({
 export function FinancePage() {
   const supabase = useMemo(() => createClient(), []);
   const today = useMemo(() => new Date(), []);
-  const monthlyComparisonRef = useRef<HTMLElement | null>(null);
   const [activeTab, setActiveTab] = useState<FinanceTab>("overview");
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
@@ -714,8 +644,6 @@ export function FinancePage() {
   const [error, setError] = useState<string | null>(null);
   const [revenueForm, setRevenueForm] = useState<TransactionForm>(initialRevenueForm);
   const [expenseForm, setExpenseForm] = useState<TransactionForm>(initialExpenseForm);
-  const [showRevenueForm, setShowRevenueForm] = useState(false);
-  const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [savingRevenue, setSavingRevenue] = useState(false);
   const [savingExpense, setSavingExpense] = useState(false);
   const [revenueError, setRevenueError] = useState<string | null>(null);
@@ -759,14 +687,13 @@ export function FinancePage() {
             `
             id,
             total_amount,
-            scheduled_date,
             completed_at,
             opened_at,
             clients(name),
             service_order_items(
-              service_id,
               quantity,
-              unit_price
+              unit_price,
+              services(name)
             )
           `
           )
@@ -775,159 +702,20 @@ export function FinancePage() {
           .order("completed_at", { ascending: false }),
       ]);
 
-    const loadedTransactions =
-      (transactionsData as FinancialTransaction[] | null) ?? [];
-    let loadedOrders = (ordersData as CompletedOrder[] | null) ?? [];
-    let nextTransactions = loadedTransactions;
-
     if (transactionsError) {
       setError(transactionsError.message);
-    } else if (ordersError) {
-      setError(ordersError.message);
     } else {
-      const serviceIds = [
-        ...new Set(
-          loadedOrders.flatMap((order) =>
-            (order.service_order_items ?? [])
-              .map((item) => item.service_id)
-              .filter((serviceId): serviceId is string => Boolean(serviceId))
-          )
-        ),
-      ];
-
-      if (serviceIds.length > 0) {
-        const { data: servicesData, error: servicesError } = await supabase
-          .from("services")
-          .select("id, name")
-          .in("id", serviceIds);
-
-        if (servicesError) {
-          setError(servicesError.message);
-        } else {
-          const servicesById = new Map(
-            ((servicesData as CompletedOrderService[] | null) ?? []).map(
-              (service) => [service.id, service]
-            )
-          );
-
-          loadedOrders = loadedOrders.map((order) => ({
-            ...order,
-            service_order_items: (order.service_order_items ?? []).map((item) => ({
-              ...item,
-              services: item.service_id
-                ? servicesById.get(item.service_id) ?? null
-                : null,
-            })),
-          }));
-        }
-      }
-
-      const existingAutomaticRevenueByOrderId = new Map(
-        loadedTransactions
-          .filter(
-            (transaction) =>
-              transaction.type === "receita" && transaction.service_order_id
-          )
-          .map((transaction) => [transaction.service_order_id as string, transaction])
-      );
-      const suppressedAutoRevenueIds = readSuppressedAutoRevenueIds();
-      const outdatedRevenueOrders = loadedOrders.filter((order) => {
-        const transaction = existingAutomaticRevenueByOrderId.get(order.id);
-        if (!transaction) return false;
-
-        const expectedDate = getOrderDate(order) || dateKey(today);
-        const expectedDescription = getAutomaticRevenueDescription(order);
-        const expectedAmount = toCurrencyNumber(order.total_amount);
-
-        return (
-          transaction.transaction_date !== expectedDate ||
-          transaction.description !== expectedDescription ||
-          toCurrencyNumber(transaction.amount) !== expectedAmount ||
-          transaction.category !== "Serviço"
-        );
-      });
-      const missingRevenueOrders = loadedOrders.filter(
-        (order) =>
-          !existingAutomaticRevenueByOrderId.has(order.id) &&
-          !suppressedAutoRevenueIds.has(order.id) &&
-          toCurrencyNumber(order.total_amount) > 0
-      );
-
-      if (outdatedRevenueOrders.length > 0) {
-        const updateResults = await Promise.all(
-          outdatedRevenueOrders.map((order) => {
-            const transaction = existingAutomaticRevenueByOrderId.get(order.id);
-
-            return supabase
-              .from("financial_transactions")
-              .update({
-                description: getAutomaticRevenueDescription(order),
-                amount: toCurrencyNumber(order.total_amount),
-                category: "Serviço",
-                transaction_date: getOrderDate(order) || dateKey(today),
-              })
-              .eq("id", transaction?.id)
-              .select(
-                "id, type, description, amount, category, service_order_id, transaction_date, created_at"
-              )
-              .single();
-          })
-        );
-        const updateError = updateResults.find((result) => result.error)?.error;
-
-        if (updateError) {
-          setError(updateError.message);
-        } else {
-          const updatedTransactions = updateResults
-            .map((result) => result.data as FinancialTransaction | null)
-            .filter((transaction): transaction is FinancialTransaction =>
-              Boolean(transaction)
-            );
-
-          nextTransactions = loadedTransactions.map((transaction) => {
-            const updatedTransaction = updatedTransactions.find(
-              (item) => item.id === transaction.id
-            );
-
-            return updatedTransaction ?? transaction;
-          });
-        }
-      }
-
-      if (missingRevenueOrders.length > 0) {
-        const { data: insertedTransactions, error: insertMissingError } =
-          await supabase
-            .from("financial_transactions")
-            .insert(
-              missingRevenueOrders.map((order) => ({
-                workshop_id: profile.workshop_id,
-                type: "receita" as const,
-                description: getAutomaticRevenueDescription(order),
-                amount: toCurrencyNumber(order.total_amount),
-                category: "Serviço",
-                service_order_id: order.id,
-                transaction_date: getOrderDate(order) || dateKey(today),
-              }))
-            )
-            .select(
-              "id, type, description, amount, category, service_order_id, transaction_date, created_at"
-            );
-
-        if (insertMissingError) {
-          setError(insertMissingError.message);
-        } else {
-          nextTransactions = [
-            ...((insertedTransactions as FinancialTransaction[] | null) ?? []),
-            ...nextTransactions,
-          ];
-        }
-      }
+      setTransactions((transactionsData as FinancialTransaction[] | null) ?? []);
     }
 
-    setTransactions(nextTransactions);
-    setOrders(loadedOrders);
+    if (ordersError) {
+      setError(ordersError.message);
+    } else {
+      setOrders((ordersData as CompletedOrder[] | null) ?? []);
+    }
+
     setLoading(false);
-  }, [supabase, today]);
+  }, [supabase]);
 
   useEffect(() => {
     void Promise.resolve().then(loadFinanceData);
@@ -1147,19 +935,6 @@ export function FinancePage() {
     setExpenseForm({ ...initialExpenseForm, date: dateKey(today) });
   }
 
-  function closeManualForm(type: TransactionType) {
-    resetForm(type);
-
-    if (type === "receita") {
-      setRevenueError(null);
-      setShowRevenueForm(false);
-      return;
-    }
-
-    setExpenseError(null);
-    setShowExpenseForm(false);
-  }
-
   async function handleSaveManualTransaction(
     event: React.FormEvent<HTMLFormElement>,
     type: TransactionType
@@ -1214,11 +989,6 @@ export function FinancePage() {
       setTransactions((prev) => [data as FinancialTransaction, ...prev]);
     }
     resetForm(type);
-    if (type === "receita") {
-      setShowRevenueForm(false);
-    } else {
-      setShowExpenseForm(false);
-    }
   }
 
   async function handleDeleteTransaction(entry: FinanceEntry) {
@@ -1262,38 +1032,11 @@ export function FinancePage() {
           prev.filter((order) => order.id !== entry.serviceOrderId)
         );
       }
-    } else if (entry.kind === "automatic" && entry.serviceOrderId) {
-      suppressAutoRevenue(entry.serviceOrderId);
     }
 
     setTransactions((prev) =>
       prev.filter((transaction) => transaction.id !== entry.id)
     );
-  }
-
-  function openMonthlyRevenues() {
-    setRevenuePeriod("month");
-    setActiveTab("revenues");
-  }
-
-  function openMonthlyExpenses() {
-    setExpensePeriod("month");
-    setActiveTab("expenses");
-  }
-
-  function openReports() {
-    setActiveTab("reports");
-  }
-
-  function openMonthlyComparisonReport() {
-    setActiveTab("reports");
-    window.setTimeout(() => {
-      monthlyComparisonRef.current?.focus({ preventScroll: true });
-      monthlyComparisonRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }, 0);
   }
 
   return (
@@ -1319,7 +1062,6 @@ export function FinancePage() {
           detail="OS concluídas + lançamentos manuais"
           icon={<ArrowDownRight className="h-6 w-6" />}
           tone="success"
-          onClick={openMonthlyRevenues}
         />
         <SummaryCard
           title="Despesas do mês"
@@ -1327,7 +1069,6 @@ export function FinancePage() {
           detail="Gastos lançados"
           icon={<ArrowUpRight className="h-6 w-6" />}
           tone="danger"
-          onClick={openMonthlyExpenses}
         />
         <SummaryCard
           title="Lucro líquido"
@@ -1336,7 +1077,6 @@ export function FinancePage() {
           icon={<TripleBanknotesIcon className="h-6 w-6" />}
           tone="primary"
           valueTone={monthProfit >= 0 ? "success" : "danger"}
-          onClick={openReports}
         />
         <SummaryCard
           title="Comparativo"
@@ -1351,7 +1091,6 @@ export function FinancePage() {
           }
           tone="muted"
           valueTone={growthPositive ? "success" : "danger"}
-          onClick={openMonthlyComparisonReport}
         />
       </div>
 
@@ -1448,11 +1187,7 @@ export function FinancePage() {
                 </section>
               </div>
 
-              <section
-                ref={monthlyComparisonRef}
-                tabIndex={-1}
-                className="rounded-xl border border-border bg-card p-5 shadow-sm focus:outline-none focus:ring-2 focus:ring-accent/20"
-              >
+              <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
                 <h2 className="text-lg font-semibold text-foreground">
                   Últimas receitas
                 </h2>
@@ -1509,42 +1244,17 @@ export function FinancePage() {
 
           {activeTab === "revenues" && (
             <div className="space-y-5">
-              <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
-                <div>
-                  <h2 className="text-lg font-semibold text-foreground">
-                    Receitas
-                  </h2>
-                  <p className="mt-1 text-sm text-muted">
-                    Consulte receitas da agenda e lançamentos manuais.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="success"
-                  onClick={() => {
-                    setShowRevenueForm(true);
-                    setRevenueError(null);
-                  }}
-                  className="w-full sm:w-auto"
-                >
-                  <Plus className="h-4 w-4" />
-                  Nova receita
-                </Button>
-              </div>
-              {showRevenueForm && (
-                <TransactionFormCard
-                  title="Lançar receita manual"
-                  description="Use para gorjetas, receitas avulsas ou ajustes."
-                  form={revenueForm}
-                  categories={revenueCategoryOptions}
-                  loading={savingRevenue}
-                  error={revenueError}
-                  buttonLabel="Salvar receita"
-                  onChange={(patch) => setRevenueForm((prev) => ({ ...prev, ...patch }))}
-                  onSubmit={(event) => handleSaveManualTransaction(event, "receita")}
-                  onCancel={() => closeManualForm("receita")}
-                />
-              )}
+              <TransactionFormCard
+                title="Lançar receita manual"
+                description="Use para gorjetas, receitas avulsas ou ajustes."
+                form={revenueForm}
+                categories={revenueCategoryOptions}
+                loading={savingRevenue}
+                error={revenueError}
+                buttonLabel="Salvar receita"
+                onChange={(patch) => setRevenueForm((prev) => ({ ...prev, ...patch }))}
+                onSubmit={(event) => handleSaveManualTransaction(event, "receita")}
+              />
               <PeriodControls
                 value={revenuePeriod}
                 customStart={revenueCustomStart}
@@ -1563,42 +1273,17 @@ export function FinancePage() {
 
           {activeTab === "expenses" && (
             <div className="space-y-5">
-              <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
-                <div>
-                  <h2 className="text-lg font-semibold text-foreground">
-                    Despesas
-                  </h2>
-                  <p className="mt-1 text-sm text-muted">
-                    Consulte gastos e registre novos lançamentos manuais.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="success"
-                  onClick={() => {
-                    setShowExpenseForm(true);
-                    setExpenseError(null);
-                  }}
-                  className="w-full sm:w-auto"
-                >
-                  <Plus className="h-4 w-4" />
-                  Nova despesa
-                </Button>
-              </div>
-              {showExpenseForm && (
-                <TransactionFormCard
-                  title="Lançar despesa"
-                  description="Registre compras, custos fixos e investimentos."
-                  form={expenseForm}
-                  categories={expenseCategoryOptions}
-                  loading={savingExpense}
-                  error={expenseError}
-                  buttonLabel="Salvar despesa"
-                  onChange={(patch) => setExpenseForm((prev) => ({ ...prev, ...patch }))}
-                  onSubmit={(event) => handleSaveManualTransaction(event, "despesa")}
-                  onCancel={() => closeManualForm("despesa")}
-                />
-              )}
+              <TransactionFormCard
+                title="Lançar despesa"
+                description="Registre compras, custos fixos e investimentos."
+                form={expenseForm}
+                categories={expenseCategoryOptions}
+                loading={savingExpense}
+                error={expenseError}
+                buttonLabel="Salvar despesa"
+                onChange={(patch) => setExpenseForm((prev) => ({ ...prev, ...patch }))}
+                onSubmit={(event) => handleSaveManualTransaction(event, "despesa")}
+              />
               <PeriodControls
                 value={expensePeriod}
                 customStart={expenseCustomStart}
@@ -1765,25 +1450,6 @@ export function FinancePage() {
           )}
         </>
       )}
-      <style>{`
-        @media (prefers-reduced-motion: no-preference) {
-          .finance-manual-form-enter {
-            animation: finance-manual-form-enter 180ms ease-out both;
-            transform-origin: top center;
-          }
-        }
-
-        @keyframes finance-manual-form-enter {
-          from {
-            opacity: 0;
-            transform: translateY(-8px) scale(0.98);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
-        }
-      `}</style>
     </div>
   );
 }
