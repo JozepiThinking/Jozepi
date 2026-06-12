@@ -6,6 +6,15 @@ export interface ProductTypeOption {
   custom?: boolean;
 }
 
+export type ProductPriceHistoryReason = "created" | "edited" | "replenished";
+
+export interface ProductPriceHistoryEntry {
+  id: string;
+  price: string;
+  date: string;
+  reason: ProductPriceHistoryReason;
+}
+
 export interface ProductItem {
   id: string;
   name: string;
@@ -17,6 +26,7 @@ export interface ProductItem {
   totalCost: string;
   photoUrl?: string;
   stockRemaining?: string;
+  priceHistory?: ProductPriceHistoryEntry[];
 }
 
 export interface ProductForm {
@@ -136,11 +146,15 @@ export function getProductStockUnit(product: ProductItem) {
 }
 
 export function normalizeProductStock(product: ProductItem): ProductItem {
-  if (product.stockRemaining !== undefined) return product;
-
   return {
     ...product,
-    stockRemaining: String(getProductInitialStock(product)),
+    stockRemaining:
+      product.stockRemaining !== undefined
+        ? product.stockRemaining
+        : String(getProductInitialStock(product)),
+    priceHistory: Array.isArray(product.priceHistory)
+      ? product.priceHistory
+      : [],
   };
 }
 
@@ -179,6 +193,12 @@ export function createProductId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `product-${Date.now()}-${Math.random()}`;
+}
+
+export function createProductPriceHistoryId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `price-history-${Date.now()}-${Math.random()}`;
 }
 
 export function createUsageId() {

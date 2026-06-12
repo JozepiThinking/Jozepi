@@ -56,7 +56,7 @@ export function Sidebar({ userEmail, userName, avatarUrl }: SidebarProps) {
           </div>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {navigation.map((item) => {
             const isActive =
               item.href === "/"

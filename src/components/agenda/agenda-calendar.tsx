@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Car,
@@ -514,9 +514,7 @@ function AgendaDropdown({
           {selectedOption?.label ?? placeholder}
         </span>
         <ChevronDown
-          className={`h-4 w-4 shrink-0 text-muted transition-transform duration-200 ${
-            open ? "rotate-180" : ""
-          }`}
+          className="h-4 w-4 shrink-0 text-muted transition-transform duration-200"
         />
       </button>
 
@@ -643,6 +641,58 @@ export function AgendaCalendar() {
   });
   const [error, setError] = useState<string | null>(null);
 
+  const syncFinanceRevenueForAppointment = useCallback(async (appointment: Appointment) => {
+    if (!workshopId || appointment.totalAmount <= 0) return null;
+
+    const description = `${appointment.client} - ${
+      appointment.service || "Serviço realizado"
+    }`;
+    const payload = {
+      workshop_id: workshopId,
+      type: "receita" as const,
+      description,
+      amount: appointment.totalAmount,
+      category: "Serviço",
+      service_order_id: appointment.id,
+      transaction_date: appointment.date,
+    };
+
+    const { data: existingTransactions, error: findError } = await supabase
+      .from("financial_transactions")
+      .select("id")
+      .eq("service_order_id", appointment.id)
+      .eq("type", "receita")
+      .limit(1);
+
+    if (findError) return findError.message;
+
+    const existingTransaction = existingTransactions?.[0];
+    if (existingTransaction) {
+      const { error: updateError } = await supabase
+        .from("financial_transactions")
+        .update(payload)
+        .eq("id", existingTransaction.id);
+
+      return updateError?.message ?? null;
+    }
+
+    const { error: insertError } = await supabase
+      .from("financial_transactions")
+      .insert(payload);
+
+    return insertError?.message ?? null;
+  }, [supabase, workshopId]);
+
+  const deleteFinanceRevenueForAppointment = useCallback(async (appointmentId: string) => {
+    const { error: deleteError } = await supabase
+      .from("financial_transactions")
+      .delete()
+      .eq("service_order_id", appointmentId)
+      .eq("type", "receita");
+
+    return deleteError?.message ?? null;
+  }, [supabase]);
+
   async function loadAgendaData() {
     setLoadingClients(true);
     setLoadingServices(true);
@@ -744,12 +794,14 @@ export function AgendaCalendar() {
       setNow(nextNow);
       setAppointments((prev) => {
         const completedAppointmentIds: string[] = [];
+        const completedAppointments: Appointment[] = [];
         const next = prev.map((appointment) => {
           if (
             appointment.status === "Confirmado" &&
             isAppointmentPast(appointment, nextNow)
           ) {
             completedAppointmentIds.push(appointment.id);
+            completedAppointments.push(appointment);
             applyStockDiscountForAppointment(appointment);
             return { ...appointment, status: "Concluído" as const };
           }
@@ -771,7 +823,21 @@ export function AgendaCalendar() {
               status: "finalizada",
               completed_at: nextNow.toISOString(),
             })
-            .in("id", completedAppointmentIds);
+            .in("id", completedAppointmentIds)
+            .then(async ({ error: updateError }) => {
+              if (updateError) {
+                setError(updateError.message);
+                return;
+              }
+
+              const financeErrors = await Promise.all(
+                completedAppointments.map((appointment) =>
+                  syncFinanceRevenueForAppointment(appointment)
+                )
+              );
+              const financeError = financeErrors.find(Boolean);
+              if (financeError) setError(financeError);
+            });
         }
 
         return completedAppointmentIds.length > 0 ? next : prev;
@@ -779,7 +845,7 @@ export function AgendaCalendar() {
     }, 60_000);
 
     return () => window.clearInterval(intervalId);
-  }, [agendaStorageMode, supabase]);
+  }, [agendaStorageMode, supabase, syncFinanceRevenueForAppointment]);
 
   const selectedKey = dateKey(selectedDate);
   const calendarDays = useMemo(
@@ -1288,6 +1354,12 @@ export function AgendaCalendar() {
             )
           : [...prev, savedAppointment]
       );
+      if (savedAppointment.status === "Concluído") {
+        const financeError = await syncFinanceRevenueForAppointment(savedAppointment);
+        if (financeError) {
+          setError(financeError);
+        }
+      }
       syncSelectedDate(form.date);
       closeForm();
     } catch (err) {
@@ -1392,6 +1464,8 @@ export function AgendaCalendar() {
     );
     const shouldDiscountStock =
       status === "Concluído" && currentAppointment?.status !== "Concluído";
+    const shouldRemoveFinanceRevenue =
+      status !== "Concluído" && currentAppointment?.status === "Concluído";
 
     if (agendaStorageMode === "local") {
       setAppointments((prev) => {
@@ -1421,6 +1495,20 @@ export function AgendaCalendar() {
     if (updateError) {
       setError(updateError.message);
       return;
+    }
+
+    if (currentAppointment && status === "Concluído") {
+      const financeError = await syncFinanceRevenueForAppointment(currentAppointment);
+      if (financeError) {
+        setError(financeError);
+      }
+    }
+
+    if (shouldRemoveFinanceRevenue) {
+      const financeError = await deleteFinanceRevenueForAppointment(appointmentId);
+      if (financeError) {
+        setError(financeError);
+      }
     }
 
     setAppointments((prev) =>

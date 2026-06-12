@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { formatCurrency } from "@/lib/utils/format";
 import {
   createProductId,
+  createProductPriceHistoryId,
   createProductTypeId,
   emptyProductForm,
   formatStockAmount,
@@ -37,6 +38,7 @@ import {
   SERVICE_PRODUCT_USAGE_STORAGE_KEY,
   type ProductForm,
   type ProductItem,
+  type ProductPriceHistoryReason,
   type ServiceProductUsage,
   type ProductType,
   type ProductTypeOption,
@@ -45,6 +47,7 @@ import {
 const PRODUCT_FORM_EXIT_MS = 180;
 
 type ProductTypeFilter = "all" | "liquid" | "utensil";
+type ReplenishPriceMode = "keep" | "update";
 
 const productTypeFilterOptions = [
   { value: "all", label: "Todos" },
@@ -55,6 +58,11 @@ const productTypeFilterOptions = [
 const PRODUCT_PHOTO_MAX_SIZE = 480;
 const PRODUCT_PHOTO_QUALITY = 0.72;
 const PRODUCT_PHOTO_COMPACT_THRESHOLD = 180_000;
+const priceHistoryReasonLabels: Record<ProductPriceHistoryReason, string> = {
+  created: "Cadastro",
+  edited: "Edição",
+  replenished: "Reposição",
+};
 
 function isQuotaExceededError(err: unknown) {
   return (
@@ -115,6 +123,13 @@ async function compactProductPhoto(product: ProductItem) {
   }
 }
 
+function formatPriceHistoryDate(date: string) {
+  const parsedDate = new Date(date);
+  if (Number.isNaN(parsedDate.getTime())) return "";
+
+  return parsedDate.toLocaleDateString("pt-BR");
+}
+
 export function ProductsPage() {
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
@@ -136,6 +151,9 @@ export function ProductsPage() {
     null
   );
   const [replenishAmount, setReplenishAmount] = useState("");
+  const [replenishPriceMode, setReplenishPriceMode] =
+    useState<ReplenishPriceMode>("keep");
+  const [replenishNewPrice, setReplenishNewPrice] = useState("");
   const [replenishError, setReplenishError] = useState<string | null>(null);
   const [editingStockProductId, setEditingStockProductId] = useState<string | null>(
     null
@@ -240,6 +258,8 @@ export function ProductsPage() {
     setTypeError(null);
     setReplenishingProductId(null);
     setReplenishAmount("");
+    setReplenishPriceMode("keep");
+    setReplenishNewPrice("");
     setReplenishError(null);
     setEditingStockProductId(null);
     setStockEditValue("");
@@ -353,6 +373,18 @@ export function ProductsPage() {
     event.target.value = "";
   }
 
+  function createPriceHistoryEntry(
+    price: string,
+    reason: ProductPriceHistoryReason
+  ) {
+    return {
+      id: createProductPriceHistoryId(),
+      price,
+      date: new Date().toISOString(),
+      reason,
+    };
+  }
+
   function validateProductForm() {
     if (!form.name.trim()) {
       throw new Error("Informe o nome do produto.");
@@ -389,7 +421,22 @@ export function ProductsPage() {
       durabilityWashes: "",
       totalCost: form.totalCost,
       photoUrl: form.photoUrl || undefined,
+      priceHistory: editingProduct?.priceHistory ?? [],
     };
+    const previousPrice = editingProduct
+      ? parseMoney(editingProduct.totalCost || "0")
+      : null;
+    const nextPrice = parseMoney(form.totalCost || "0");
+    if (
+      editingProduct &&
+      previousPrice !== nextPrice &&
+      editingProduct.totalCost
+    ) {
+      baseProduct.priceHistory = [
+        createPriceHistoryEntry(editingProduct.totalCost, "edited"),
+        ...(editingProduct.priceHistory ?? []),
+      ];
+    }
     const initialStock = getProductInitialStock(baseProduct);
     const preservedRemaining =
       editingProduct && editingProduct.type === baseProduct.type
@@ -424,6 +471,8 @@ export function ProductsPage() {
   function openReplenish(productId: string) {
     setReplenishingProductId(productId);
     setReplenishAmount("");
+    setReplenishPriceMode("keep");
+    setReplenishNewPrice("");
     setReplenishError(null);
     setEditingStockProductId(null);
     setStockEditValue("");
@@ -432,6 +481,8 @@ export function ProductsPage() {
   function closeReplenish() {
     setReplenishingProductId(null);
     setReplenishAmount("");
+    setReplenishPriceMode("keep");
+    setReplenishNewPrice("");
     setReplenishError(null);
   }
 
@@ -446,6 +497,23 @@ export function ProductsPage() {
       return;
     }
 
+    let nextTotalCost = product.totalCost;
+    if (replenishPriceMode === "update") {
+      try {
+        parseMoney(replenishNewPrice || "0");
+      } catch {
+        setReplenishError("Informe um novo custo válido.");
+        return;
+      }
+
+      if (!replenishNewPrice.trim()) {
+        setReplenishError("Informe o novo custo total do produto.");
+        return;
+      }
+
+      nextTotalCost = replenishNewPrice;
+    }
+
     const initialStock = getProductInitialStock(product);
     const currentStock = getProductRemainingStock(product);
     const nextStock = Math.min(initialStock, currentStock + addedAmount);
@@ -453,7 +521,20 @@ export function ProductsPage() {
     setProducts((prev) =>
       prev.map((item) =>
         item.id === product.id
-          ? { ...item, stockRemaining: String(nextStock) }
+          ? {
+              ...item,
+              totalCost: nextTotalCost,
+              stockRemaining: String(nextStock),
+              priceHistory:
+                replenishPriceMode === "update" &&
+                parseMoney(product.totalCost || "0") !== parseMoney(nextTotalCost || "0") &&
+                product.totalCost
+                  ? [
+                      createPriceHistoryEntry(product.totalCost, "replenished"),
+                      ...(product.priceHistory ?? []),
+                    ]
+                  : product.priceHistory ?? [],
+            }
           : item
       )
     );
@@ -465,6 +546,8 @@ export function ProductsPage() {
     setStockEditValue(String(getProductRemainingStock(product)));
     setReplenishingProductId(null);
     setReplenishAmount("");
+    setReplenishPriceMode("keep");
+    setReplenishNewPrice("");
     setReplenishError(null);
   }
 
@@ -882,6 +965,7 @@ export function ProductsPage() {
                   const stockUnit = getProductStockUnit(product);
                   const criticalStock = stockPercent < 20;
                   const warningStock = stockPercent >= 20 && stockPercent <= 50;
+                  const priceHistory = product.priceHistory ?? [];
                   const progressClass = criticalStock
                     ? "bg-danger"
                     : warningStock
@@ -1006,19 +1090,48 @@ export function ProductsPage() {
                             {usageSummary.estimatedUses ?? 0} usos
                           </p>
                         </div>
-                      ) : (
-                        <p className="mt-3 rounded-xl border border-dashed border-border bg-card px-3 py-2 text-xs text-muted">
-                          Ainda não vinculado a serviços.
-                        </p>
+                      ) : null}
+
+                      {priceHistory.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-border bg-card px-3 py-2">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-muted">
+                            Histórico de preços
+                          </p>
+                          <div className="mt-2 space-y-1.5">
+                            {priceHistory.slice(0, 3).map((entry) => (
+                              <div
+                                key={entry.id}
+                                className="flex items-center justify-between gap-3 text-xs"
+                              >
+                                <span className="min-w-0 truncate font-semibold text-foreground">
+                                  {priceHistoryReasonLabels[entry.reason]}
+                                  {formatPriceHistoryDate(entry.date)
+                                    ? ` • ${formatPriceHistoryDate(entry.date)}`
+                                    : ""}
+                                </span>
+                                <span className="shrink-0 font-bold text-muted">
+                                  {formatCurrency(parseMoney(entry.price || "0"))}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
 
                       {replenishingProductId === product.id && (
                         <div className="mt-3 rounded-xl border border-border bg-card p-3">
+                          <p className="mb-3 rounded-lg bg-background px-3 py-2 text-xs font-semibold text-muted">
+                            Preço atual:{" "}
+                            <span className="text-foreground">
+                              {formatCurrency(parseMoney(product.totalCost || "0"))}
+                            </span>
+                          </p>
                           <Input
                             label={`Adicionar ao estoque (${stockUnit})`}
                             type="number"
                             min="0"
                             step={product.type === "liquid" ? "1" : "0.01"}
+                            className="number-input-no-spinner"
                             value={replenishAmount}
                             onChange={(event) => {
                               setReplenishAmount(event.target.value);
@@ -1026,6 +1139,51 @@ export function ProductsPage() {
                             }}
                             placeholder={product.type === "liquid" ? "500" : "1"}
                           />
+                          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReplenishPriceMode("keep");
+                                setReplenishNewPrice("");
+                                setReplenishError(null);
+                              }}
+                              className={`rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-colors ${
+                                replenishPriceMode === "keep"
+                                  ? "border-success/30 bg-success/10 text-success"
+                                  : "border-border bg-background text-muted hover:text-foreground"
+                              }`}
+                            >
+                              Manter preço atual
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReplenishPriceMode("update");
+                                setReplenishNewPrice(product.totalCost);
+                                setReplenishError(null);
+                              }}
+                              className={`rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-colors ${
+                                replenishPriceMode === "update"
+                                  ? "border-success/30 bg-success/10 text-success"
+                                  : "border-border bg-background text-muted hover:text-foreground"
+                              }`}
+                            >
+                              Atualizar preço
+                            </button>
+                          </div>
+                          {replenishPriceMode === "update" && (
+                            <div className="mt-3">
+                              <Input
+                                label="Novo custo total do produto"
+                                value={replenishNewPrice}
+                                autoComplete="off"
+                                onChange={(event) => {
+                                  setReplenishNewPrice(event.target.value);
+                                  setReplenishError(null);
+                                }}
+                              />
+                            </div>
+                          )}
                           {replenishError && (
                             <p className="mt-2 text-xs font-medium text-danger">
                               {replenishError}
@@ -1097,6 +1255,17 @@ export function ProductsPage() {
           background: var(--primary);
           box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
           cursor: pointer;
+        }
+
+        .number-input-no-spinner::-webkit-outer-spin-button,
+        .number-input-no-spinner::-webkit-inner-spin-button {
+          appearance: none;
+          margin: 0;
+        }
+
+        .number-input-no-spinner {
+          appearance: textfield;
+          -moz-appearance: textfield;
         }
 
         @media (hover: hover) and (prefers-reduced-motion: no-preference) {

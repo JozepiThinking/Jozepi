@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -60,6 +60,7 @@ interface FinanceEntry {
   category: string;
   date: string;
   clientName?: string;
+  serviceOrderId?: string;
 }
 
 interface TransactionForm {
@@ -238,12 +239,6 @@ function getOrderDate(order: CompletedOrder) {
   return (order.completed_at ?? order.opened_at ?? "").slice(0, 10);
 }
 
-function getOrderServiceNames(order: CompletedOrder) {
-  return (order.service_order_items ?? [])
-    .map((item) => firstRelation(item.services)?.name)
-    .filter((name): name is string => Boolean(name));
-}
-
 function sumEntries(entries: FinanceEntry[]) {
   return entries.reduce((total, entry) => total + entry.amount, 0);
 }
@@ -315,7 +310,8 @@ function SummaryCard({
   return (
     <div
       style={{ borderLeftColor: toneStyles.borderLeftColor }}
-      className="rounded-xl border border-l-4 border-border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+      className="group relative rounded-xl border border-l-4 border-border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+      aria-label={detail ? `${title}: ${detail}` : title}
     >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
@@ -323,7 +319,6 @@ function SummaryCard({
           <p className={`mt-2 text-2xl font-bold sm:text-3xl ${valueClass}`}>
             {value}
           </p>
-          {detail && <p className="mt-1 text-xs font-semibold text-muted">{detail}</p>}
         </div>
         <span
           className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${toneStyles.icon}`}
@@ -331,7 +326,36 @@ function SummaryCard({
           {icon}
         </span>
       </div>
+      {detail && (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute left-5 right-5 top-full z-30 mt-2 translate-y-1 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground opacity-0 shadow-lg ring-1 ring-slate-900/5 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100"
+        >
+          {detail}
+        </div>
+      )}
     </div>
+  );
+}
+
+function TripleBanknotesIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="3" y="8" width="14" height="9" rx="2" />
+      <path d="M6 8V6a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-2" />
+      <path d="M4 11a2 2 0 0 0 2-2" />
+      <path d="M14 17a2 2 0 0 1 2-2" />
+      <circle cx="10" cy="12.5" r="1.5" />
+    </svg>
   );
 }
 
@@ -385,11 +409,11 @@ function PeriodControls({
 function TransactionList({
   entries,
   emptyMessage,
-  onDeleteManual,
+  onDeleteTransaction,
 }: {
   entries: FinanceEntry[];
   emptyMessage: string;
-  onDeleteManual?: (entryId: string) => void;
+  onDeleteTransaction?: (entry: FinanceEntry) => void;
 }) {
   if (entries.length === 0) {
     return (
@@ -458,10 +482,10 @@ function TransactionList({
                 <span>{formatCurrency(entry.amount)}</span>
               </div>
               <div className="flex justify-end">
-                {entry.kind === "manual" && onDeleteManual ? (
+                {onDeleteTransaction ? (
                   <button
                     type="button"
-                    onClick={() => onDeleteManual(entry.id)}
+                    onClick={() => onDeleteTransaction(entry)}
                     className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white md:min-h-0 md:min-w-0"
                     aria-label={`Apagar ${entry.description}`}
                     title="Apagar lançamento"
@@ -469,7 +493,7 @@ function TransactionList({
                     <Trash2 className="h-4 w-4" />
                   </button>
                 ) : (
-                  <span className="text-xs font-semibold text-muted">Auto</span>
+                  <span className="text-xs font-semibold text-muted">-</span>
                 )}
               </div>
             </article>
@@ -631,7 +655,7 @@ export function FinancePage() {
   const [expenseCustomStart, setExpenseCustomStart] = useState(dateKey(startOfMonth(today)));
   const [expenseCustomEnd, setExpenseCustomEnd] = useState(dateKey(today));
 
-  async function loadFinanceData() {
+  const loadFinanceData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -691,63 +715,95 @@ export function FinancePage() {
     }
 
     setLoading(false);
-  }
+  }, [supabase]);
 
   useEffect(() => {
     void Promise.resolve().then(loadFinanceData);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadFinanceData]);
 
-  const automaticRevenues = useMemo<FinanceEntry[]>(() => {
-    return orders
-      .map((order) => {
-        const date = getOrderDate(order);
-        if (!date) return null;
+  useEffect(() => {
+    if (!workshopId) return;
 
-        const serviceNames = getOrderServiceNames(order);
-        const client = firstRelation(order.clients);
+    const channel = supabase
+      .channel(`finance-sync-${workshopId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "financial_transactions",
+          filter: `workshop_id=eq.${workshopId}`,
+        },
+        () => {
+          void loadFinanceData();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "service_orders",
+          filter: `workshop_id=eq.${workshopId}`,
+        },
+        () => {
+          void loadFinanceData();
+        }
+      )
+      .subscribe();
 
-        return {
-          id: `order-${order.id}`,
-          kind: "automatic" as const,
-          type: "receita" as const,
-          description:
-            serviceNames.length > 0
-              ? serviceNames.join(", ")
-              : `Ordem finalizada ${order.id.slice(0, 8)}`,
-          amount: toCurrencyNumber(order.total_amount),
-          category: "Serviço",
-          date,
-          clientName: client?.name,
-        };
-      })
-      .filter((entry): entry is FinanceEntry => Boolean(entry));
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [loadFinanceData, supabase, workshopId]);
+
+  const ordersById = useMemo(() => {
+    return new Map(orders.map((order) => [order.id, order]));
   }, [orders]);
 
-  const manualEntries = useMemo<FinanceEntry[]>(() => {
+  const transactionEntries = useMemo<FinanceEntry[]>(() => {
     return transactions.map((transaction) => ({
       id: transaction.id,
-      kind: "manual",
+      kind: transaction.service_order_id ? "automatic" : "manual",
       type: transaction.type,
       description: transaction.description,
       amount: toCurrencyNumber(transaction.amount),
       category: transaction.category ?? "Outros",
       date: transaction.transaction_date,
+      clientName: transaction.service_order_id
+        ? firstRelation(ordersById.get(transaction.service_order_id)?.clients)?.name
+        : undefined,
+      serviceOrderId: transaction.service_order_id ?? undefined,
     }));
-  }, [transactions]);
+  }, [ordersById, transactions]);
 
   const revenueEntries = useMemo(
     () =>
-      [...automaticRevenues, ...manualEntries.filter((entry) => entry.type === "receita")]
+      transactionEntries
+        .filter((entry) => entry.type === "receita")
         .sort((a, b) => b.date.localeCompare(a.date)),
-    [automaticRevenues, manualEntries]
+    [transactionEntries]
   );
   const expenseEntries = useMemo(
     () =>
-      manualEntries
+      transactionEntries
         .filter((entry) => entry.type === "despesa")
         .sort((a, b) => b.date.localeCompare(a.date)),
-    [manualEntries]
+    [transactionEntries]
+  );
+  const automaticRevenueServiceOrderIds = useMemo(() => {
+    return new Set(
+      transactions
+        .filter(
+          (transaction) =>
+            transaction.type === "receita" && transaction.service_order_id
+        )
+        .map((transaction) => transaction.service_order_id as string)
+    );
+  }, [transactions]);
+  const reportOrders = useMemo(
+    () => orders.filter((order) => automaticRevenueServiceOrderIds.has(order.id)),
+    [automaticRevenueServiceOrderIds, orders]
   );
 
   const currentMonthRange = getPeriodRange("month", "", "", today);
@@ -817,7 +873,7 @@ export function FinancePage() {
     ...monthlyReport.flatMap((item) => [item.revenue, item.expense])
   );
 
-  const serviceRevenue = orders.reduce<Record<string, number>>((acc, order) => {
+  const serviceRevenue = reportOrders.reduce<Record<string, number>>((acc, order) => {
     const items = order.service_order_items ?? [];
     if (items.length === 0) {
       acc["Serviços"] = (acc["Serviços"] ?? 0) + toCurrencyNumber(order.total_amount);
@@ -846,7 +902,7 @@ export function FinancePage() {
   }, []);
 
   const clientRanking = Object.values(
-    orders.reduce<Record<string, { name: string; amount: number }>>((acc, order) => {
+    reportOrders.reduce<Record<string, { name: string; amount: number }>>((acc, order) => {
       const clientName = firstRelation(order.clients)?.name ?? "Cliente não encontrado";
       acc[clientName] = {
         name: clientName,
@@ -858,7 +914,7 @@ export function FinancePage() {
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 5);
 
-  const todayOrders = orders.filter((order) => {
+  const todayOrders = reportOrders.filter((order) => {
     const orderDate = getOrderDate(order);
     return orderDate ? isDateInRange(orderDate, todayRange) : false;
   });
@@ -935,21 +991,52 @@ export function FinancePage() {
     resetForm(type);
   }
 
-  async function handleDeleteManualTransaction(entryId: string) {
-    const confirmed = window.confirm("Deseja apagar este lançamento?");
+  async function handleDeleteTransaction(entry: FinanceEntry) {
+    const confirmed = window.confirm(
+      entry.kind === "automatic"
+        ? "Deseja apagar esta receita gerada pela Agenda?"
+        : "Deseja apagar este lançamento?"
+    );
     if (!confirmed) return;
+
+    const shouldRevertAppointment =
+      entry.kind === "automatic" && entry.serviceOrderId
+        ? window.confirm(
+            "Deseja também reverter o status do agendamento para Pendente?"
+          )
+        : false;
 
     const { error: deleteError } = await supabase
       .from("financial_transactions")
       .delete()
-      .eq("id", entryId);
+      .eq("id", entry.id);
 
     if (deleteError) {
       setError(deleteError.message);
       return;
     }
 
-    setTransactions((prev) => prev.filter((transaction) => transaction.id !== entryId));
+    if (shouldRevertAppointment && entry.serviceOrderId) {
+      const { error: orderError } = await supabase
+        .from("service_orders")
+        .update({
+          status: "aberta",
+          completed_at: null,
+        })
+        .eq("id", entry.serviceOrderId);
+
+      if (orderError) {
+        setError(orderError.message);
+      } else {
+        setOrders((prev) =>
+          prev.filter((order) => order.id !== entry.serviceOrderId)
+        );
+      }
+    }
+
+    setTransactions((prev) =>
+      prev.filter((transaction) => transaction.id !== entry.id)
+    );
   }
 
   return (
@@ -973,21 +1060,21 @@ export function FinancePage() {
           title="Receita do mês"
           value={formatCurrency(monthRevenueTotal)}
           detail="OS concluídas + lançamentos manuais"
-          icon={<ArrowUpRight className="h-6 w-6" />}
+          icon={<ArrowDownRight className="h-6 w-6" />}
           tone="success"
         />
         <SummaryCard
           title="Despesas do mês"
           value={formatCurrency(monthExpenseTotal)}
-          detail="Gastos lançados manualmente"
-          icon={<ArrowDownRight className="h-6 w-6" />}
+          detail="Gastos lançados"
+          icon={<ArrowUpRight className="h-6 w-6" />}
           tone="danger"
         />
         <SummaryCard
           title="Lucro líquido"
           value={formatCurrency(monthProfit)}
           detail="Receita menos despesas"
-          icon={<Wallet className="h-6 w-6" />}
+          icon={<TripleBanknotesIcon className="h-6 w-6" />}
           tone="primary"
           valueTone={monthProfit >= 0 ? "success" : "danger"}
         />
@@ -1061,7 +1148,7 @@ export function FinancePage() {
                     </div>
                     <div className="rounded-xl bg-background px-4 py-3">
                       <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
-                        <ArrowUpRight className="h-3.5 w-3.5" />
+                        <ArrowDownRight className="h-3.5 w-3.5" />
                         Receita
                       </p>
                       <p className="mt-1 text-2xl font-bold text-success">
@@ -1164,7 +1251,7 @@ export function FinancePage() {
                 categories={revenueCategoryOptions}
                 loading={savingRevenue}
                 error={revenueError}
-                buttonLabel="Adicionar receita"
+                buttonLabel="Salvar receita"
                 onChange={(patch) => setRevenueForm((prev) => ({ ...prev, ...patch }))}
                 onSubmit={(event) => handleSaveManualTransaction(event, "receita")}
               />
@@ -1179,7 +1266,7 @@ export function FinancePage() {
               <TransactionList
                 entries={filteredRevenueEntries}
                 emptyMessage="Nenhuma receita encontrada para este período."
-                onDeleteManual={handleDeleteManualTransaction}
+                onDeleteTransaction={handleDeleteTransaction}
               />
             </div>
           )}
@@ -1193,7 +1280,7 @@ export function FinancePage() {
                 categories={expenseCategoryOptions}
                 loading={savingExpense}
                 error={expenseError}
-                buttonLabel="Adicionar despesa"
+                buttonLabel="Salvar despesa"
                 onChange={(patch) => setExpenseForm((prev) => ({ ...prev, ...patch }))}
                 onSubmit={(event) => handleSaveManualTransaction(event, "despesa")}
               />
@@ -1208,7 +1295,7 @@ export function FinancePage() {
               <TransactionList
                 entries={filteredExpenseEntries}
                 emptyMessage="Nenhuma despesa encontrada para este período."
-                onDeleteManual={handleDeleteManualTransaction}
+                onDeleteTransaction={handleDeleteTransaction}
               />
             </div>
           )}
