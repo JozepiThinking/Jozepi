@@ -25,6 +25,7 @@ export interface ProductItem {
   durabilityWashes: string;
   totalCost: string;
   photoUrl?: string;
+  supplierId?: string;
   stockRemaining?: string;
   priceHistory?: ProductPriceHistoryEntry[];
 }
@@ -38,6 +39,7 @@ export interface ProductForm {
   durabilityWashes: string;
   totalCost: string;
   photoUrl: string;
+  supplierId: string;
 }
 
 export interface ServiceProductUsage {
@@ -61,6 +63,7 @@ export const emptyProductForm: ProductForm = {
   durabilityWashes: "",
   totalCost: "",
   photoUrl: "",
+  supplierId: "",
 };
 
 export const productTypeOptions: ProductTypeOption[] = [

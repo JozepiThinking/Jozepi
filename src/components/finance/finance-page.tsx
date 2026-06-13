@@ -8,6 +8,8 @@ import {
   CalendarDays,
   CircleDollarSign,
   ClipboardList,
+  Filter,
+  Pencil,
   Plus,
   Target,
   Trash2,
@@ -32,8 +34,16 @@ interface FinancialTransaction {
   amount: number | string;
   category: string | null;
   service_order_id: string | null;
+  supplier_id: string | null;
+  product_id: string | null;
+  source: string | null;
   transaction_date: string;
   created_at: string;
+}
+
+interface Supplier {
+  id: string;
+  name: string;
 }
 
 interface CompletedOrderItem {
@@ -60,6 +70,9 @@ interface FinanceEntry {
   category: string;
   date: string;
   clientName?: string;
+  supplierId?: string;
+  supplierName?: string;
+  source?: string;
   serviceOrderId?: string;
 }
 
@@ -101,6 +114,15 @@ const expenseCategoryOptions = [
   { value: "Aluguel", label: "Aluguel" },
   { value: "Marketing", label: "Marketing" },
   { value: "Outros", label: "Outros" },
+];
+const categoryFilterAll = "all";
+const revenueCategoryFilterOptions = [
+  { value: categoryFilterAll, label: "Todas as categorias" },
+  ...revenueCategoryOptions,
+];
+const expenseCategoryFilterOptions = [
+  { value: categoryFilterAll, label: "Todas as categorias" },
+  ...expenseCategoryOptions,
 ];
 const shortMonthLabels = [
   "jan",
@@ -359,6 +381,113 @@ function TripleBanknotesIcon({ className }: { className?: string }) {
   );
 }
 
+function PeriodFilterButton({
+  value,
+  customStart,
+  customEnd,
+  category,
+  categoryOptions,
+  supplier,
+  supplierOptions,
+  open,
+  onToggle,
+  onClose,
+  onChange,
+  onCustomStartChange,
+  onCustomEndChange,
+  onCategoryChange,
+  onSupplierChange,
+  onClear,
+}: {
+  value: PeriodFilter;
+  customStart: string;
+  customEnd: string;
+  category: string;
+  categoryOptions: { value: string; label: string }[];
+  supplier?: string;
+  supplierOptions?: { value: string; label: string }[];
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onChange: (value: PeriodFilter) => void;
+  onCustomStartChange: (value: string) => void;
+  onCustomEndChange: (value: string) => void;
+  onCategoryChange: (value: string) => void;
+  onSupplierChange?: (value: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`flex h-9 w-9 items-center justify-center rounded-lg border border-border/80 text-foreground/70 transition-colors hover:bg-background hover:text-foreground ${
+          open ? "bg-background text-foreground" : "bg-transparent"
+        }`}
+        aria-label="Abrir filtros"
+        title="Abrir filtros"
+      >
+        <Filter className="h-4 w-4" />
+      </button>
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 px-4"
+          onClick={onClose}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold text-foreground">Filtros</h3>
+              <p className="mt-1 text-sm text-muted">
+                Escolha o período, datas e categoria da lista.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <PeriodControls
+                value={value}
+                customStart={customStart}
+                customEnd={customEnd}
+                onChange={onChange}
+                onCustomStartChange={onCustomStartChange}
+                onCustomEndChange={onCustomEndChange}
+              />
+              <Dropdown
+                label="Categoria"
+                value={category}
+                options={categoryOptions}
+                onChange={onCategoryChange}
+              />
+              {supplierOptions && onSupplierChange && (
+                <Dropdown
+                  label="Fornecedor"
+                  value={supplier ?? categoryFilterAll}
+                  options={supplierOptions}
+                  onChange={onSupplierChange}
+                />
+              )}
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={onClear}
+                className="w-full sm:w-auto"
+              >
+                Limpar filtros
+              </Button>
+              <Button type="button" onClick={onClose} className="w-full sm:w-auto">
+                Aplicar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function PeriodControls({
   value,
   customStart,
@@ -375,7 +504,7 @@ function PeriodControls({
   onCustomEndChange: (value: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-card p-4 shadow-sm md:grid-cols-[220px_1fr_1fr] md:items-end">
+    <div className="grid grid-cols-1 gap-3">
       <Dropdown
         label="Período"
         value={value}
@@ -398,7 +527,7 @@ function PeriodControls({
           />
         </>
       ) : (
-        <div className="rounded-xl bg-background px-4 py-3 text-sm font-semibold text-muted md:col-span-2">
+        <div className="rounded-xl bg-background px-4 py-3 text-sm font-semibold text-muted">
           Mostrando lançamentos de {periodOptions.find((option) => option.value === value)?.label.toLowerCase()}.
         </div>
       )}
@@ -409,36 +538,68 @@ function PeriodControls({
 function TransactionList({
   entries,
   emptyMessage,
+  emptyDescription,
+  accent = "default",
+  filter,
+  onEditTransaction,
   onDeleteTransaction,
 }: {
   entries: FinanceEntry[];
   emptyMessage: string;
+  emptyDescription?: string;
+  accent?: "default" | "expense";
+  filter?: React.ReactNode;
+  onEditTransaction?: (entry: FinanceEntry) => void;
   onDeleteTransaction?: (entry: FinanceEntry) => void;
 }) {
+  const hasEditAction = Boolean(onEditTransaction);
+  const gridColumnsClass = hasEditAction
+    ? "grid-cols-[minmax(240px,1fr)_150px_130px_130px_112px]"
+    : "grid-cols-[minmax(240px,1fr)_150px_130px_130px_80px]";
+
   if (entries.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border bg-card px-4 py-10 text-center text-sm text-muted shadow-sm">
-        {emptyMessage}
+      <div className="w-full">
+        {filter && <div className="mb-2 flex justify-end px-3">{filter}</div>}
+        <div className="flex flex-col items-center px-4 py-12 text-center">
+          <span
+            className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
+              accent === "expense"
+                ? "bg-danger/10 text-danger"
+                : "bg-primary/10 text-primary"
+            }`}
+          >
+            <ClipboardList className="h-6 w-6" />
+          </span>
+          <p className="mt-4 text-sm font-semibold text-foreground">
+            {emptyMessage}
+          </p>
+          {emptyDescription && (
+            <p className="mt-1 max-w-sm text-sm text-muted">{emptyDescription}</p>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-      <div className="hidden grid-cols-[minmax(180px,1fr)_130px_120px_120px_72px] gap-3 border-b border-border px-5 py-3 text-xs font-bold uppercase tracking-wide text-muted md:grid">
-        <span>Descrição</span>
-        <span>Categoria</span>
-        <span>Data</span>
-        <span>Valor</span>
-        <span className="text-right">Ações</span>
-      </div>
-      <div className="space-y-3 p-3 md:space-y-0 md:divide-y md:divide-border md:p-0">
+    <div className="w-full">
+      {filter && <div className="mb-2 flex justify-end px-3">{filter}</div>}
+      <div className="overflow-x-auto">
+        <div className="min-w-[760px]">
+        <div className={`grid ${gridColumnsClass} gap-4 border-b border-border px-3 py-3 text-xs font-semibold text-muted`}>
+          <span>Descrição</span>
+          <span>Categoria</span>
+          <span>Data</span>
+          <span>Valor</span>
+          <span className="text-right">Ações</span>
+        </div>
         {entries.map((entry) => {
           const isRevenue = entry.type === "receita";
           return (
             <article
               key={entry.id}
-              className="grid grid-cols-1 gap-3 rounded-2xl border border-border bg-background/50 px-4 py-4 shadow-sm md:grid-cols-[minmax(180px,1fr)_130px_120px_120px_72px] md:items-center md:gap-3 md:rounded-none md:border-0 md:bg-transparent md:px-5 md:shadow-none"
+              className={`grid ${gridColumnsClass} items-center gap-4 border-b border-border/70 px-3 py-3 transition-colors hover:bg-background/70`}
             >
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -458,35 +619,42 @@ function TransactionList({
                 {entry.clientName && (
                   <p className="mt-1 text-xs text-muted">{entry.clientName}</p>
                 )}
+                {entry.supplierName && (
+                  <p className="mt-1 text-xs font-semibold text-muted">
+                    Fornecedor: {entry.supplierName}
+                  </p>
+                )}
               </div>
-              <div className="flex items-center justify-between rounded-xl bg-card px-3 py-2 text-sm font-semibold text-foreground md:block md:bg-transparent md:p-0">
-                <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
-                  Categoria
-                </span>
+              <div className="text-sm font-medium text-foreground">
                 <span>{entry.category}</span>
               </div>
-              <div className="flex items-center justify-between rounded-xl bg-card px-3 py-2 text-sm font-semibold text-muted md:block md:bg-transparent md:p-0">
-                <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
-                  Data
-                </span>
+              <div className="text-sm font-medium text-foreground">
                 <span>{formatShortDate(entry.date)}</span>
               </div>
               <div
-                className={`flex items-center justify-between rounded-xl bg-card px-3 py-2 text-sm font-bold md:block md:bg-transparent md:p-0 ${
+                className={`text-sm font-bold ${
                   isRevenue ? "text-success" : "text-danger"
                 }`}
               >
-                <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
-                  Valor
-                </span>
                 <span>{formatCurrency(entry.amount)}</span>
               </div>
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                {onEditTransaction && (
+                  <button
+                    type="button"
+                    onClick={() => onEditTransaction(entry)}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary/10"
+                    aria-label={`Editar ${entry.description}`}
+                    title="Editar lançamento"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                )}
                 {onDeleteTransaction ? (
                   <button
                     type="button"
                     onClick={() => onDeleteTransaction(entry)}
-                    className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white md:min-h-0 md:min-w-0"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-danger transition-colors hover:bg-danger/10"
                     aria-label={`Apagar ${entry.description}`}
                     title="Apagar lançamento"
                   >
@@ -499,6 +667,7 @@ function TransactionList({
             </article>
           );
         })}
+        </div>
       </div>
     </div>
   );
@@ -650,12 +819,16 @@ export function FinancePage() {
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [orders, setOrders] = useState<CompletedOrder[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revenueForm, setRevenueForm] = useState<TransactionForm>(initialRevenueForm);
   const [expenseForm, setExpenseForm] = useState<TransactionForm>(initialExpenseForm);
   const [showRevenueForm, setShowRevenueForm] = useState(false);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [showRevenueFilter, setShowRevenueFilter] = useState(false);
+  const [showExpenseFilter, setShowExpenseFilter] = useState(false);
   const [savingRevenue, setSavingRevenue] = useState(false);
   const [savingExpense, setSavingExpense] = useState(false);
   const [revenueError, setRevenueError] = useState<string | null>(null);
@@ -666,6 +839,9 @@ export function FinancePage() {
   const [revenueCustomEnd, setRevenueCustomEnd] = useState(dateKey(today));
   const [expenseCustomStart, setExpenseCustomStart] = useState(dateKey(startOfMonth(today)));
   const [expenseCustomEnd, setExpenseCustomEnd] = useState(dateKey(today));
+  const [revenueCategoryFilter, setRevenueCategoryFilter] = useState(categoryFilterAll);
+  const [expenseCategoryFilter, setExpenseCategoryFilter] = useState(categoryFilterAll);
+  const [expenseSupplierFilter, setExpenseSupplierFilter] = useState(categoryFilterAll);
 
   const loadFinanceData = useCallback(async () => {
     setLoading(true);
@@ -684,12 +860,16 @@ export function FinancePage() {
 
     setWorkshopId(profile.workshop_id);
 
-    const [{ data: transactionsData, error: transactionsError }, { data: ordersData, error: ordersError }] =
+    const [
+      { data: transactionsData, error: transactionsError },
+      { data: ordersData, error: ordersError },
+      { data: suppliersData, error: suppliersError },
+    ] =
       await Promise.all([
         supabase
           .from("financial_transactions")
           .select(
-            "id, type, description, amount, category, service_order_id, transaction_date, created_at"
+            "id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at"
           )
           .eq("workshop_id", profile.workshop_id)
           .order("transaction_date", { ascending: false }),
@@ -712,6 +892,11 @@ export function FinancePage() {
           .eq("workshop_id", profile.workshop_id)
           .eq("status", "finalizada")
           .order("completed_at", { ascending: false }),
+        supabase
+          .from("suppliers")
+          .select("id, name")
+          .eq("workshop_id", profile.workshop_id)
+          .order("name", { ascending: true }),
       ]);
 
     if (transactionsError) {
@@ -724,6 +909,12 @@ export function FinancePage() {
       setError(ordersError.message);
     } else {
       setOrders((ordersData as CompletedOrder[] | null) ?? []);
+    }
+
+    if (suppliersError) {
+      setError(suppliersError.message);
+    } else {
+      setSuppliers((suppliersData as Supplier[] | null) ?? []);
     }
 
     setLoading(false);
@@ -762,6 +953,18 @@ export function FinancePage() {
           void loadFinanceData();
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "suppliers",
+          filter: `workshop_id=eq.${workshopId}`,
+        },
+        () => {
+          void loadFinanceData();
+        }
+      )
       .subscribe();
 
     return () => {
@@ -772,6 +975,10 @@ export function FinancePage() {
   const ordersById = useMemo(() => {
     return new Map(orders.map((order) => [order.id, order]));
   }, [orders]);
+
+  const suppliersById = useMemo(() => {
+    return new Map(suppliers.map((supplier) => [supplier.id, supplier]));
+  }, [suppliers]);
 
   const transactionEntries = useMemo<FinanceEntry[]>(() => {
     return transactions.map((transaction) => ({
@@ -785,9 +992,14 @@ export function FinancePage() {
       clientName: transaction.service_order_id
         ? firstRelation(ordersById.get(transaction.service_order_id)?.clients)?.name
         : undefined,
+      supplierId: transaction.supplier_id ?? undefined,
+      supplierName: transaction.supplier_id
+        ? suppliersById.get(transaction.supplier_id)?.name ?? "Fornecedor removido"
+        : undefined,
+      source: transaction.source ?? undefined,
       serviceOrderId: transaction.service_order_id ?? undefined,
     }));
-  }, [ordersById, transactions]);
+  }, [ordersById, suppliersById, transactions]);
 
   const revenueEntries = useMemo(
     () =>
@@ -862,11 +1074,26 @@ export function FinancePage() {
     expenseCustomEnd,
     today
   );
-  const filteredRevenueEntries = revenueEntries.filter((entry) =>
-    isDateInRange(entry.date, revenueRange)
+  const expenseSupplierFilterOptions = [
+    { value: categoryFilterAll, label: "Todos os fornecedores" },
+    ...suppliers.map((supplier) => ({
+      value: supplier.id,
+      label: supplier.name,
+    })),
+  ];
+  const filteredRevenueEntries = revenueEntries.filter(
+    (entry) =>
+      isDateInRange(entry.date, revenueRange) &&
+      (revenueCategoryFilter === categoryFilterAll ||
+        entry.category === revenueCategoryFilter)
   );
-  const filteredExpenseEntries = expenseEntries.filter((entry) =>
-    isDateInRange(entry.date, expenseRange)
+  const filteredExpenseEntries = expenseEntries.filter(
+    (entry) =>
+      isDateInRange(entry.date, expenseRange) &&
+      (expenseCategoryFilter === categoryFilterAll ||
+        entry.category === expenseCategoryFilter) &&
+      (expenseSupplierFilter === categoryFilterAll ||
+        entry.supplierId === expenseSupplierFilter)
   );
 
   const reportMonths = Array.from({ length: 6 }, (_, index) =>
@@ -945,6 +1172,7 @@ export function FinancePage() {
     }
 
     setExpenseForm({ ...initialExpenseForm, date: dateKey(today) });
+    setEditingExpenseId(null);
   }
 
   function closeManualForm(type: TransactionType) {
@@ -968,6 +1196,7 @@ export function FinancePage() {
     const form = type === "receita" ? revenueForm : expenseForm;
     const setFormError = type === "receita" ? setRevenueError : setExpenseError;
     const setSaving = type === "receita" ? setSavingRevenue : setSavingExpense;
+    const transactionId = type === "despesa" ? editingExpenseId : null;
 
     if (!workshopId) {
       setFormError("Oficina não encontrada.");
@@ -990,6 +1219,41 @@ export function FinancePage() {
     setSaving(true);
     setFormError(null);
 
+    if (transactionId) {
+      const { data, error: updateError } = await supabase
+        .from("financial_transactions")
+        .update({
+          description: form.description.trim(),
+          amount,
+          category: form.category,
+          transaction_date: form.date,
+        })
+        .eq("id", transactionId)
+        .eq("workshop_id", workshopId)
+        .select("id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at")
+        .single();
+
+      setSaving(false);
+
+      if (updateError) {
+        setFormError(updateError.message);
+        return;
+      }
+
+      if (data) {
+        setTransactions((prev) =>
+          prev.map((transaction) =>
+            transaction.id === transactionId
+              ? (data as FinancialTransaction)
+              : transaction
+          )
+        );
+      }
+
+      closeManualForm(type);
+      return;
+    }
+
     const { data, error: insertError } = await supabase
       .from("financial_transactions")
       .insert({
@@ -1000,7 +1264,7 @@ export function FinancePage() {
         category: form.category,
         transaction_date: form.date,
       })
-      .select("id, type, description, amount, category, service_order_id, transaction_date, created_at")
+      .select("id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at")
       .single();
 
     setSaving(false);
@@ -1014,6 +1278,21 @@ export function FinancePage() {
       setTransactions((prev) => [data as FinancialTransaction, ...prev]);
     }
     closeManualForm(type);
+  }
+
+  function handleEditExpense(entry: FinanceEntry) {
+    setExpenseForm({
+      description: entry.description,
+      amount: entry.amount.toLocaleString("pt-BR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+      date: entry.date,
+      category: entry.category,
+    });
+    setExpenseError(null);
+    setEditingExpenseId(entry.id);
+    setShowExpenseForm(true);
   }
 
   async function handleDeleteTransaction(entry: FinanceEntry) {
@@ -1269,7 +1548,7 @@ export function FinancePage() {
 
           {activeTab === "revenues" && (
             <div className="space-y-5">
-              <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-foreground">
                     Receitas
@@ -1305,17 +1584,31 @@ export function FinancePage() {
                   onCancel={() => closeManualForm("receita")}
                 />
               )}
-              <PeriodControls
-                value={revenuePeriod}
-                customStart={revenueCustomStart}
-                customEnd={revenueCustomEnd}
-                onChange={setRevenuePeriod}
-                onCustomStartChange={setRevenueCustomStart}
-                onCustomEndChange={setRevenueCustomEnd}
-              />
               <TransactionList
                 entries={filteredRevenueEntries}
                 emptyMessage="Nenhuma receita encontrada para este período."
+                filter={
+                  <PeriodFilterButton
+                    value={revenuePeriod}
+                    customStart={revenueCustomStart}
+                    customEnd={revenueCustomEnd}
+                    category={revenueCategoryFilter}
+                    categoryOptions={revenueCategoryFilterOptions}
+                    open={showRevenueFilter}
+                    onToggle={() => setShowRevenueFilter((open) => !open)}
+                    onClose={() => setShowRevenueFilter(false)}
+                    onChange={setRevenuePeriod}
+                    onCustomStartChange={setRevenueCustomStart}
+                    onCustomEndChange={setRevenueCustomEnd}
+                    onCategoryChange={setRevenueCategoryFilter}
+                    onClear={() => {
+                      setRevenuePeriod("month");
+                      setRevenueCustomStart(dateKey(startOfMonth(today)));
+                      setRevenueCustomEnd(dateKey(today));
+                      setRevenueCategoryFilter(categoryFilterAll);
+                    }}
+                  />
+                }
                 onDeleteTransaction={handleDeleteTransaction}
               />
             </div>
@@ -1323,7 +1616,7 @@ export function FinancePage() {
 
           {activeTab === "expenses" && (
             <div className="space-y-5">
-              <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-foreground">
                     Despesas
@@ -1336,6 +1629,7 @@ export function FinancePage() {
                   type="button"
                   variant="success"
                   onClick={() => {
+                    resetForm("despesa");
                     setShowExpenseForm(true);
                     setExpenseError(null);
                   }}
@@ -1347,29 +1641,54 @@ export function FinancePage() {
               </div>
               {showExpenseForm && (
                 <TransactionFormCard
-                  title="Lançar despesa"
-                  description="Registre compras, custos fixos e investimentos."
+                  title={editingExpenseId ? "Editar despesa" : "Lançar despesa"}
+                  description={
+                    editingExpenseId
+                      ? "Atualize os dados do lançamento selecionado."
+                      : "Registre compras, custos fixos e investimentos."
+                  }
                   form={expenseForm}
                   categories={expenseCategoryOptions}
                   loading={savingExpense}
                   error={expenseError}
-                  buttonLabel="Salvar despesa"
+                  buttonLabel={editingExpenseId ? "Atualizar despesa" : "Salvar despesa"}
                   onChange={(patch) => setExpenseForm((prev) => ({ ...prev, ...patch }))}
                   onSubmit={(event) => handleSaveManualTransaction(event, "despesa")}
                   onCancel={() => closeManualForm("despesa")}
                 />
               )}
-              <PeriodControls
-                value={expensePeriod}
-                customStart={expenseCustomStart}
-                customEnd={expenseCustomEnd}
-                onChange={setExpensePeriod}
-                onCustomStartChange={setExpenseCustomStart}
-                onCustomEndChange={setExpenseCustomEnd}
-              />
               <TransactionList
                 entries={filteredExpenseEntries}
-                emptyMessage="Nenhuma despesa encontrada para este período."
+                emptyMessage="Nenhuma despesa registrada neste período"
+                emptyDescription="Use o botão + Nova despesa para adicionar um lançamento manual."
+                accent="expense"
+                filter={
+                  <PeriodFilterButton
+                    value={expensePeriod}
+                    customStart={expenseCustomStart}
+                    customEnd={expenseCustomEnd}
+                    category={expenseCategoryFilter}
+                    categoryOptions={expenseCategoryFilterOptions}
+                    supplier={expenseSupplierFilter}
+                    supplierOptions={expenseSupplierFilterOptions}
+                    open={showExpenseFilter}
+                    onToggle={() => setShowExpenseFilter((open) => !open)}
+                    onClose={() => setShowExpenseFilter(false)}
+                    onChange={setExpensePeriod}
+                    onCustomStartChange={setExpenseCustomStart}
+                    onCustomEndChange={setExpenseCustomEnd}
+                    onCategoryChange={setExpenseCategoryFilter}
+                    onSupplierChange={setExpenseSupplierFilter}
+                    onClear={() => {
+                      setExpensePeriod("month");
+                      setExpenseCustomStart(dateKey(startOfMonth(today)));
+                      setExpenseCustomEnd(dateKey(today));
+                      setExpenseCategoryFilter(categoryFilterAll);
+                      setExpenseSupplierFilter(categoryFilterAll);
+                    }}
+                  />
+                }
+                onEditTransaction={handleEditExpense}
                 onDeleteTransaction={handleDeleteTransaction}
               />
             </div>

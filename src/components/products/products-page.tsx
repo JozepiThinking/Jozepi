@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Camera,
   Droplets,
+  Filter,
   Package,
   Pencil,
   Plus,
@@ -17,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
+import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/format";
 import {
   createProductId,
@@ -47,13 +49,59 @@ import {
 const PRODUCT_FORM_EXIT_MS = 180;
 
 type ProductTypeFilter = "all" | "liquid" | "utensil";
-type ReplenishPriceMode = "keep" | "update";
+type ProductPageTab = "products" | "suppliers";
+type SupplierCategory =
+  | "Produtos químicos"
+  | "Equipamentos"
+  | "Embalagens"
+  | "Outros";
+
+interface Supplier {
+  id: string;
+  workshop_id: string;
+  name: string;
+  phone: string | null;
+  category: SupplierCategory | string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SupplierForm {
+  name: string;
+  phone: string;
+  category: SupplierCategory;
+  notes: string;
+}
+
+interface ReplenishForm {
+  supplierId: string;
+  amount: string;
+  paidAmount: string;
+  purchaseDate: string;
+}
 
 const productTypeFilterOptions = [
   { value: "all", label: "Todos" },
   { value: "liquid", label: "Líquidos" },
   { value: "utensil", label: "Utensílios" },
 ];
+const productPageTabs: { id: ProductPageTab; label: string }[] = [
+  { id: "products", label: "Produtos" },
+  { id: "suppliers", label: "Fornecedores" },
+];
+const supplierCategoryOptions: { value: SupplierCategory; label: string }[] = [
+  { value: "Produtos químicos", label: "Produtos químicos" },
+  { value: "Equipamentos", label: "Equipamentos" },
+  { value: "Embalagens", label: "Embalagens" },
+  { value: "Outros", label: "Outros" },
+];
+const emptySupplierForm: SupplierForm = {
+  name: "",
+  phone: "",
+  category: "Produtos químicos",
+  notes: "",
+};
 
 const PRODUCT_PHOTO_MAX_SIZE = 480;
 const PRODUCT_PHOTO_QUALITY = 0.72;
@@ -101,7 +149,7 @@ function resizeProductImage(source: File | string) {
       reject(new Error("Não foi possível carregar a foto."));
     };
 
-    image.src = objectUrl ?? source;
+    image.src = objectUrl ?? (source as string);
   });
 }
 
@@ -130,9 +178,27 @@ function formatPriceHistoryDate(date: string) {
   return parsedDate.toLocaleDateString("pt-BR");
 }
 
+function dateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
 export function ProductsPage() {
+  const supabase = useMemo(() => createClient(), []);
+  const today = useMemo(() => new Date(), []);
+  const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [suppliersLoaded, setSuppliersLoaded] = useState(false);
+  const [supplierForm, setSupplierForm] = useState<SupplierForm>(emptySupplierForm);
+  const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
+  const [supplierFormOpen, setSupplierFormOpen] = useState(false);
+  const [supplierError, setSupplierError] = useState<string | null>(null);
+  const [savingSupplier, setSavingSupplier] = useState(false);
   const [typeOptions, setTypeOptions] =
     useState<ProductTypeOption[]>(productTypeOptions);
   const [typeOptionsLoaded, setTypeOptionsLoaded] = useState(false);
@@ -141,6 +207,8 @@ export function ProductsPage() {
   >({});
   const [typeError, setTypeError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<ProductTypeFilter>("all");
+  const [activeProductTab, setActiveProductTab] = useState<ProductPageTab>("products");
+  const [showProductFilter, setShowProductFilter] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [formClosing, setFormClosing] = useState(false);
   const [formAnimationKey, setFormAnimationKey] = useState(0);
@@ -150,10 +218,12 @@ export function ProductsPage() {
   const [replenishingProductId, setReplenishingProductId] = useState<string | null>(
     null
   );
-  const [replenishAmount, setReplenishAmount] = useState("");
-  const [replenishPriceMode, setReplenishPriceMode] =
-    useState<ReplenishPriceMode>("keep");
-  const [replenishNewPrice, setReplenishNewPrice] = useState("");
+  const [replenishForm, setReplenishForm] = useState<ReplenishForm>({
+    supplierId: "",
+    amount: "",
+    paidAmount: "",
+    purchaseDate: dateKey(today),
+  });
   const [replenishError, setReplenishError] = useState<string | null>(null);
   const [editingStockProductId, setEditingStockProductId] = useState<string | null>(
     null
@@ -213,6 +283,39 @@ export function ProductsPage() {
   }, []);
 
   useEffect(() => {
+    async function loadSuppliers() {
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("workshop_id")
+        .single();
+
+      if (profileError || !profile?.workshop_id) {
+        setSupplierError(profileError?.message ?? "Oficina não encontrada.");
+        setSuppliersLoaded(true);
+        return;
+      }
+
+      setWorkshopId(profile.workshop_id);
+
+      const { data, error: suppliersError } = await supabase
+        .from("suppliers")
+        .select("id, workshop_id, name, phone, category, notes, created_at, updated_at")
+        .eq("workshop_id", profile.workshop_id)
+        .order("name", { ascending: true });
+
+      if (suppliersError) {
+        setSupplierError(suppliersError.message);
+      } else {
+        setSuppliers((data as Supplier[] | null) ?? []);
+      }
+
+      setSuppliersLoaded(true);
+    }
+
+    void loadSuppliers();
+  }, [supabase]);
+
+  useEffect(() => {
     if (!productsLoaded) return;
     try {
       window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products));
@@ -257,9 +360,12 @@ export function ProductsPage() {
     setError(null);
     setTypeError(null);
     setReplenishingProductId(null);
-    setReplenishAmount("");
-    setReplenishPriceMode("keep");
-    setReplenishNewPrice("");
+    setReplenishForm({
+      supplierId: "",
+      amount: "",
+      paidAmount: "",
+      purchaseDate: dateKey(today),
+    });
     setReplenishError(null);
     setEditingStockProductId(null);
     setStockEditValue("");
@@ -277,11 +383,17 @@ export function ProductsPage() {
       durabilityWashes: product.durabilityWashes,
       totalCost: product.totalCost,
       photoUrl: product.photoUrl ?? "",
+      supplierId: product.supplierId ?? "",
     });
     setError(null);
     setTypeError(null);
     setReplenishingProductId(null);
-    setReplenishAmount("");
+    setReplenishForm({
+      supplierId: product.supplierId ?? "",
+      amount: "",
+      paidAmount: "",
+      purchaseDate: dateKey(today),
+    });
     setReplenishError(null);
     setEditingStockProductId(null);
     setStockEditValue("");
@@ -314,6 +426,132 @@ export function ProductsPage() {
       typeOptions.find((option) => option.value === type)?.label ??
       getProductTypeLabel(type)
     );
+  }
+
+  const supplierOptions = [
+    { value: "", label: "Sem fornecedor" },
+    ...suppliers.map((supplier) => ({
+      value: supplier.id,
+      label: supplier.name,
+    })),
+  ];
+
+  function getSupplierName(supplierId?: string) {
+    if (!supplierId) return "Sem fornecedor";
+    return suppliers.find((supplier) => supplier.id === supplierId)?.name ?? "Fornecedor removido";
+  }
+
+  function updateSupplierForm(patch: Partial<SupplierForm>) {
+    setSupplierForm((prev) => ({ ...prev, ...patch }));
+  }
+
+  function openSupplierForm() {
+    setEditingSupplierId(null);
+    setSupplierForm(emptySupplierForm);
+    setSupplierError(null);
+    setSupplierFormOpen(true);
+  }
+
+  function startEditingSupplier(supplier: Supplier) {
+    setEditingSupplierId(supplier.id);
+    setSupplierForm({
+      name: supplier.name,
+      phone: supplier.phone ?? "",
+      category: supplier.category as SupplierCategory,
+      notes: supplier.notes ?? "",
+    });
+    setSupplierError(null);
+    setSupplierFormOpen(true);
+  }
+
+  function resetSupplierForm() {
+    setEditingSupplierId(null);
+    setSupplierForm(emptySupplierForm);
+    setSupplierError(null);
+    setSupplierFormOpen(false);
+  }
+
+  async function handleSaveSupplier(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!workshopId) {
+      setSupplierError("Oficina não encontrada.");
+      return;
+    }
+
+    if (!supplierForm.name.trim()) {
+      setSupplierError("Informe o nome do fornecedor.");
+      return;
+    }
+
+    setSavingSupplier(true);
+    setSupplierError(null);
+
+    const payload = {
+      workshop_id: workshopId,
+      name: supplierForm.name.trim(),
+      phone: supplierForm.phone.trim() || null,
+      category: supplierForm.category,
+      notes: supplierForm.notes.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+
+    const query = editingSupplierId
+      ? supabase
+          .from("suppliers")
+          .update(payload)
+          .eq("id", editingSupplierId)
+          .eq("workshop_id", workshopId)
+      : supabase.from("suppliers").insert(payload);
+
+    const { data, error: saveError } = await query
+      .select("id, workshop_id, name, phone, category, notes, created_at, updated_at")
+      .single();
+
+    setSavingSupplier(false);
+
+    if (saveError) {
+      setSupplierError(saveError.message);
+      return;
+    }
+
+    if (data) {
+      const supplier = data as Supplier;
+      setSuppliers((prev) =>
+        editingSupplierId
+          ? prev
+              .map((item) => (item.id === supplier.id ? supplier : item))
+              .sort((a, b) => a.name.localeCompare(b.name))
+          : [...prev, supplier].sort((a, b) => a.name.localeCompare(b.name))
+      );
+    }
+
+    resetSupplierForm();
+  }
+
+  async function handleDeleteSupplier(supplier: Supplier) {
+    if (products.some((product) => product.supplierId === supplier.id)) {
+      setSupplierError("Não é possível excluir um fornecedor vinculado a produtos.");
+      return;
+    }
+
+    const confirmed = window.confirm(`Deseja excluir ${supplier.name}?`);
+    if (!confirmed) return;
+
+    const { error: deleteError } = await supabase
+      .from("suppliers")
+      .delete()
+      .eq("id", supplier.id);
+
+    if (deleteError) {
+      setSupplierError(deleteError.message);
+      return;
+    }
+
+    setSuppliers((prev) => prev.filter((item) => item.id !== supplier.id));
+    if (editingSupplierId === supplier.id) {
+      resetSupplierForm();
+    }
   }
 
   function handleAddType(label: string) {
@@ -421,6 +659,7 @@ export function ProductsPage() {
       durabilityWashes: "",
       totalCost: form.totalCost,
       photoUrl: form.photoUrl || undefined,
+      supplierId: form.supplierId || undefined,
       priceHistory: editingProduct?.priceHistory ?? [],
     };
     const previousPrice = editingProduct
@@ -469,10 +708,14 @@ export function ProductsPage() {
   }
 
   function openReplenish(productId: string) {
+    const product = products.find((item) => item.id === productId);
     setReplenishingProductId(productId);
-    setReplenishAmount("");
-    setReplenishPriceMode("keep");
-    setReplenishNewPrice("");
+    setReplenishForm({
+      supplierId: product?.supplierId ?? "",
+      amount: "",
+      paidAmount: "",
+      purchaseDate: dateKey(today),
+    });
     setReplenishError(null);
     setEditingStockProductId(null);
     setStockEditValue("");
@@ -480,60 +723,85 @@ export function ProductsPage() {
 
   function closeReplenish() {
     setReplenishingProductId(null);
-    setReplenishAmount("");
-    setReplenishPriceMode("keep");
-    setReplenishNewPrice("");
+    setReplenishForm({
+      supplierId: "",
+      amount: "",
+      paidAmount: "",
+      purchaseDate: dateKey(today),
+    });
     setReplenishError(null);
   }
 
-  function handleReplenishProduct(product: ProductItem) {
+  async function handleReplenishProduct(product: ProductItem) {
     setReplenishError(null);
 
     let addedAmount: number;
     try {
-      addedAmount = parsePositiveNumber(replenishAmount);
+      addedAmount = parsePositiveNumber(replenishForm.amount);
     } catch {
       setReplenishError("Informe uma quantidade válida para repor.");
       return;
     }
 
-    let nextTotalCost = product.totalCost;
-    if (replenishPriceMode === "update") {
-      try {
-        parseMoney(replenishNewPrice || "0");
-      } catch {
-        setReplenishError("Informe um novo custo válido.");
-        return;
-      }
-
-      if (!replenishNewPrice.trim()) {
-        setReplenishError("Informe o novo custo total do produto.");
-        return;
-      }
-
-      nextTotalCost = replenishNewPrice;
+    let paidAmount: number;
+    try {
+      paidAmount = parseMoney(replenishForm.paidAmount || "0");
+    } catch {
+      setReplenishError("Informe um valor pago válido.");
+      return;
     }
 
-    const initialStock = getProductInitialStock(product);
+    if (paidAmount <= 0) {
+      setReplenishError("Informe o valor pago na reposição.");
+      return;
+    }
+
+    if (!replenishForm.purchaseDate) {
+      setReplenishError("Informe a data da compra.");
+      return;
+    }
+
+    if (!workshopId) {
+      setReplenishError("Oficina não encontrada.");
+      return;
+    }
+
     const currentStock = getProductRemainingStock(product);
-    const nextStock = Math.min(initialStock, currentStock + addedAmount);
+    const nextStock = currentStock + addedAmount;
+    const nextInitialStock = Math.max(getProductInitialStock(product), nextStock);
+    const stockFieldPatch =
+      product.type === "liquid"
+        ? { volumeMl: String(nextInitialStock) }
+        : { quantity: String(nextInitialStock) };
+
+    const { error: transactionError } = await supabase
+      .from("financial_transactions")
+      .insert({
+        workshop_id: workshopId,
+        type: "despesa",
+        description: `Reposição: ${product.name}`,
+        amount: paidAmount,
+        category: "Produtos",
+        transaction_date: replenishForm.purchaseDate,
+        supplier_id: replenishForm.supplierId || null,
+        product_id: product.id,
+        source: "stock_replenishment",
+      });
+
+    if (transactionError) {
+      setReplenishError(transactionError.message);
+      return;
+    }
 
     setProducts((prev) =>
       prev.map((item) =>
         item.id === product.id
           ? {
               ...item,
-              totalCost: nextTotalCost,
+              ...stockFieldPatch,
+              supplierId: replenishForm.supplierId || item.supplierId,
               stockRemaining: String(nextStock),
-              priceHistory:
-                replenishPriceMode === "update" &&
-                parseMoney(product.totalCost || "0") !== parseMoney(nextTotalCost || "0") &&
-                product.totalCost
-                  ? [
-                      createPriceHistoryEntry(product.totalCost, "replenished"),
-                      ...(product.priceHistory ?? []),
-                    ]
-                  : product.priceHistory ?? [],
+              priceHistory: product.priceHistory ?? [],
             }
           : item
       )
@@ -545,9 +813,12 @@ export function ProductsPage() {
     setEditingStockProductId(product.id);
     setStockEditValue(String(getProductRemainingStock(product)));
     setReplenishingProductId(null);
-    setReplenishAmount("");
-    setReplenishPriceMode("keep");
-    setReplenishNewPrice("");
+    setReplenishForm({
+      supplierId: "",
+      amount: "",
+      paidAmount: "",
+      purchaseDate: dateKey(today),
+    });
     setReplenishError(null);
   }
 
@@ -615,20 +886,40 @@ export function ProductsPage() {
 
   return (
     <>
-      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:grid-cols-[minmax(220px,280px)_auto] sm:items-end">
-          <Dropdown
-            label="Filtrar por tipo"
-            value={typeFilter}
-            options={productTypeFilterOptions}
-            onChange={(value) => setTypeFilter(value as ProductTypeFilter)}
-          />
-          <div className="rounded-xl bg-background px-4 py-3 text-base font-semibold text-foreground sm:text-sm">
-            {filteredProducts.length} produto
-            {filteredProducts.length !== 1 ? "s" : ""} encontrado
-            {filteredProducts.length !== 1 ? "s" : ""}
-          </div>
+      <div className="mb-6 border-b border-border">
+        <div className="flex items-center gap-6">
+          {productPageTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => {
+                setActiveProductTab(tab.id);
+                setShowProductFilter(false);
+              }}
+              className={`border-b-2 px-0 pb-3 pt-1 text-sm transition-colors ${
+                activeProductTab === tab.id
+                  ? "border-primary font-bold text-primary"
+                  : "border-transparent font-semibold text-muted hover:text-foreground"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
+      </div>
+
+      {activeProductTab === "products" && (
+        <>
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <button
+          type="button"
+          onClick={() => setShowProductFilter(true)}
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-border/80 text-foreground/70 transition-colors hover:bg-background hover:text-foreground"
+          aria-label="Abrir filtros de produtos"
+          title="Abrir filtros"
+        >
+          <Filter className="h-4 w-4" />
+        </button>
 
         {products.length > 0 && (
           <Button
@@ -641,6 +932,57 @@ export function ProductsPage() {
           </Button>
         )}
       </div>
+
+      {showProductFilter && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 px-4"
+          onClick={() => setShowProductFilter(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold text-foreground">
+                Filtros
+              </h3>
+              <p className="mt-1 text-sm text-muted">
+                Filtre o catálogo por tipo de produto.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <Dropdown
+                label="Filtrar por tipo"
+                value={typeFilter}
+                options={productTypeFilterOptions}
+                onChange={(value) => setTypeFilter(value as ProductTypeFilter)}
+              />
+              <div className="rounded-xl bg-background px-4 py-3 text-sm font-semibold text-foreground">
+                {filteredProducts.length} produto
+                {filteredProducts.length !== 1 ? "s" : ""} encontrado
+                {filteredProducts.length !== 1 ? "s" : ""}
+              </div>
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setTypeFilter("all")}
+                className="w-full sm:w-auto"
+              >
+                Limpar filtros
+              </Button>
+              <Button
+                type="button"
+                onClick={() => setShowProductFilter(false)}
+                className="w-full sm:w-auto"
+              >
+                Aplicar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
@@ -722,6 +1064,9 @@ export function ProductsPage() {
                           </h2>
                           <p className="text-xs font-medium text-muted">
                             {getTypeLabel(product.type)}
+                            {product.supplierId
+                              ? ` • ${getSupplierName(product.supplierId)}`
+                              : ""}
                           </p>
                         </div>
                       </div>
@@ -866,6 +1211,14 @@ export function ProductsPage() {
                 {typeError && (
                   <p className="text-xs font-medium text-danger">{typeError}</p>
                 )}
+
+                <Dropdown
+                  label="Fornecedor"
+                  value={form.supplierId}
+                  options={supplierOptions}
+                  onChange={(supplierId) => updateForm({ supplierId })}
+                  disabled={!suppliersLoaded}
+                />
 
                 {form.type === "liquid" ? (
                   <Input
@@ -1121,69 +1474,64 @@ export function ProductsPage() {
                       {replenishingProductId === product.id && (
                         <div className="mt-3 rounded-xl border border-border bg-card p-3">
                           <p className="mb-3 rounded-lg bg-background px-3 py-2 text-xs font-semibold text-muted">
-                            Preço atual:{" "}
+                            Produto:{" "}
                             <span className="text-foreground">
-                              {formatCurrency(parseMoney(product.totalCost || "0"))}
+                              {product.name}
                             </span>
                           </p>
-                          <Input
-                            label={`Adicionar ao estoque (${stockUnit})`}
-                            type="number"
-                            min="0"
-                            step={product.type === "liquid" ? "1" : "0.01"}
-                            className="number-input-no-spinner"
-                            value={replenishAmount}
-                            onChange={(event) => {
-                              setReplenishAmount(event.target.value);
-                              setReplenishError(null);
-                            }}
-                            placeholder={product.type === "liquid" ? "500" : "1"}
-                          />
-                          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setReplenishPriceMode("keep");
-                                setReplenishNewPrice("");
+                          <div className="grid grid-cols-1 gap-3">
+                            <Dropdown
+                              label="Fornecedor"
+                              value={replenishForm.supplierId}
+                              options={supplierOptions}
+                              onChange={(supplierId) => {
+                                setReplenishForm((prev) => ({ ...prev, supplierId }));
                                 setReplenishError(null);
                               }}
-                              className={`rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-colors ${
-                                replenishPriceMode === "keep"
-                                  ? "border-success/30 bg-success/10 text-success"
-                                  : "border-border bg-background text-muted hover:text-foreground"
-                              }`}
-                            >
-                              Manter preço atual
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setReplenishPriceMode("update");
-                                setReplenishNewPrice(product.totalCost);
+                            />
+                            <Input
+                              label={`Quantidade reposta (${stockUnit})`}
+                              type="number"
+                              min="0"
+                              step={product.type === "liquid" ? "1" : "0.01"}
+                              className="number-input-no-spinner"
+                              value={replenishForm.amount}
+                              onChange={(event) => {
+                                setReplenishForm((prev) => ({
+                                  ...prev,
+                                  amount: event.target.value,
+                                }));
                                 setReplenishError(null);
                               }}
-                              className={`rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-colors ${
-                                replenishPriceMode === "update"
-                                  ? "border-success/30 bg-success/10 text-success"
-                                  : "border-border bg-background text-muted hover:text-foreground"
-                              }`}
-                            >
-                              Atualizar preço
-                            </button>
+                              placeholder={product.type === "liquid" ? "500" : "1"}
+                            />
+                            <Input
+                              label="Valor pago na reposição"
+                              prefix="R$"
+                              value={replenishForm.paidAmount}
+                              autoComplete="off"
+                              onChange={(event) => {
+                                setReplenishForm((prev) => ({
+                                  ...prev,
+                                  paidAmount: event.target.value,
+                                }));
+                                setReplenishError(null);
+                              }}
+                              placeholder="120,00"
+                            />
+                            <Input
+                              label="Data da compra"
+                              type="date"
+                              value={replenishForm.purchaseDate}
+                              onChange={(event) => {
+                                setReplenishForm((prev) => ({
+                                  ...prev,
+                                  purchaseDate: event.target.value,
+                                }));
+                                setReplenishError(null);
+                              }}
+                            />
                           </div>
-                          {replenishPriceMode === "update" && (
-                            <div className="mt-3">
-                              <Input
-                                label="Novo custo total do produto"
-                                value={replenishNewPrice}
-                                autoComplete="off"
-                                onChange={(event) => {
-                                  setReplenishNewPrice(event.target.value);
-                                  setReplenishError(null);
-                                }}
-                              />
-                            </div>
-                          )}
                           {replenishError && (
                             <p className="mt-2 text-xs font-medium text-danger">
                               {replenishError}
@@ -1215,6 +1563,177 @@ export function ProductsPage() {
           ) : null}
         </aside>
       </div>
+        </>
+      )}
+
+      {activeProductTab === "suppliers" && (
+      <section className="space-y-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Fornecedores</h2>
+            <p className="mt-1 text-sm text-muted">
+              Cadastre fornecedores para vincular produtos e reposições de estoque.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="success"
+            onClick={openSupplierForm}
+            className="w-full sm:w-auto"
+          >
+            <Plus className="h-4 w-4" />
+            Adicionar fornecedor
+          </Button>
+        </div>
+
+        {supplierError && (
+          <p className="mb-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
+            {supplierError}
+          </p>
+        )}
+
+        <div className="space-y-5">
+          {supplierFormOpen && (
+          <form
+            onSubmit={handleSaveSupplier}
+            autoComplete="off"
+            className="rounded-xl border border-border bg-card p-5 shadow-sm"
+          >
+            <h3 className="text-sm font-semibold text-foreground">
+              {editingSupplierId ? "Editar fornecedor" : "Novo fornecedor"}
+            </h3>
+            <div className="mt-4 grid grid-cols-1 gap-4">
+              <Input
+                label="Nome"
+                value={supplierForm.name}
+                onChange={(event) => updateSupplierForm({ name: event.target.value })}
+                placeholder="Distribuidora Auto Clean"
+              />
+              <Input
+                label="Telefone/WhatsApp"
+                value={supplierForm.phone}
+                onChange={(event) => updateSupplierForm({ phone: event.target.value })}
+                placeholder="(51) 99999-9999"
+              />
+              <Dropdown
+                label="Categoria"
+                value={supplierForm.category}
+                options={supplierCategoryOptions}
+                onChange={(category) =>
+                  updateSupplierForm({ category: category as SupplierCategory })
+                }
+              />
+              <div className="space-y-1.5">
+                <label className="block text-sm font-semibold text-foreground">
+                  Observações
+                </label>
+                <textarea
+                  value={supplierForm.notes}
+                  onChange={(event) => updateSupplierForm({ notes: event.target.value })}
+                  rows={4}
+                  className="w-full resize-none rounded-lg border border-border bg-slate-50 px-4 py-3 text-base text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:py-2.5 sm:text-sm"
+                  placeholder="Condições de pagamento, entrega, contato..."
+                />
+              </div>
+            </div>
+            <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              {editingSupplierId && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={resetSupplierForm}
+                  className="w-full sm:w-auto"
+                >
+                  Cancelar
+                </Button>
+              )}
+              <Button
+                type="submit"
+                variant="success"
+                loading={savingSupplier}
+                className="w-full sm:w-auto"
+                disabled={!suppliersLoaded}
+              >
+                <Plus className="h-4 w-4" />
+                {editingSupplierId ? "Salvar alterações" : "Cadastrar fornecedor"}
+              </Button>
+            </div>
+          </form>
+          )}
+
+            {suppliers.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border bg-card px-4 py-12 text-center shadow-sm">
+                <p className="text-sm font-semibold text-foreground">
+                  Nenhum fornecedor cadastrado
+                </p>
+                <p className="mt-1 text-sm text-muted">
+                  Cadastre fornecedores para usar nos produtos e reposições.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {suppliers.map((supplier) => (
+                  <article
+                    key={supplier.id}
+                    className="rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <h3 className="truncate text-sm font-semibold text-foreground">
+                          {supplier.name}
+                        </h3>
+                        <p className="mt-1 text-xs font-semibold text-primary">
+                          {supplier.category}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => startEditingSupplier(supplier)}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-success transition-colors hover:bg-success/10"
+                        aria-label={`Editar ${supplier.name}`}
+                        title="Editar fornecedor"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteSupplier(supplier)}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-danger transition-colors hover:bg-danger/10"
+                        aria-label={`Excluir ${supplier.name}`}
+                        title="Excluir fornecedor"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                      </div>
+                    </div>
+                    <div className="mt-4 space-y-3 text-sm">
+                      <div className="rounded-xl bg-background px-4 py-3">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                          Telefone/WhatsApp
+                        </span>
+                        <p className="mt-1 font-semibold text-foreground">
+                          {supplier.phone || "-"}
+                        </p>
+                      </div>
+                      {supplier.notes && (
+                        <div className="rounded-xl bg-background px-4 py-3">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                            Observações
+                          </span>
+                          <p className="mt-1 text-sm font-medium text-foreground">
+                            {supplier.notes}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+        </div>
+      </section>
+      )}
       <style>{`
         @media (prefers-reduced-motion: no-preference) {
           .product-form-enter {
