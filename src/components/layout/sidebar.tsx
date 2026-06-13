@@ -1,5 +1,6 @@
 "use client";
 
+import type { SVGProps } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -7,19 +8,59 @@ import {
   CalendarDays,
   Users,
   Wrench,
-  Wallet,
   Building2,
-  Package,
 } from "lucide-react";
 import { UserMenu } from "./user-menu";
+
+function StackedBoxesIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5" />
+      <path d="M12 22V12" />
+    </svg>
+  );
+}
+
+function CircleDollarIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+      {...props}
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" />
+      <path d="M12 18V6" />
+    </svg>
+  );
+}
+
+const iconClassName = "h-5 w-5 text-white stroke-[2.45]";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Agenda", href: "/agenda", icon: CalendarDays },
   { name: "Clientes", href: "/clientes", icon: Users },
   { name: "Serviços", href: "/servicos", icon: Wrench },
-  { name: "Produtos", href: "/produtos", icon: Package },
-  { name: "Financeiro", href: "/financeiro", icon: Wallet },
+  { name: "Produtos", href: "/produtos", icon: StackedBoxesIcon },
+  { name: "Financeiro", href: "/financeiro", icon: CircleDollarIcon },
   { name: "Perfil da Empresa", href: "/empresa", icon: Building2 },
 ];
 
@@ -74,8 +115,8 @@ export function Sidebar({ userEmail, userName, avatarUrl }: SidebarProps) {
                     : "text-white/70 hover:bg-sidebar-hover hover:text-white"
                 }`}
               >
-                <span className="flex w-8 shrink-0 justify-center">
-                  <item.icon className="h-5 w-5" />
+                <span className="flex w-8 shrink-0 justify-center text-white">
+                  <item.icon className={iconClassName} />
                 </span>
                 <span className="ml-3 translate-x-2 whitespace-nowrap opacity-0 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:translate-x-0 group-hover:opacity-100">
                   {item.name}
@@ -109,7 +150,7 @@ export function Sidebar({ userEmail, userName, avatarUrl }: SidebarProps) {
                   : "text-white/65 hover:bg-sidebar-hover hover:text-white"
               }`}
             >
-              <item.icon className="mb-1 h-5 w-5" />
+              <item.icon className={`${iconClassName} mb-1`} />
               <span className="max-w-[4.25rem] truncate">{item.name}</span>
             </Link>
           );
