@@ -20,12 +20,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
+import {
+  PRODUCTS_STORAGE_KEY,
+  parseMoney as parseProductMoney,
+  type ProductItem,
+} from "@/lib/products/catalog";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/format";
 
-type FinanceTab = "overview" | "revenues" | "expenses" | "reports";
+type FinanceTab = "overview" | "revenues" | "expenses" | "fixedCosts" | "reports";
 type PeriodFilter = "today" | "week" | "month" | "custom";
 type TransactionType = "receita" | "despesa";
+const SUPPLIERS_STORAGE_KEY = "auto-estetica-suppliers";
+const FIXED_COSTS_STORAGE_KEY = "auto-estetica-fixed-costs";
+const UTENSIL_WEAR_STORAGE_KEY = "auto-estetica-utensil-wear-settings";
 
 interface FinancialTransaction {
   id: string;
@@ -44,6 +52,138 @@ interface FinancialTransaction {
 interface Supplier {
   id: string;
   name: string;
+}
+
+type FixedCostKind = "real" | "estimated";
+
+interface FixedCost {
+  id: string;
+  workshop_id: string;
+  name: string;
+  kind: FixedCostKind;
+  amount: number | string;
+  active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface FixedCostForm {
+  name: string;
+  kind: FixedCostKind;
+  amount: string;
+  notes: string;
+}
+
+interface UtensilWearSetting {
+  durability: string;
+  included: boolean;
+}
+
+function sortSuppliers(list: Supplier[]) {
+  return [...list].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function mergeSuppliers(current: Supplier[], incoming: Supplier[]) {
+  const byId = new Map(current.map((supplier) => [supplier.id, supplier]));
+  incoming.forEach((supplier) => {
+    const existing = byId.get(supplier.id);
+    byId.set(supplier.id, existing ? { ...existing, ...supplier } : supplier);
+  });
+  return sortSuppliers(Array.from(byId.values()));
+}
+
+function readStoredSuppliers() {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const stored = window.localStorage.getItem(SUPPLIERS_STORAGE_KEY);
+    if (!stored) return [];
+
+    return (JSON.parse(stored) as { id: string; name: string }[])
+      .filter((supplier) => supplier.id && supplier.name)
+      .map((supplier) => ({ id: supplier.id, name: supplier.name }));
+  } catch {
+    return [];
+  }
+}
+
+function createFixedCostId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `fixed-cost-${Date.now()}-${Math.random()}`;
+}
+
+function sortFixedCosts(list: FixedCost[]) {
+  return [...list].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function mergeFixedCosts(current: FixedCost[], incoming: FixedCost[]) {
+  const byId = new Map(current.map((cost) => [cost.id, cost]));
+  incoming.forEach((cost) => byId.set(cost.id, cost));
+  return sortFixedCosts(Array.from(byId.values()));
+}
+
+function readStoredFixedCosts() {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const stored = window.localStorage.getItem(FIXED_COSTS_STORAGE_KEY);
+    return stored ? (JSON.parse(stored) as FixedCost[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredFixedCosts(costs: FixedCost[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(FIXED_COSTS_STORAGE_KEY, JSON.stringify(costs));
+}
+
+function readStoredProducts() {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const stored = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
+    return stored ? (JSON.parse(stored) as ProductItem[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function readStoredUtensilWearSettings() {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const stored = window.localStorage.getItem(UTENSIL_WEAR_STORAGE_KEY);
+    return stored
+      ? (JSON.parse(stored) as Record<string, UtensilWearSetting>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredUtensilWearSettings(
+  settings: Record<string, UtensilWearSetting>
+) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(UTENSIL_WEAR_STORAGE_KEY, JSON.stringify(settings));
+}
+
+function getProductTotalCost(product: ProductItem) {
+  try {
+    return parseProductMoney(product.totalCost || "0");
+  } catch {
+    return 0;
+  }
+}
+
+function parseDurabilityWashes(value: string) {
+  const normalized = value.replace(/\./g, "").replace(",", ".");
+  const durability = Number(normalized);
+
+  return Number.isFinite(durability) && durability > 0 ? durability : 0;
 }
 
 interface CompletedOrderItem {
@@ -70,6 +210,7 @@ interface FinanceEntry {
   category: string;
   date: string;
   clientName?: string;
+  serviceName?: string;
   supplierId?: string;
   supplierName?: string;
   source?: string;
@@ -81,6 +222,7 @@ interface TransactionForm {
   amount: string;
   date: string;
   category: string;
+  supplierId: string;
 }
 
 interface DateRange {
@@ -92,6 +234,7 @@ const tabs: { id: FinanceTab; label: string }[] = [
   { id: "overview", label: "Visão Geral" },
   { id: "revenues", label: "Receitas" },
   { id: "expenses", label: "Despesas" },
+  { id: "fixedCosts", label: "Custos Fixos" },
   { id: "reports", label: "Relatórios" },
 ];
 
@@ -144,6 +287,7 @@ const initialRevenueForm: TransactionForm = {
   amount: "",
   date: dateKey(new Date()),
   category: "Serviço",
+  supplierId: categoryFilterAll,
 };
 
 const initialExpenseForm: TransactionForm = {
@@ -151,6 +295,14 @@ const initialExpenseForm: TransactionForm = {
   amount: "",
   date: dateKey(new Date()),
   category: "Produtos",
+  supplierId: categoryFilterAll,
+};
+
+const initialFixedCostForm: FixedCostForm = {
+  name: "",
+  kind: "real",
+  amount: "",
+  notes: "",
 };
 
 function dateKey(date: Date) {
@@ -287,6 +439,10 @@ function formatShortDate(date: string) {
 
 function toCurrencyNumber(value: number | string | null | undefined) {
   return Number(value) || 0;
+}
+
+function isMissingSupplierColumnError(error: { message?: string } | null) {
+  return error?.message?.includes("supplier_id") ?? false;
 }
 
 function SummaryCard({
@@ -553,6 +709,7 @@ function TransactionList({
   onDeleteTransaction?: (entry: FinanceEntry) => void;
 }) {
   const hasEditAction = Boolean(onEditTransaction);
+  const labelColumnTitle = accent === "expense" ? "Fornecedor" : "Categoria";
   const gridColumnsClass = hasEditAction
     ? "grid-cols-[minmax(240px,1fr)_150px_130px_130px_112px]"
     : "grid-cols-[minmax(240px,1fr)_150px_130px_130px_80px]";
@@ -589,13 +746,21 @@ function TransactionList({
         <div className="min-w-[760px]">
         <div className={`grid ${gridColumnsClass} gap-4 border-b border-border px-3 py-3 text-xs font-semibold text-muted`}>
           <span>Descrição</span>
-          <span>Categoria</span>
+          <span>{labelColumnTitle}</span>
           <span>Data</span>
           <span>Valor</span>
           <span className="text-right">Ações</span>
         </div>
         {entries.map((entry) => {
           const isRevenue = entry.type === "receita";
+          const displayTitle =
+            entry.kind === "automatic" && entry.clientName
+              ? entry.clientName
+              : entry.description;
+          const displaySubtitle =
+            entry.kind === "automatic" && entry.serviceName
+              ? entry.serviceName
+              : undefined;
           return (
             <article
               key={entry.id}
@@ -604,7 +769,7 @@ function TransactionList({
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-sm font-semibold text-foreground">
-                    {entry.description}
+                    {displayTitle}
                   </p>
                   <span
                     className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
@@ -616,17 +781,12 @@ function TransactionList({
                     {entry.kind === "automatic" ? "Agenda" : "Manual"}
                   </span>
                 </div>
-                {entry.clientName && (
-                  <p className="mt-1 text-xs text-muted">{entry.clientName}</p>
-                )}
-                {entry.supplierName && (
-                  <p className="mt-1 text-xs font-semibold text-muted">
-                    Fornecedor: {entry.supplierName}
-                  </p>
+                {displaySubtitle && (
+                  <p className="mt-1 text-xs text-muted">{displaySubtitle}</p>
                 )}
               </div>
               <div className="text-sm font-medium text-foreground">
-                <span>{entry.category}</span>
+                <span>{accent === "expense" ? entry.supplierName ?? "-" : entry.category}</span>
               </div>
               <div className="text-sm font-medium text-foreground">
                 <span>{formatShortDate(entry.date)}</span>
@@ -678,6 +838,7 @@ function TransactionFormCard({
   description,
   form,
   categories,
+  supplierOptions,
   loading,
   error,
   buttonLabel,
@@ -689,6 +850,7 @@ function TransactionFormCard({
   description: string;
   form: TransactionForm;
   categories: { value: string; label: string }[];
+  supplierOptions?: { value: string; label: string }[];
   loading: boolean;
   error: string | null;
   buttonLabel: string;
@@ -718,6 +880,14 @@ function TransactionFormCard({
           value={form.amount}
           onChange={(event) => onChange({ amount: event.target.value })}
         />
+        {supplierOptions && (
+          <Dropdown
+            label="Fornecedor (opcional)"
+            value={form.supplierId}
+            options={supplierOptions}
+            onChange={(supplierId) => onChange({ supplierId })}
+          />
+        )}
         <Input
           label="Data"
           type="date"
@@ -820,6 +990,7 @@ export function FinancePage() {
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [orders, setOrders] = useState<CompletedOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [fixedCosts, setFixedCosts] = useState<FixedCost[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revenueForm, setRevenueForm] = useState<TransactionForm>(initialRevenueForm);
@@ -842,6 +1013,17 @@ export function FinancePage() {
   const [revenueCategoryFilter, setRevenueCategoryFilter] = useState(categoryFilterAll);
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState(categoryFilterAll);
   const [expenseSupplierFilter, setExpenseSupplierFilter] = useState(categoryFilterAll);
+  const [showFixedCostForm, setShowFixedCostForm] = useState(false);
+  const [editingFixedCostId, setEditingFixedCostId] = useState<string | null>(null);
+  const [fixedCostForm, setFixedCostForm] = useState<FixedCostForm>(initialFixedCostForm);
+  const [fixedCostError, setFixedCostError] = useState<string | null>(null);
+  const [savingFixedCost, setSavingFixedCost] = useState(false);
+  const [catalogProducts, setCatalogProducts] = useState<ProductItem[]>(
+    () => readStoredProducts()
+  );
+  const [utensilWearSettings, setUtensilWearSettings] = useState<
+    Record<string, UtensilWearSetting>
+  >(() => readStoredUtensilWearSettings());
 
   const loadFinanceData = useCallback(async () => {
     setLoading(true);
@@ -861,18 +1043,11 @@ export function FinancePage() {
     setWorkshopId(profile.workshop_id);
 
     const [
-      { data: transactionsData, error: transactionsError },
       { data: ordersData, error: ordersError },
-      { data: suppliersData, error: suppliersError },
+      suppliersResult,
+      fixedCostsResult,
     ] =
       await Promise.all([
-        supabase
-          .from("financial_transactions")
-          .select(
-            "id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at"
-          )
-          .eq("workshop_id", profile.workshop_id)
-          .order("transaction_date", { ascending: false }),
         supabase
           .from("service_orders")
           .select(
@@ -897,7 +1072,39 @@ export function FinancePage() {
           .select("id, name")
           .eq("workshop_id", profile.workshop_id)
           .order("name", { ascending: true }),
+        supabase
+          .from("fixed_costs")
+          .select("id, workshop_id, name, kind, amount, active, notes, created_at, updated_at")
+          .eq("workshop_id", profile.workshop_id)
+          .order("name", { ascending: true }),
       ]);
+    let { data: transactionsData, error: transactionsError } = await supabase
+      .from("financial_transactions")
+      .select(
+        "id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at"
+      )
+      .eq("workshop_id", profile.workshop_id)
+      .order("transaction_date", { ascending: false });
+
+    if (transactionsError) {
+      const legacyResult = await supabase
+        .from("financial_transactions")
+        .select(
+          "id, type, description, amount, category, service_order_id, transaction_date, created_at"
+        )
+        .eq("workshop_id", profile.workshop_id)
+        .order("transaction_date", { ascending: false });
+
+      transactionsData = legacyResult.data
+        ? legacyResult.data.map((transaction) => ({
+            ...transaction,
+            supplier_id: null,
+            product_id: null,
+            source: null,
+          }))
+        : null;
+      transactionsError = legacyResult.error;
+    }
 
     if (transactionsError) {
       setError(transactionsError.message);
@@ -911,10 +1118,21 @@ export function FinancePage() {
       setOrders((ordersData as CompletedOrder[] | null) ?? []);
     }
 
-    if (suppliersError) {
-      setError(suppliersError.message);
+    const storedSuppliers = readStoredSuppliers();
+    if (suppliersResult.error) {
+      setSuppliers(storedSuppliers);
     } else {
-      setSuppliers((suppliersData as Supplier[] | null) ?? []);
+      setSuppliers(
+        mergeSuppliers(storedSuppliers, (suppliersResult.data as Supplier[] | null) ?? [])
+      );
+    }
+
+    const storedFixedCosts = readStoredFixedCosts();
+    if (fixedCostsResult.error) {
+      setFixedCosts(storedFixedCosts);
+    } else {
+      const remoteFixedCosts = (fixedCostsResult.data as FixedCost[] | null) ?? [];
+      setFixedCosts(mergeFixedCosts(storedFixedCosts, remoteFixedCosts));
     }
 
     setLoading(false);
@@ -923,6 +1141,42 @@ export function FinancePage() {
   useEffect(() => {
     void Promise.resolve().then(loadFinanceData);
   }, [loadFinanceData]);
+
+  useEffect(() => {
+    if (suppliers.length === 0) return;
+
+    try {
+      const storedSuppliers = readStoredSuppliers();
+      window.localStorage.setItem(
+        SUPPLIERS_STORAGE_KEY,
+        JSON.stringify(mergeSuppliers(storedSuppliers, suppliers))
+      );
+    } catch {
+      // Ignora falhas de armazenamento local; o Supabase continua sendo a fonte principal.
+    }
+  }, [suppliers]);
+
+  useEffect(() => {
+    writeStoredFixedCosts(fixedCosts);
+  }, [fixedCosts]);
+
+  useEffect(() => {
+    function handleStorageChange(event: StorageEvent) {
+      if (event.key === PRODUCTS_STORAGE_KEY) {
+        setCatalogProducts(readStoredProducts());
+      }
+    }
+
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    writeStoredUtensilWearSettings(utensilWearSettings);
+  }, [utensilWearSettings]);
 
   useEffect(() => {
     if (!workshopId) return;
@@ -965,6 +1219,18 @@ export function FinancePage() {
           void loadFinanceData();
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "fixed_costs",
+          filter: `workshop_id=eq.${workshopId}`,
+        },
+        () => {
+          void loadFinanceData();
+        }
+      )
       .subscribe();
 
     return () => {
@@ -981,24 +1247,34 @@ export function FinancePage() {
   }, [suppliers]);
 
   const transactionEntries = useMemo<FinanceEntry[]>(() => {
-    return transactions.map((transaction) => ({
-      id: transaction.id,
-      kind: transaction.service_order_id ? "automatic" : "manual",
-      type: transaction.type,
-      description: transaction.description,
-      amount: toCurrencyNumber(transaction.amount),
-      category: transaction.category ?? "Outros",
-      date: transaction.transaction_date,
-      clientName: transaction.service_order_id
-        ? firstRelation(ordersById.get(transaction.service_order_id)?.clients)?.name
-        : undefined,
-      supplierId: transaction.supplier_id ?? undefined,
-      supplierName: transaction.supplier_id
-        ? suppliersById.get(transaction.supplier_id)?.name ?? "Fornecedor removido"
-        : undefined,
-      source: transaction.source ?? undefined,
-      serviceOrderId: transaction.service_order_id ?? undefined,
-    }));
+    return transactions.map((transaction) => {
+      const order = transaction.service_order_id
+        ? ordersById.get(transaction.service_order_id)
+        : undefined;
+      const serviceNames =
+        order?.service_order_items
+          ?.map((item) => firstRelation(item.services)?.name)
+          .filter(Boolean)
+          .join(", ") || undefined;
+
+      return {
+        id: transaction.id,
+        kind: transaction.service_order_id ? "automatic" : "manual",
+        type: transaction.type,
+        description: transaction.description,
+        amount: toCurrencyNumber(transaction.amount),
+        category: transaction.category ?? "Outros",
+        date: transaction.transaction_date,
+        clientName: order ? firstRelation(order.clients)?.name : undefined,
+        serviceName: serviceNames,
+        supplierId: transaction.supplier_id ?? undefined,
+        supplierName: transaction.supplier_id
+          ? suppliersById.get(transaction.supplier_id)?.name ?? "Fornecedor removido"
+          : undefined,
+        source: transaction.source ?? undefined,
+        serviceOrderId: transaction.service_order_id ?? undefined,
+      };
+    });
   }, [ordersById, suppliersById, transactions]);
 
   const revenueEntries = useMemo(
@@ -1076,6 +1352,13 @@ export function FinancePage() {
   );
   const expenseSupplierFilterOptions = [
     { value: categoryFilterAll, label: "Todos os fornecedores" },
+    ...suppliers.map((supplier) => ({
+      value: supplier.id,
+      label: supplier.name,
+    })),
+  ];
+  const expenseSupplierOptions = [
+    { value: categoryFilterAll, label: "Sem fornecedor" },
     ...suppliers.map((supplier) => ({
       value: supplier.id,
       label: supplier.name,
@@ -1164,6 +1447,69 @@ export function FinancePage() {
     expenseEntries.filter((entry) => isDateInRange(entry.date, todayRange))
   );
   const todayProfit = todayRevenue - todayExpenses;
+  const utensilWearItems = useMemo(() => {
+    return catalogProducts
+      .filter((product) => product.id && product.type !== "liquid")
+      .map((product) => {
+        const setting = utensilWearSettings[product.id];
+        const durability = setting?.durability ?? product.durabilityWashes ?? "";
+        const included = setting?.included ?? true;
+        const durabilityWashes = parseDurabilityWashes(durability);
+        const value = getProductTotalCost(product);
+        const costPerWash =
+          included && durabilityWashes > 0 ? value / durabilityWashes : 0;
+
+        return {
+          product,
+          value,
+          durability,
+          included,
+          durabilityWashes,
+          costPerWash,
+        };
+      })
+      .sort((a, b) => a.product.name.localeCompare(b.product.name));
+  }, [catalogProducts, utensilWearSettings]);
+  const utensilWearPerWash = utensilWearItems.reduce(
+    (total, item) => total + item.costPerWash,
+    0
+  );
+  const activeFixedCosts = fixedCosts.filter((cost) => cost.active);
+  const fixedRealTotal = activeFixedCosts
+    .filter((cost) => cost.kind === "real")
+    .reduce((total, cost) => total + toCurrencyNumber(cost.amount), 0);
+  const fixedEstimatedTotal = activeFixedCosts
+    .filter((cost) => cost.kind === "estimated")
+    .reduce((total, cost) => total + toCurrencyNumber(cost.amount), 0);
+  const fixedMonthlyTotal = fixedRealTotal + fixedEstimatedTotal;
+  const monthlyWashCount = reportOrders.filter((order) => {
+    const orderDate = getOrderDate(order);
+    return orderDate ? isDateInRange(orderDate, currentMonthRange) : false;
+  }).length;
+  const utensilWearMonthlyTotal = utensilWearPerWash * monthlyWashCount;
+  const fixedCostPerWash =
+    (monthlyWashCount > 0 ? fixedMonthlyTotal / monthlyWashCount : 0) +
+    utensilWearPerWash;
+
+  function handleUpdateUtensilDurability(product: ProductItem, durability: string) {
+    setUtensilWearSettings((prev) => ({
+      ...prev,
+      [product.id]: {
+        durability,
+        included: prev[product.id]?.included ?? true,
+      },
+    }));
+  }
+
+  function handleToggleUtensilWear(product: ProductItem) {
+    setUtensilWearSettings((prev) => ({
+      ...prev,
+      [product.id]: {
+        durability: prev[product.id]?.durability ?? product.durabilityWashes ?? "",
+        included: !(prev[product.id]?.included ?? true),
+      },
+    }));
+  }
 
   function resetForm(type: TransactionType) {
     if (type === "receita") {
@@ -1218,20 +1564,52 @@ export function FinancePage() {
 
     setSaving(true);
     setFormError(null);
+    const supplierId =
+      type === "despesa" && form.supplierId !== categoryFilterAll
+        ? form.supplierId
+        : null;
+    const transactionPayload = {
+      description: form.description.trim(),
+      amount,
+      category: form.category,
+      transaction_date: form.date,
+    };
+    const selectColumns =
+      "id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at";
+    const legacySelectColumns =
+      "id, type, description, amount, category, service_order_id, transaction_date, created_at";
 
     if (transactionId) {
-      const { data, error: updateError } = await supabase
+      let { data, error: updateError } = await supabase
         .from("financial_transactions")
         .update({
-          description: form.description.trim(),
-          amount,
-          category: form.category,
-          transaction_date: form.date,
+          ...transactionPayload,
+          supplier_id: supplierId,
         })
         .eq("id", transactionId)
         .eq("workshop_id", workshopId)
-        .select("id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at")
+        .select(selectColumns)
         .single();
+
+      if (isMissingSupplierColumnError(updateError)) {
+        const legacyResult = await supabase
+          .from("financial_transactions")
+          .update(transactionPayload)
+          .eq("id", transactionId)
+          .eq("workshop_id", workshopId)
+          .select(legacySelectColumns)
+          .single();
+
+        data = legacyResult.data
+          ? {
+              ...legacyResult.data,
+              supplier_id: null,
+              product_id: null,
+              source: null,
+            }
+          : null;
+        updateError = legacyResult.error;
+      }
 
       setSaving(false);
 
@@ -1254,18 +1632,38 @@ export function FinancePage() {
       return;
     }
 
-    const { data, error: insertError } = await supabase
+    let { data, error: insertError } = await supabase
       .from("financial_transactions")
       .insert({
         workshop_id: workshopId,
         type,
-        description: form.description.trim(),
-        amount,
-        category: form.category,
-        transaction_date: form.date,
+        ...transactionPayload,
+        supplier_id: supplierId,
       })
-      .select("id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at")
+      .select(selectColumns)
       .single();
+
+    if (isMissingSupplierColumnError(insertError)) {
+      const legacyResult = await supabase
+        .from("financial_transactions")
+        .insert({
+          workshop_id: workshopId,
+          type,
+          ...transactionPayload,
+        })
+        .select(legacySelectColumns)
+        .single();
+
+      data = legacyResult.data
+        ? {
+            ...legacyResult.data,
+            supplier_id: null,
+            product_id: null,
+            source: null,
+          }
+        : null;
+      insertError = legacyResult.error;
+    }
 
     setSaving(false);
 
@@ -1289,10 +1687,144 @@ export function FinancePage() {
       }),
       date: entry.date,
       category: entry.category,
+      supplierId: entry.supplierId ?? categoryFilterAll,
     });
     setExpenseError(null);
     setEditingExpenseId(entry.id);
     setShowExpenseForm(true);
+  }
+
+  function resetFixedCostForm() {
+    setEditingFixedCostId(null);
+    setFixedCostForm(initialFixedCostForm);
+    setFixedCostError(null);
+    setShowFixedCostForm(false);
+  }
+
+  function handleEditFixedCost(cost: FixedCost) {
+    setEditingFixedCostId(cost.id);
+    setFixedCostForm({
+      name: cost.name,
+      kind: cost.kind,
+      amount: toCurrencyNumber(cost.amount).toLocaleString("pt-BR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+      notes: cost.notes ?? "",
+    });
+    setFixedCostError(null);
+    setShowFixedCostForm(true);
+  }
+
+  async function handleSaveFixedCost(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!workshopId) {
+      setFixedCostError("Oficina não encontrada.");
+      return;
+    }
+
+    if (!fixedCostForm.name.trim()) {
+      setFixedCostError("Informe o nome do custo.");
+      return;
+    }
+
+    let amount: number;
+    try {
+      amount = parseMoney(fixedCostForm.amount);
+    } catch (err) {
+      setFixedCostError(err instanceof Error ? err.message : "Informe um valor válido.");
+      return;
+    }
+
+    setSavingFixedCost(true);
+    setFixedCostError(null);
+
+    const now = new Date().toISOString();
+    const existingCost = fixedCosts.find((cost) => cost.id === editingFixedCostId);
+    const localCost: FixedCost = {
+      id: editingFixedCostId ?? createFixedCostId(),
+      workshop_id: workshopId,
+      name: fixedCostForm.name.trim(),
+      kind: fixedCostForm.kind,
+      amount,
+      active: existingCost?.active ?? true,
+      notes: fixedCostForm.notes.trim() || null,
+      created_at: existingCost?.created_at ?? now,
+      updated_at: now,
+    };
+    const payload = {
+      workshop_id: workshopId,
+      name: localCost.name,
+      kind: localCost.kind,
+      amount,
+      active: localCost.active,
+      notes: localCost.notes,
+      updated_at: now,
+    };
+    const result = editingFixedCostId
+      ? await supabase
+          .from("fixed_costs")
+          .update(payload)
+          .eq("id", editingFixedCostId)
+          .eq("workshop_id", workshopId)
+          .select("id, workshop_id, name, kind, amount, active, notes, created_at, updated_at")
+          .single()
+      : await supabase
+          .from("fixed_costs")
+          .insert(payload)
+          .select("id, workshop_id, name, kind, amount, active, notes, created_at, updated_at")
+          .single();
+
+    setSavingFixedCost(false);
+
+    const savedCost = result.data ? (result.data as FixedCost) : localCost;
+    setFixedCosts((prev) => {
+      const nextCosts = editingFixedCostId
+        ? sortFixedCosts([
+            ...prev.filter((cost) => cost.id !== editingFixedCostId),
+            savedCost,
+          ])
+        : mergeFixedCosts(prev, [savedCost]);
+      writeStoredFixedCosts(nextCosts);
+      return nextCosts;
+    });
+    resetFixedCostForm();
+  }
+
+  async function handleToggleFixedCost(cost: FixedCost) {
+    const nextCost = {
+      ...cost,
+      active: !cost.active,
+      updated_at: new Date().toISOString(),
+    };
+
+    setFixedCosts((prev) =>
+      prev.map((item) => (item.id === cost.id ? nextCost : item))
+    );
+
+    await supabase
+      .from("fixed_costs")
+      .update({ active: nextCost.active, updated_at: nextCost.updated_at })
+      .eq("id", cost.id)
+      .eq("workshop_id", cost.workshop_id);
+  }
+
+  async function handleDeleteFixedCost(cost: FixedCost) {
+    const confirmed = window.confirm(`Deseja excluir ${cost.name}?`);
+    if (!confirmed) return;
+
+    setFixedCosts((prev) => prev.filter((item) => item.id !== cost.id));
+
+    await supabase
+      .from("fixed_costs")
+      .delete()
+      .eq("id", cost.id)
+      .eq("workshop_id", cost.workshop_id);
+
+    if (editingFixedCostId === cost.id) {
+      resetFixedCostForm();
+    }
   }
 
   async function handleDeleteTransaction(entry: FinanceEntry) {
@@ -1399,7 +1931,7 @@ export function FinancePage() {
       </div>
 
       <div className="rounded-2xl border border-border bg-card p-1.5 shadow-sm">
-        <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-1.5 md:grid-cols-5">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -1649,6 +2181,7 @@ export function FinancePage() {
                   }
                   form={expenseForm}
                   categories={expenseCategoryOptions}
+                  supplierOptions={expenseSupplierOptions}
                   loading={savingExpense}
                   error={expenseError}
                   buttonLabel={editingExpenseId ? "Atualizar despesa" : "Salvar despesa"}
@@ -1691,6 +2224,339 @@ export function FinancePage() {
                 onEditTransaction={handleEditExpense}
                 onDeleteTransaction={handleDeleteTransaction}
               />
+            </div>
+          )}
+
+          {activeTab === "fixedCosts" && (
+            <div className="space-y-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">
+                    Custos Fixos
+                  </h2>
+                  <p className="mt-1 text-sm text-muted">
+                    Controle custos reais e médias estimadas que entram no custo por lavagem.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="success"
+                  onClick={() => {
+                    setEditingFixedCostId(null);
+                    setFixedCostForm(initialFixedCostForm);
+                    setFixedCostError(null);
+                    setShowFixedCostForm(true);
+                  }}
+                  className="w-full sm:w-auto"
+                >
+                  <Plus className="h-4 w-4" />
+                  Novo custo
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    Total fixos reais
+                  </p>
+                  <p className="mt-1 text-xl font-bold text-foreground">
+                    {formatCurrency(fixedRealTotal)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    Total estimados
+                  </p>
+                  <p className="mt-1 text-xl font-bold text-primary">
+                    {formatCurrency(fixedEstimatedTotal)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    Total mensal
+                  </p>
+                  <p className="mt-1 text-xl font-bold text-foreground">
+                    {formatCurrency(fixedMonthlyTotal)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    Total desgaste utensílios
+                  </p>
+                  <p className="mt-1 text-xl font-bold text-warning">
+                    {formatCurrency(utensilWearMonthlyTotal)}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-muted">
+                    {formatCurrency(utensilWearPerWash)} por lavagem
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    Custo por lavagem
+                  </p>
+                  <p className="mt-1 text-xl font-bold text-success">
+                    {formatCurrency(fixedCostPerWash)}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-muted">
+                    {monthlyWashCount} {monthlyWashCount === 1 ? "lavagem" : "lavagens"} no mês
+                  </p>
+                </div>
+              </div>
+
+              {showFixedCostForm && (
+                <form
+                  onSubmit={handleSaveFixedCost}
+                  autoComplete="off"
+                  className="finance-manual-form-enter rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5"
+                >
+                  <div className="mb-4">
+                    <h2 className="text-lg font-semibold text-foreground">
+                      {editingFixedCostId ? "Editar custo fixo" : "Novo custo fixo"}
+                    </h2>
+                    <p className="mt-1 text-sm text-muted">
+                      Cadastre custos reais ou médias estimadas mensais.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <Input
+                      label="Nome"
+                      value={fixedCostForm.name}
+                      onChange={(event) =>
+                        setFixedCostForm((prev) => ({
+                          ...prev,
+                          name: event.target.value,
+                        }))
+                      }
+                      placeholder="Aluguel"
+                    />
+                    <Dropdown
+                      label="Tipo"
+                      value={fixedCostForm.kind}
+                      options={[
+                        { value: "real", label: "Custo Fixo Real" },
+                        { value: "estimated", label: "Média Estimada" },
+                      ]}
+                      onChange={(kind) =>
+                        setFixedCostForm((prev) => ({
+                          ...prev,
+                          kind: kind as FixedCostKind,
+                        }))
+                      }
+                    />
+                    <Input
+                      label="Valor mensal"
+                      prefix="R$"
+                      value={fixedCostForm.amount}
+                      onChange={(event) =>
+                        setFixedCostForm((prev) => ({
+                          ...prev,
+                          amount: event.target.value,
+                        }))
+                      }
+                      placeholder="250,00"
+                    />
+                    <Input
+                      label={
+                        fixedCostForm.kind === "estimated"
+                          ? "Observação"
+                          : "Observação (opcional)"
+                      }
+                      value={fixedCostForm.notes}
+                      onChange={(event) =>
+                        setFixedCostForm((prev) => ({
+                          ...prev,
+                          notes: event.target.value,
+                        }))
+                      }
+                      placeholder={
+                        fixedCostForm.kind === "estimated"
+                          ? "Baseado nos últimos 3 meses"
+                          : "Contrato, vencimento, referência..."
+                      }
+                    />
+                  </div>
+                  {fixedCostError && (
+                    <p className="mt-3 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
+                      {fixedCostError}
+                    </p>
+                  )}
+                  <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={resetFixedCostForm}
+                      className="w-full sm:w-auto"
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="submit"
+                      variant="success"
+                      loading={savingFixedCost}
+                      className="w-full sm:w-auto"
+                    >
+                      <Plus className="h-4 w-4" />
+                      {editingFixedCostId ? "Atualizar custo" : "Salvar custo"}
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              <div className="w-full overflow-x-auto">
+                <div className="min-w-[760px]">
+                  <div className="grid grid-cols-[minmax(220px,1fr)_150px_130px_130px_112px] gap-4 border-b border-border px-3 py-3 text-xs font-semibold text-muted">
+                    <span>Nome</span>
+                    <span>Tipo</span>
+                    <span>Valor</span>
+                    <span>Status</span>
+                    <span className="text-right">Ações</span>
+                  </div>
+                  {fixedCosts.length === 0 ? (
+                    <p className="px-3 py-10 text-center text-sm font-semibold text-muted">
+                      Nenhum custo fixo cadastrado
+                    </p>
+                  ) : (
+                    fixedCosts.map((cost) => (
+                      <article
+                        key={cost.id}
+                        className="grid grid-cols-[minmax(220px,1fr)_150px_130px_130px_112px] items-center gap-4 border-b border-border/70 px-3 py-3 transition-colors hover:bg-background/70"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="truncate text-sm font-semibold text-foreground">
+                              {cost.name}
+                            </p>
+                            {cost.kind === "estimated" && (
+                              <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
+                                Estimado
+                              </span>
+                            )}
+                          </div>
+                          {cost.notes && (
+                            <p className="mt-1 truncate text-xs text-muted">
+                              {cost.notes}
+                            </p>
+                          )}
+                        </div>
+                        <p className="text-sm font-medium text-foreground">
+                          {cost.kind === "real" ? "Real" : "Média"}
+                        </p>
+                        <p className="text-sm font-bold text-foreground">
+                          {formatCurrency(toCurrencyNumber(cost.amount))}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void handleToggleFixedCost(cost)}
+                          className={`w-fit rounded-full px-3 py-1 text-xs font-bold transition-colors ${
+                            cost.active
+                              ? "bg-success/10 text-success hover:bg-success hover:text-white"
+                              : "bg-muted/10 text-muted hover:bg-background hover:text-foreground"
+                          }`}
+                        >
+                          {cost.active ? "Ativo" : "Inativo"}
+                        </button>
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleEditFixedCost(cost)}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary/10"
+                            aria-label={`Editar ${cost.name}`}
+                            title="Editar custo"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteFixedCost(cost)}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-danger transition-colors hover:bg-danger/10"
+                            aria-label={`Excluir ${cost.name}`}
+                            title="Excluir custo"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <section className="space-y-3 pt-2">
+                <div>
+                  <h3 className="text-base font-semibold text-foreground">
+                    Desgaste de Utensílios
+                  </h3>
+                  <p className="mt-1 text-sm text-muted">
+                    Utensílios cadastrados em Produtos entram no cálculo pelo valor dividido pela durabilidade em lavagens.
+                  </p>
+                </div>
+
+                <div className="w-full overflow-x-auto">
+                  <div className="min-w-[820px]">
+                    <div className="grid grid-cols-[minmax(220px,1fr)_130px_190px_150px_120px] gap-4 border-b border-border px-3 py-3 text-xs font-semibold text-muted">
+                      <span>Nome</span>
+                      <span>Valor</span>
+                      <span>Durabilidade (lavagens)</span>
+                      <span>Custo por lavagem</span>
+                      <span>Status</span>
+                    </div>
+                    {utensilWearItems.length === 0 ? (
+                      <p className="px-3 py-10 text-center text-sm font-semibold text-muted">
+                        Nenhum utensílio cadastrado em Produtos
+                      </p>
+                    ) : (
+                      utensilWearItems.map((item) => (
+                        <article
+                          key={item.product.id}
+                          className="grid grid-cols-[minmax(220px,1fr)_130px_190px_150px_120px] items-center gap-4 border-b border-border/70 px-3 py-3 transition-colors hover:bg-background/70"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-foreground">
+                              {item.product.name}
+                            </p>
+                            <p className="mt-1 text-xs text-muted">
+                              {item.durabilityWashes > 0
+                                ? `${item.durabilityWashes} lavagens de vida útil`
+                                : "Informe a durabilidade para calcular"}
+                            </p>
+                          </div>
+                          <p className="text-sm font-bold text-foreground">
+                            {formatCurrency(item.value)}
+                          </p>
+                          <input
+                            type="number"
+                            min="1"
+                            value={item.durability}
+                            onChange={(event) =>
+                              handleUpdateUtensilDurability(
+                                item.product,
+                                event.target.value
+                              )
+                            }
+                            placeholder="Ex: 200"
+                            aria-label={`Durabilidade de ${item.product.name} em lavagens`}
+                            className="w-full rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                          />
+                          <p className="text-sm font-bold text-success">
+                            {formatCurrency(item.costPerWash)}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleUtensilWear(item.product)}
+                            className={`w-fit rounded-full px-3 py-1 text-xs font-bold transition-colors ${
+                              item.included
+                                ? "bg-success/10 text-success hover:bg-success hover:text-white"
+                                : "bg-muted/10 text-muted hover:bg-background hover:text-foreground"
+                            }`}
+                          >
+                            {item.included ? "Incluído" : "Excluído"}
+                          </button>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </section>
             </div>
           )}
 
