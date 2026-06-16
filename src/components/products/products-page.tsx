@@ -5,7 +5,9 @@ import {
   AlertTriangle,
   Camera,
   Droplets,
+  Mail,
   Filter,
+  MessageCircle,
   Package,
   Pencil,
   Plus,
@@ -45,23 +47,31 @@ import {
   type ProductType,
   type ProductTypeOption,
 } from "@/lib/products/catalog";
+import {
+  deleteSupabaseProduct,
+  importLocalCatalogToSupabase,
+  loadSupabaseCatalog,
+  mergeProductLists,
+  saveSupabaseProduct,
+  saveSupabaseProductTypes,
+} from "@/lib/products/supabase-catalog";
 
 const PRODUCT_FORM_EXIT_MS = 180;
+const SUPPLIERS_STORAGE_KEY = "auto-estetica-suppliers";
 
 type ProductTypeFilter = "all" | "liquid" | "utensil";
 type ProductPageTab = "products" | "suppliers";
-type SupplierCategory =
-  | "Produtos químicos"
-  | "Equipamentos"
-  | "Embalagens"
-  | "Outros";
-
 interface Supplier {
   id: string;
   workshop_id: string;
   name: string;
+  contactName?: string | null;
   phone: string | null;
-  category: SupplierCategory | string;
+  whatsapp?: string | null;
+  email?: string | null;
+  document?: string | null;
+  cityState?: string | null;
+  category: string;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -69,8 +79,12 @@ interface Supplier {
 
 interface SupplierForm {
   name: string;
+  contactName: string;
   phone: string;
-  category: SupplierCategory;
+  whatsapp: string;
+  email: string;
+  document: string;
+  cityState: string;
   notes: string;
 }
 
@@ -90,18 +104,46 @@ const productPageTabs: { id: ProductPageTab; label: string }[] = [
   { id: "products", label: "Produtos" },
   { id: "suppliers", label: "Fornecedores" },
 ];
-const supplierCategoryOptions: { value: SupplierCategory; label: string }[] = [
-  { value: "Produtos químicos", label: "Produtos químicos" },
-  { value: "Equipamentos", label: "Equipamentos" },
-  { value: "Embalagens", label: "Embalagens" },
-  { value: "Outros", label: "Outros" },
-];
 const emptySupplierForm: SupplierForm = {
   name: "",
+  contactName: "",
   phone: "",
-  category: "Produtos químicos",
+  whatsapp: "",
+  email: "",
+  document: "",
+  cityState: "",
   notes: "",
 };
+
+function createSupplierId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `supplier-${Date.now()}-${Math.random()}`;
+}
+
+function sortSuppliers(list: Supplier[]) {
+  return [...list].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function mergeSuppliers(current: Supplier[], incoming: Supplier[]) {
+  const byId = new Map(current.map((supplier) => [supplier.id, supplier]));
+  incoming.forEach((supplier) => {
+    const existing = byId.get(supplier.id);
+    byId.set(supplier.id, existing ? { ...existing, ...supplier } : supplier);
+  });
+  return sortSuppliers(Array.from(byId.values()));
+}
+
+function getSupplierExtra(supplier: Supplier, key: string) {
+  const value = (supplier as unknown as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
+}
+
+function getSupplierWhatsAppUrl(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  return `https://wa.me/${digits.startsWith("55") ? digits : `55${digits}`}`;
+}
 
 const PRODUCT_PHOTO_MAX_SIZE = 480;
 const PRODUCT_PHOTO_QUALITY = 0.72;
@@ -186,16 +228,60 @@ function dateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function SupplierDetail({
+  label,
+  value,
+  href,
+  icon,
+}: {
+  label: string;
+  value: string;
+  href?: string;
+  icon?: React.ReactNode;
+}) {
+  const displayValue = value.trim() || "—";
+  const content = (
+    <span className="inline-flex min-w-0 items-center gap-2 font-semibold text-foreground">
+      {icon}
+      <span className="truncate">{displayValue}</span>
+    </span>
+  );
+
+  return (
+    <div className="rounded-xl bg-background px-4 py-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+        {label}
+      </p>
+      <div className="mt-1">
+        {href && value.trim() ? (
+          <a
+            href={href}
+            target={href.startsWith("http") ? "_blank" : undefined}
+            rel={href.startsWith("http") ? "noreferrer" : undefined}
+            className="text-primary transition-colors hover:text-primary-hover"
+          >
+            {content}
+          </a>
+        ) : (
+          content
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ProductsPage() {
   const supabase = useMemo(() => createClient(), []);
   const today = useMemo(() => new Date(), []);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
+  const [catalogSyncReady, setCatalogSyncReady] = useState(false);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [suppliersLoaded, setSuppliersLoaded] = useState(false);
   const [supplierForm, setSupplierForm] = useState<SupplierForm>(emptySupplierForm);
   const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
   const [supplierFormOpen, setSupplierFormOpen] = useState(false);
   const [supplierError, setSupplierError] = useState<string | null>(null);
   const [savingSupplier, setSavingSupplier] = useState(false);
@@ -230,6 +316,7 @@ export function ProductsPage() {
   );
   const [stockEditValue, setStockEditValue] = useState("");
   const closeFormTimeoutRef = useRef<number | null>(null);
+  const catalogSyncStartedRef = useRef(false);
 
   function clearCloseFormTimeout() {
     if (closeFormTimeoutRef.current) {
@@ -245,6 +332,7 @@ export function ProductsPage() {
       const storedServiceProductUsages = window.localStorage.getItem(
         SERVICE_PRODUCT_USAGE_STORAGE_KEY
       );
+      const storedSuppliers = window.localStorage.getItem(SUPPLIERS_STORAGE_KEY);
       if (storedProducts) {
         try {
           const parsedProducts = JSON.parse(storedProducts) as ProductItem[];
@@ -277,6 +365,14 @@ export function ProductsPage() {
         }
       }
 
+      if (storedSuppliers) {
+        try {
+          setSuppliers(JSON.parse(storedSuppliers) as Supplier[]);
+        } catch {
+          window.localStorage.removeItem(SUPPLIERS_STORAGE_KEY);
+        }
+      }
+
       setProductsLoaded(true);
       setTypeOptionsLoaded(true);
     });
@@ -304,9 +400,9 @@ export function ProductsPage() {
         .order("name", { ascending: true });
 
       if (suppliersError) {
-        setSupplierError(suppliersError.message);
+        setSupplierError(null);
       } else {
-        setSuppliers((data as Supplier[] | null) ?? []);
+        setSuppliers((prev) => mergeSuppliers(prev, (data as Supplier[] | null) ?? []));
       }
 
       setSuppliersLoaded(true);
@@ -314,6 +410,57 @@ export function ProductsPage() {
 
     void loadSuppliers();
   }, [supabase]);
+
+  useEffect(() => {
+    if (
+      !workshopId ||
+      !productsLoaded ||
+      !typeOptionsLoaded ||
+      catalogSyncStartedRef.current
+    ) {
+      return;
+    }
+
+    catalogSyncStartedRef.current = true;
+
+    void Promise.resolve().then(async () => {
+      try {
+        await importLocalCatalogToSupabase(
+          supabase,
+          workshopId,
+          products,
+          typeOptions,
+          serviceProductUsages
+        );
+
+        const catalog = await loadSupabaseCatalog(supabase, workshopId);
+        setProducts((prev) => mergeProductLists(prev, catalog.products));
+        setTypeOptions(catalog.typeOptions);
+        setServiceProductUsages(catalog.serviceProductUsages);
+        setCatalogSyncReady(true);
+      } catch (err) {
+        setCatalogSyncReady(false);
+        setError(
+          err instanceof Error
+            ? `Persistência de produtos no Supabase indisponível: ${err.message}`
+            : "Persistência de produtos no Supabase indisponível."
+        );
+      }
+    });
+  }, [
+    products,
+    productsLoaded,
+    serviceProductUsages,
+    supabase,
+    typeOptions,
+    typeOptionsLoaded,
+    workshopId,
+  ]);
+
+  useEffect(() => {
+    if (!suppliersLoaded) return;
+    window.localStorage.setItem(SUPPLIERS_STORAGE_KEY, JSON.stringify(suppliers));
+  }, [suppliers, suppliersLoaded]);
 
   useEffect(() => {
     if (!productsLoaded) return;
@@ -342,6 +489,18 @@ export function ProductsPage() {
       JSON.stringify(customTypes)
     );
   }, [typeOptions, typeOptionsLoaded]);
+
+  useEffect(() => {
+    if (!catalogSyncReady || !workshopId) return;
+
+    void saveSupabaseProductTypes(supabase, workshopId, typeOptions).catch((err) => {
+      setError(
+        err instanceof Error
+          ? `Tipos de produto não sincronizaram: ${err.message}`
+          : "Tipos de produto não sincronizaram."
+      );
+    });
+  }, [catalogSyncReady, supabase, typeOptions, workshopId]);
 
   useEffect(() => {
     return clearCloseFormTimeout;
@@ -456,8 +615,12 @@ export function ProductsPage() {
     setEditingSupplierId(supplier.id);
     setSupplierForm({
       name: supplier.name,
+      contactName: getSupplierExtra(supplier, "contactName"),
       phone: supplier.phone ?? "",
-      category: supplier.category as SupplierCategory,
+      whatsapp: getSupplierExtra(supplier, "whatsapp"),
+      email: getSupplierExtra(supplier, "email"),
+      document: getSupplierExtra(supplier, "document"),
+      cityState: getSupplierExtra(supplier, "cityState"),
       notes: supplier.notes ?? "",
     });
     setSupplierError(null);
@@ -474,11 +637,6 @@ export function ProductsPage() {
   async function handleSaveSupplier(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!workshopId) {
-      setSupplierError("Oficina não encontrada.");
-      return;
-    }
-
     if (!supplierForm.name.trim()) {
       setSupplierError("Informe o nome do fornecedor.");
       return;
@@ -487,44 +645,73 @@ export function ProductsPage() {
     setSavingSupplier(true);
     setSupplierError(null);
 
+    const now = new Date().toISOString();
+    const existingSupplier = suppliers.find((supplier) => supplier.id === editingSupplierId);
+    const localSupplier: Supplier = {
+      id: editingSupplierId ?? createSupplierId(),
+      workshop_id: workshopId ?? existingSupplier?.workshop_id ?? "local",
+      name: supplierForm.name.trim(),
+      contactName: supplierForm.contactName.trim() || null,
+      phone: supplierForm.phone.trim() || null,
+      whatsapp: supplierForm.whatsapp.trim() || null,
+      email: supplierForm.email.trim() || null,
+      document: supplierForm.document.trim() || null,
+      cityState: supplierForm.cityState.trim() || null,
+      category: existingSupplier?.category ?? "Outros",
+      notes: supplierForm.notes.trim() || null,
+      created_at: existingSupplier?.created_at ?? now,
+      updated_at: now,
+    };
     const payload = {
-      workshop_id: workshopId,
+      workshop_id: workshopId ?? localSupplier.workshop_id,
       name: supplierForm.name.trim(),
       phone: supplierForm.phone.trim() || null,
-      category: supplierForm.category,
+      category: existingSupplier?.category ?? "Outros",
       notes: supplierForm.notes.trim() || null,
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     };
 
-    const query = editingSupplierId
-      ? supabase
-          .from("suppliers")
-          .update(payload)
-          .eq("id", editingSupplierId)
-          .eq("workshop_id", workshopId)
-      : supabase.from("suppliers").insert(payload);
-
-    const { data, error: saveError } = await query
-      .select("id, workshop_id, name, phone, category, notes, created_at, updated_at")
-      .single();
+    const result = workshopId
+      ? await (editingSupplierId
+          ? supabase
+              .from("suppliers")
+              .update(payload)
+              .eq("id", editingSupplierId)
+              .eq("workshop_id", workshopId)
+          : supabase.from("suppliers").insert(payload)
+        )
+          .select("id, workshop_id, name, phone, category, notes, created_at, updated_at")
+          .single()
+      : { data: null, error: new Error("Supabase indisponível.") };
 
     setSavingSupplier(false);
 
-    if (saveError) {
-      setSupplierError(saveError.message);
-      return;
-    }
-
-    if (data) {
-      const supplier = data as Supplier;
-      setSuppliers((prev) =>
-        editingSupplierId
-          ? prev
-              .map((item) => (item.id === supplier.id ? supplier : item))
-              .sort((a, b) => a.name.localeCompare(b.name))
-          : [...prev, supplier].sort((a, b) => a.name.localeCompare(b.name))
+    const supplier = result.data
+      ? ({
+          ...(result.data as Supplier),
+          id: editingSupplierId ?? (result.data as Supplier).id,
+          contactName: localSupplier.contactName,
+          whatsapp: localSupplier.whatsapp,
+          email: localSupplier.email,
+          document: localSupplier.document,
+          cityState: localSupplier.cityState,
+        } as Supplier)
+      : localSupplier;
+    setSuppliers((prev) => {
+      const nextSuppliers = editingSupplierId
+        ? sortSuppliers([
+            ...prev.filter((item) => item.id !== editingSupplierId),
+            supplier,
+          ])
+        : mergeSuppliers(prev, [supplier]);
+      window.localStorage.setItem(
+        SUPPLIERS_STORAGE_KEY,
+        JSON.stringify(nextSuppliers)
       );
-    }
+      return nextSuppliers;
+    });
+    setSelectedSupplierId(supplier.id);
+    setSupplierError(null);
 
     resetSupplierForm();
   }
@@ -538,17 +725,14 @@ export function ProductsPage() {
     const confirmed = window.confirm(`Deseja excluir ${supplier.name}?`);
     if (!confirmed) return;
 
-    const { error: deleteError } = await supabase
-      .from("suppliers")
-      .delete()
-      .eq("id", supplier.id);
-
-    if (deleteError) {
-      setSupplierError(deleteError.message);
-      return;
+    if (supplier.workshop_id !== "local") {
+      await supabase.from("suppliers").delete().eq("id", supplier.id);
     }
 
     setSuppliers((prev) => prev.filter((item) => item.id !== supplier.id));
+    if (selectedSupplierId === supplier.id) {
+      setSelectedSupplierId(null);
+    }
     if (editingSupplierId === supplier.id) {
       resetSupplierForm();
     }
@@ -638,9 +822,14 @@ export function ProductsPage() {
     parsePositiveNumber(form.quantity);
   }
 
-  function handleSaveProduct(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSaveProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    if (!workshopId) {
+      setError("Oficina não encontrada.");
+      return;
+    }
 
     try {
       validateProductForm();
@@ -686,6 +875,17 @@ export function ProductsPage() {
       stockRemaining: String(Math.min(initialStock, preservedRemaining)),
     };
 
+    try {
+      await saveSupabaseProduct(supabase, workshopId, nextProduct);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? `Não foi possível salvar no Supabase: ${err.message}`
+          : "Não foi possível salvar no Supabase."
+      );
+      return;
+    }
+
     setProducts((prev) =>
       editingProduct
         ? prev.map((product) =>
@@ -696,9 +896,20 @@ export function ProductsPage() {
     closeForm();
   }
 
-  function handleDeleteProduct(product: ProductItem) {
+  async function handleDeleteProduct(product: ProductItem) {
     const confirmed = window.confirm(`Deseja excluir ${product.name}?`);
     if (!confirmed) return;
+
+    try {
+      await deleteSupabaseProduct(supabase, product.id);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? `Não foi possível excluir no Supabase: ${err.message}`
+          : "Não foi possível excluir no Supabase."
+      );
+      return;
+    }
 
     setProducts((prev) => prev.filter((item) => item.id !== product.id));
 
@@ -774,36 +985,62 @@ export function ProductsPage() {
         ? { volumeMl: String(nextInitialStock) }
         : { quantity: String(nextInitialStock) };
 
+    const supplierName = getSupplierName(replenishForm.supplierId);
+    const baseTransactionPayload = {
+      workshop_id: workshopId,
+      type: "despesa",
+      description: `Reposição: ${product.name}`,
+      amount: paidAmount,
+      category: "Produtos",
+      transaction_date: replenishForm.purchaseDate,
+    };
     const { error: transactionError } = await supabase
       .from("financial_transactions")
       .insert({
-        workshop_id: workshopId,
-        type: "despesa",
-        description: `Reposição: ${product.name}`,
-        amount: paidAmount,
-        category: "Produtos",
-        transaction_date: replenishForm.purchaseDate,
+        ...baseTransactionPayload,
         supplier_id: replenishForm.supplierId || null,
         product_id: product.id,
         source: "stock_replenishment",
       });
 
     if (transactionError) {
-      setReplenishError(transactionError.message);
+      const { error: fallbackTransactionError } = await supabase
+        .from("financial_transactions")
+        .insert({
+          ...baseTransactionPayload,
+          notes: replenishForm.supplierId
+            ? `Fornecedor: ${supplierName}`
+            : null,
+        });
+
+      if (fallbackTransactionError) {
+        setReplenishError(fallbackTransactionError.message);
+        return;
+      }
+    }
+
+    const updatedProduct: ProductItem = {
+      ...product,
+      ...stockFieldPatch,
+      supplierId: replenishForm.supplierId || product.supplierId,
+      stockRemaining: String(nextStock),
+      priceHistory: product.priceHistory ?? [],
+    };
+
+    try {
+      await saveSupabaseProduct(supabase, workshopId, updatedProduct);
+    } catch (err) {
+      setReplenishError(
+        err instanceof Error
+          ? `Reposição registrada, mas estoque não sincronizou: ${err.message}`
+          : "Reposição registrada, mas estoque não sincronizou."
+      );
       return;
     }
 
     setProducts((prev) =>
       prev.map((item) =>
-        item.id === product.id
-          ? {
-              ...item,
-              ...stockFieldPatch,
-              supplierId: replenishForm.supplierId || item.supplierId,
-              stockRemaining: String(nextStock),
-              priceHistory: product.priceHistory ?? [],
-            }
-          : item
+        item.id === product.id ? updatedProduct : item
       )
     );
     closeReplenish();
@@ -831,11 +1068,22 @@ export function ProductsPage() {
     const currentStock = Number(value);
     const maxStock = getProductInitialStock(product);
     const nextStock = Math.min(maxStock, Math.max(0, currentStock));
+    const nextProduct = { ...product, stockRemaining: String(nextStock) };
+
+    if (workshopId) {
+      void saveSupabaseProduct(supabase, workshopId, nextProduct).catch((err) => {
+        setError(
+          err instanceof Error
+            ? `Estoque ajustado na tela, mas não sincronizou: ${err.message}`
+            : "Estoque ajustado na tela, mas não sincronizou."
+        );
+      });
+    }
 
     setProducts((prev) =>
       prev.map((item) =>
         item.id === product.id
-          ? { ...item, stockRemaining: String(nextStock) }
+          ? nextProduct
           : item
       )
     );
@@ -883,6 +1131,8 @@ export function ProductsPage() {
     0
   );
   const stockProducts = products.filter((product) => product.type === "liquid");
+  const selectedSupplier =
+    suppliers.find((supplier) => supplier.id === selectedSupplierId) ?? null;
 
   return (
     <>
@@ -896,7 +1146,7 @@ export function ProductsPage() {
                 setActiveProductTab(tab.id);
                 setShowProductFilter(false);
               }}
-              className={`border-b-2 px-0 pb-3 pt-1 text-sm transition-colors ${
+              className={`border-b-2 px-0 pb-3 pt-1 text-sm transition-all duration-200 ease-out ${
                 activeProductTab === tab.id
                   ? "border-primary font-bold text-primary"
                   : "border-transparent font-semibold text-muted hover:text-foreground"
@@ -909,7 +1159,7 @@ export function ProductsPage() {
       </div>
 
       {activeProductTab === "products" && (
-        <>
+        <div key="products-tab" className="product-tab-panel-enter">
       <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <button
           type="button"
@@ -935,15 +1185,15 @@ export function ProductsPage() {
 
       {showProductFilter && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 px-4"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-background/70 px-4 pt-28 backdrop-blur-[2px]"
           onClick={() => setShowProductFilter(false)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl"
+            className="product-filter-panel-enter w-full max-w-2xl rounded-3xl border border-border bg-card p-6 shadow-2xl ring-1 ring-slate-900/5"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-4">
-              <h3 className="text-lg font-semibold text-foreground">
+              <h3 className="text-xl font-semibold text-foreground">
                 Filtros
               </h3>
               <p className="mt-1 text-sm text-muted">
@@ -1563,11 +1813,11 @@ export function ProductsPage() {
           ) : null}
         </aside>
       </div>
-        </>
+        </div>
       )}
 
       {activeProductTab === "suppliers" && (
-      <section className="space-y-5">
+      <section key="suppliers-tab" className="product-tab-panel-enter space-y-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Fornecedores</h2>
@@ -1602,30 +1852,55 @@ export function ProductsPage() {
             <h3 className="text-sm font-semibold text-foreground">
               {editingSupplierId ? "Editar fornecedor" : "Novo fornecedor"}
             </h3>
-            <div className="mt-4 grid grid-cols-1 gap-4">
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
               <Input
-                label="Nome"
+                label="Nome da empresa"
                 value={supplierForm.name}
                 onChange={(event) => updateSupplierForm({ name: event.target.value })}
                 placeholder="Distribuidora Auto Clean"
               />
               <Input
-                label="Telefone/WhatsApp"
+                label="Nome do contato (opcional)"
+                value={supplierForm.contactName}
+                onChange={(event) =>
+                  updateSupplierForm({ contactName: event.target.value })
+                }
+                placeholder="Carlos Souza"
+              />
+              <Input
+                label="Telefone (opcional)"
                 value={supplierForm.phone}
                 onChange={(event) => updateSupplierForm({ phone: event.target.value })}
                 placeholder="(51) 99999-9999"
               />
-              <Dropdown
-                label="Categoria"
-                value={supplierForm.category}
-                options={supplierCategoryOptions}
-                onChange={(category) =>
-                  updateSupplierForm({ category: category as SupplierCategory })
-                }
+              <Input
+                label="WhatsApp (opcional)"
+                value={supplierForm.whatsapp}
+                onChange={(event) => updateSupplierForm({ whatsapp: event.target.value })}
+                placeholder="(51) 99999-9999"
+              />
+              <Input
+                label="E-mail (opcional)"
+                type="email"
+                value={supplierForm.email}
+                onChange={(event) => updateSupplierForm({ email: event.target.value })}
+                placeholder="contato@fornecedor.com"
+              />
+              <Input
+                label="CNPJ (opcional)"
+                value={supplierForm.document}
+                onChange={(event) => updateSupplierForm({ document: event.target.value })}
+                placeholder="00.000.000/0001-00"
+              />
+              <Input
+                label="Cidade/UF (opcional)"
+                value={supplierForm.cityState}
+                onChange={(event) => updateSupplierForm({ cityState: event.target.value })}
+                placeholder="Caxias do Sul/RS"
               />
               <div className="space-y-1.5">
                 <label className="block text-sm font-semibold text-foreground">
-                  Observações
+                  Observações <span className="text-muted">(opcional)</span>
                 </label>
                 <textarea
                   value={supplierForm.notes}
@@ -1661,76 +1936,124 @@ export function ProductsPage() {
           </form>
           )}
 
-            {suppliers.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border bg-card px-4 py-12 text-center shadow-sm">
-                <p className="text-sm font-semibold text-foreground">
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">
+              {suppliers.length === 0 ? (
+                <p className="px-3 py-10 text-center text-sm font-semibold text-muted">
                   Nenhum fornecedor cadastrado
                 </p>
-                <p className="mt-1 text-sm text-muted">
-                  Cadastre fornecedores para usar nos produtos e reposições.
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {suppliers.map((supplier) => (
-                  <article
-                    key={supplier.id}
-                    className="rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <h3 className="truncate text-sm font-semibold text-foreground">
-                          {supplier.name}
-                        </h3>
-                        <p className="mt-1 text-xs font-semibold text-primary">
-                          {supplier.category}
+              ) : (
+                <div className="w-full overflow-x-auto">
+                  <div className="min-w-[720px]">
+                    <div className="grid grid-cols-[minmax(260px,1fr)_190px_96px] gap-4 border-b border-border px-3 py-3 text-xs font-semibold text-muted">
+                      <span>Nome</span>
+                      <span>Telefone/WhatsApp</span>
+                      <span className="text-right">Ações</span>
+                    </div>
+                    {suppliers.map((supplier) => (
+                      <article
+                        key={supplier.id}
+                        onClick={() => setSelectedSupplierId(supplier.id)}
+                        className={`grid cursor-pointer grid-cols-[minmax(260px,1fr)_190px_96px] items-center gap-4 border-b border-border/70 px-3 py-3 transition-colors hover:bg-background/70 ${
+                          selectedSupplierId === supplier.id ? "bg-background/80" : ""
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-foreground">
+                            {supplier.name}
+                          </p>
+                          {getSupplierExtra(supplier, "contactName") && (
+                            <p className="mt-1 truncate text-xs text-muted">
+                              {getSupplierExtra(supplier, "contactName")}
+                            </p>
+                          )}
+                        </div>
+                        <p className="text-sm font-medium text-foreground">
+                          {supplier.phone || getSupplierExtra(supplier, "whatsapp") || "-"}
                         </p>
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              startEditingSupplier(supplier);
+                            }}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-success transition-colors hover:bg-success/10"
+                            aria-label={`Editar ${supplier.name}`}
+                            title="Editar fornecedor"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleDeleteSupplier(supplier);
+                            }}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-danger transition-colors hover:bg-danger/10"
+                            aria-label={`Excluir ${supplier.name}`}
+                            title="Excluir fornecedor"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <aside className="rounded-xl border border-border bg-card p-5 shadow-sm xl:sticky xl:top-4">
+                {selectedSupplier ? (
+                  <div>
+                    <div className="mb-5 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wide text-muted">
+                          Fornecedor
+                        </p>
+                        <h3 className="mt-1 text-xl font-bold text-foreground">
+                          {selectedSupplier.name}
+                        </h3>
                       </div>
-                      <div className="flex shrink-0 gap-2">
                       <button
                         type="button"
-                        onClick={() => startEditingSupplier(supplier)}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-success transition-colors hover:bg-success/10"
-                        aria-label={`Editar ${supplier.name}`}
+                        onClick={() => startEditingSupplier(selectedSupplier)}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg text-success transition-colors hover:bg-success/10"
+                        aria-label={`Editar ${selectedSupplier.name}`}
                         title="Editar fornecedor"
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteSupplier(supplier)}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-danger transition-colors hover:bg-danger/10"
-                        aria-label={`Excluir ${supplier.name}`}
-                        title="Excluir fornecedor"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                      </div>
                     </div>
-                    <div className="mt-4 space-y-3 text-sm">
-                      <div className="rounded-xl bg-background px-4 py-3">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-                          Telefone/WhatsApp
-                        </span>
-                        <p className="mt-1 font-semibold text-foreground">
-                          {supplier.phone || "-"}
-                        </p>
-                      </div>
-                      {supplier.notes && (
-                        <div className="rounded-xl bg-background px-4 py-3">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-                            Observações
-                          </span>
-                          <p className="mt-1 text-sm font-medium text-foreground">
-                            {supplier.notes}
-                          </p>
-                        </div>
-                      )}
+                    <div className="space-y-3 text-sm">
+                      <SupplierDetail label="Contato" value={getSupplierExtra(selectedSupplier, "contactName")} />
+                      <SupplierDetail label="Telefone" value={selectedSupplier.phone ?? ""} />
+                      <SupplierDetail
+                        label="WhatsApp"
+                        value={getSupplierExtra(selectedSupplier, "whatsapp")}
+                        href={getSupplierWhatsAppUrl(getSupplierExtra(selectedSupplier, "whatsapp"))}
+                        icon={<MessageCircle className="h-4 w-4" />}
+                      />
+                      <SupplierDetail
+                        label="E-mail"
+                        value={getSupplierExtra(selectedSupplier, "email")}
+                        href={
+                          getSupplierExtra(selectedSupplier, "email")
+                            ? `mailto:${getSupplierExtra(selectedSupplier, "email")}`
+                            : ""
+                        }
+                        icon={<Mail className="h-4 w-4" />}
+                      />
+                      <SupplierDetail label="CNPJ" value={getSupplierExtra(selectedSupplier, "document")} />
+                      <SupplierDetail label="Cidade/UF" value={getSupplierExtra(selectedSupplier, "cityState")} />
+                      <SupplierDetail label="Observações" value={selectedSupplier.notes ?? ""} />
                     </div>
-                  </article>
-                ))}
-              </div>
-            )}
+                  </div>
+                ) : (
+                  <p className="py-12 text-center text-sm font-semibold text-muted">
+                    Selecione um fornecedor para ver os detalhes
+                  </p>
+                )}
+              </aside>
+            </div>
         </div>
       </section>
       )}
@@ -1745,6 +2068,14 @@ export function ProductsPage() {
             animation: product-form-exit ${PRODUCT_FORM_EXIT_MS}ms ease-in both;
             transform-origin: top center;
             pointer-events: none;
+          }
+
+          .product-tab-panel-enter {
+            animation: product-tab-panel-enter 180ms ease-out both;
+          }
+
+          .product-filter-panel-enter {
+            animation: product-filter-panel-enter 180ms ease-out both;
           }
         }
 
@@ -1819,6 +2150,28 @@ export function ProductsPage() {
           to {
             opacity: 0;
             transform: translateY(-8px) scale(0.98);
+          }
+        }
+
+        @keyframes product-tab-panel-enter {
+          from {
+            opacity: 0;
+            transform: translateY(6px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @keyframes product-filter-panel-enter {
+          from {
+            opacity: 0;
+            transform: translateY(-8px) scale(0.98);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
           }
         }
 

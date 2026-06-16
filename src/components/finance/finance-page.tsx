@@ -25,6 +25,7 @@ import {
   parseMoney as parseProductMoney,
   type ProductItem,
 } from "@/lib/products/catalog";
+import { loadSupabaseCatalog } from "@/lib/products/supabase-catalog";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/format";
 
@@ -1173,6 +1174,18 @@ export function FinancePage() {
       window.removeEventListener("storage", handleStorageChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (!workshopId) return;
+
+    void loadSupabaseCatalog(supabase, workshopId)
+      .then((catalog) => {
+        setCatalogProducts(catalog.products);
+      })
+      .catch(() => {
+        setCatalogProducts(readStoredProducts());
+      });
+  }, [supabase, workshopId]);
 
   useEffect(() => {
     writeStoredUtensilWearSettings(utensilWearSettings);

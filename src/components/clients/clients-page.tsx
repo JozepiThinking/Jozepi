@@ -47,7 +47,7 @@ function WhatsAppIcon({ className }: { className?: string }) {
 }
 
 const clientInfoCardClass =
-  "inline-flex h-11 min-w-[12rem] items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium shadow-sm";
+  "inline-flex h-10 min-w-[10rem] items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium shadow-sm";
 
 const VEHICLE_MODAL_EXIT_MS = 180;
 
@@ -777,16 +777,16 @@ export function ClientsPage() {
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
           {filteredClients.map((client) => {
             const vehicleCount = client.vehicles?.length ?? 0;
 
             return (
               <article
                 key={client.id}
-                className="relative rounded-xl border border-border bg-slate-50 p-5 pb-12 shadow-sm transition-shadow hover:shadow-md"
+                className="relative rounded-xl border border-border bg-slate-50 p-4 pb-10 shadow-sm transition-shadow hover:shadow-md"
               >
-                <div className="absolute right-4 top-4 flex items-center gap-2">
+                <div className="absolute right-3 top-3 flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={() => openEditModal(client)}
@@ -806,11 +806,11 @@ export function ClientsPage() {
                   </button>
                 </div>
 
-                <div className="pr-24">
-                  <h2 className="text-lg font-semibold text-foreground">
+                <div className="pr-20">
+                  <h2 className="truncate text-base font-semibold text-foreground">
                     {client.name}
                   </h2>
-                  <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted">
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted">
                     <a
                       href={getWhatsAppUrl(client.phone)}
                       target="_blank"
@@ -835,17 +835,17 @@ export function ClientsPage() {
 
                 <Link
                   href={`/agenda?clientId=${client.id}`}
-                  className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md"
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md"
                 >
                   <ClipboardList className="h-4 w-4" />
                   Agendar com cliente
                 </Link>
                 {client.notes && (
-                  <p className="mt-4 line-clamp-2 rounded-lg bg-background/70 px-3 py-2 text-sm text-muted">
+                  <p className="mt-3 line-clamp-2 rounded-lg bg-background/70 px-3 py-2 text-sm text-muted">
                     {client.notes}
                   </p>
                 )}
-                <span className="absolute bottom-4 right-5 text-xs font-medium text-muted">
+                <span className="absolute bottom-3 right-4 text-xs font-medium text-muted">
                   Cadastrado em {formatDate(client.created_at)}
                 </span>
               </article>

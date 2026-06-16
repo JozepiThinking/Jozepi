@@ -34,6 +34,13 @@ import {
   type ProductTypeOption,
   type ServiceProductUsage,
 } from "@/lib/products/catalog";
+import {
+  importLocalCatalogToSupabase,
+  loadSupabaseCatalog,
+  saveSupabaseProduct,
+  saveSupabaseProductTypes,
+  replaceSupabaseServiceUsages,
+} from "@/lib/products/supabase-catalog";
 
 interface ServiceItem {
   id: string;
@@ -180,6 +187,7 @@ export function ServicesPage() {
   const [error, setError] = useState<string | null>(null);
   const [productError, setProductError] = useState<string | null>(null);
   const closeFormTimeoutRef = useRef<number | null>(null);
+  const catalogSyncStartedRef = useRef(false);
 
   function clearCloseFormTimeout() {
     if (closeFormTimeoutRef.current) {
@@ -295,6 +303,51 @@ export function ServicesPage() {
       setServiceCategoryOptionsLoaded(true);
     });
   }, []);
+
+  useEffect(() => {
+    if (
+      !workshopId ||
+      !productsLoaded ||
+      !typeOptionsLoaded ||
+      !serviceProductUsagesLoaded ||
+      catalogSyncStartedRef.current
+    ) {
+      return;
+    }
+
+    catalogSyncStartedRef.current = true;
+
+    void Promise.resolve().then(async () => {
+      try {
+        await importLocalCatalogToSupabase(
+          supabase,
+          workshopId,
+          products,
+          typeOptions,
+          serviceProductUsages
+        );
+        const catalog = await loadSupabaseCatalog(supabase, workshopId);
+        setProducts(catalog.products);
+        setTypeOptions(catalog.typeOptions);
+        setServiceProductUsages(catalog.serviceProductUsages);
+      } catch (err) {
+        setProductError(
+          err instanceof Error
+            ? `Produtos no Supabase indisponíveis: ${err.message}`
+            : "Produtos no Supabase indisponíveis."
+        );
+      }
+    });
+  }, [
+    products,
+    productsLoaded,
+    serviceProductUsages,
+    serviceProductUsagesLoaded,
+    supabase,
+    typeOptions,
+    typeOptionsLoaded,
+    workshopId,
+  ]);
 
   useEffect(() => {
     if (!productsLoaded) return;
@@ -448,6 +501,12 @@ export function ServicesPage() {
       }
 
       if (savedServiceId) {
+        await replaceSupabaseServiceUsages(
+          supabase,
+          workshopId,
+          savedServiceId,
+          productUsages
+        );
         setServiceProductUsages((prev) => ({
           ...prev,
           [savedServiceId]: productUsages,
@@ -620,8 +679,13 @@ export function ServicesPage() {
     setProductTypeError(null);
   }
 
-  function handleSaveProduct() {
+  async function handleSaveProduct() {
     setProductError(null);
+
+    if (!workshopId) {
+      setProductError("Oficina não encontrada.");
+      return;
+    }
 
     if (!productForm.name.trim()) {
       setProductError("Informe o nome do produto.");
@@ -653,6 +717,18 @@ export function ServicesPage() {
       durabilityWashes: "",
       totalCost: productForm.totalCost,
     };
+
+    try {
+      await saveSupabaseProduct(supabase, workshopId, nextProduct);
+      await saveSupabaseProductTypes(supabase, workshopId, typeOptions);
+    } catch (err) {
+      setProductError(
+        err instanceof Error
+          ? `Não foi possível salvar o produto no Supabase: ${err.message}`
+          : "Não foi possível salvar o produto no Supabase."
+      );
+      return;
+    }
 
     setProducts((prev) => [nextProduct, ...prev]);
     setForm((prev) => ({

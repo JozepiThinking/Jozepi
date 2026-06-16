@@ -29,6 +29,10 @@ import {
   type ProductItem,
   type ServiceProductUsage,
 } from "@/lib/products/catalog";
+import {
+  loadSupabaseCatalog,
+  saveSupabaseProduct,
+} from "@/lib/products/supabase-catalog";
 import { type Client, type ClientFormData } from "@/types/client";
 
 type AppointmentStatus = "Confirmado" | "Pendente" | "Cancelado" | "Concluído";
@@ -36,6 +40,7 @@ type AppointmentStatus = "Confirmado" | "Pendente" | "Cancelado" | "Concluído";
 interface Appointment {
   id: string;
   date: string;
+  endDate: string;
   startTime: string;
   endTime: string;
   clientId: string;
@@ -50,6 +55,8 @@ interface Appointment {
 
 interface AppointmentForm {
   date: string;
+  endDate: string;
+  isMultiDay: boolean;
   startTime: string;
   endTime: string;
   clientId: string;
@@ -92,6 +99,7 @@ interface AppointmentOrderRow {
   status: ServiceOrderStatus | string;
   total_amount: number | string;
   scheduled_date: string | null;
+  scheduled_end_date: string | null;
   scheduled_start: string | null;
   scheduled_end: string | null;
   clients: { name: string } | { name: string }[] | null;
@@ -106,6 +114,15 @@ interface SelectOption {
   value: string;
   label: string;
   description?: string;
+}
+
+interface AppointmentOccurrence extends Appointment {
+  occurrenceDate: string;
+  isMultiDay: boolean;
+  isContinuation: boolean;
+  isFirstDay: boolean;
+  isLastDay: boolean;
+  durationDays: number;
 }
 
 const statusStyles: Record<
@@ -175,6 +192,8 @@ const AGENDA_STORAGE_KEY = "auto-estetica-agenda-appointments";
 const BUSINESS_START_TIME = "07:00";
 const BUSINESS_END_TIME = "19:00";
 const SLOT_INTERVAL_MINUTES = 30;
+const DEFAULT_AGENDA_CAPACITY = 1;
+const AGENDA_CAPACITY_STORAGE_KEY = "auto-estetica-agenda-capacity";
 const timeSlots = Array.from(
   {
     length:
@@ -194,6 +213,11 @@ const timeSlots = Array.from(
 function isTimeBetween(time: string, startTime: string, endTime: string) {
   const current = timeToMinutes(time);
   return current > timeToMinutes(startTime) && current < timeToMinutes(endTime);
+}
+
+function isTimeInRange(time: string, startTime: string, endTime: string) {
+  const current = timeToMinutes(time);
+  return current >= timeToMinutes(startTime) && current < timeToMinutes(endTime);
 }
 
 function rangesOverlap(
@@ -222,8 +246,63 @@ function dateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function parseLocalDate(date: string) {
+  return new Date(`${date}T00:00:00`);
+}
+
+function addDays(date: Date, amount: number) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + amount);
+}
+
+function getDateRangeKeys(startDate: string, endDate: string) {
+  const start = parseLocalDate(startDate);
+  const end = parseLocalDate(endDate);
+
+  if (end < start) return [startDate];
+
+  const keys: string[] = [];
+  for (let day = start; day <= end; day = addDays(day, 1)) {
+    keys.push(dateKey(day));
+  }
+
+  return keys;
+}
+
+function getAppointmentEndDate(appointment: Pick<Appointment, "date" | "endDate">) {
+  return appointment.endDate || appointment.date;
+}
+
+function getAppointmentDurationDays(
+  appointment: Pick<Appointment, "date" | "endDate">
+) {
+  return getDateRangeKeys(appointment.date, getAppointmentEndDate(appointment)).length;
+}
+
+function appointmentOccursOnDate(
+  appointment: Pick<Appointment, "date" | "endDate">,
+  date: string
+) {
+  return appointment.date <= date && date <= getAppointmentEndDate(appointment);
+}
+
+function formatShortDate(date: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+  }).format(parseLocalDate(date));
+}
+
+function formatAppointmentDuration(appointment: Pick<Appointment, "date" | "endDate">) {
+  const durationDays = getAppointmentDurationDays(appointment);
+  const endDate = getAppointmentEndDate(appointment);
+
+  if (durationDays <= 1) return "1 dia";
+
+  return `${durationDays} dias • ${formatShortDate(appointment.date)} a ${formatShortDate(endDate)}`;
+}
+
 function isAppointmentPast(appointment: Appointment, now: Date) {
-  return new Date(`${appointment.date}T${appointment.endTime}:00`) <= now;
+  return new Date(`${getAppointmentEndDate(appointment)}T${appointment.endTime}:00`) <= now;
 }
 
 function formatLongDate(date: Date) {
@@ -275,10 +354,10 @@ function getServiceOrderStatus(status: AppointmentStatus): ServiceOrderStatus {
   return "aberta";
 }
 
-function createAppointmentId() {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `appointment-${Date.now()}-${Math.random()}`;
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
 }
 
 function isMissingAgendaMigrationError(err: unknown) {
@@ -291,9 +370,59 @@ function isMissingAgendaMigrationError(err: unknown) {
 
   return (
     message.includes("scheduled_date") ||
+    message.includes("scheduled_end_date") ||
     message.includes("scheduled_start") ||
     message.includes("scheduled_end") ||
     message.includes("schema cache")
+  );
+}
+
+function isMissingAgendaCapacityError(err: unknown) {
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err && "message" in err
+        ? String((err as { message?: unknown }).message)
+        : String(err);
+
+  return (
+    message.includes("agenda_capacity") ||
+    message.includes("schema cache") ||
+    message.includes("Could not find")
+  );
+}
+
+function normalizeAgendaCapacity(value: number | string | null | undefined) {
+  const capacity =
+    typeof value === "number" ? value : Number(String(value ?? "").trim());
+
+  return Number.isFinite(capacity) && capacity > 0
+    ? Math.floor(capacity)
+    : DEFAULT_AGENDA_CAPACITY;
+}
+
+function getLocalAgendaCapacityKey(workshopId: string) {
+  return `${AGENDA_CAPACITY_STORAGE_KEY}-${workshopId}`;
+}
+
+function readLocalAgendaCapacity(workshopId: string) {
+  if (typeof window === "undefined") return DEFAULT_AGENDA_CAPACITY;
+
+  try {
+    return normalizeAgendaCapacity(
+      window.localStorage.getItem(getLocalAgendaCapacityKey(workshopId))
+    );
+  } catch {
+    return DEFAULT_AGENDA_CAPACITY;
+  }
+}
+
+function writeLocalAgendaCapacity(workshopId: string, capacity: number) {
+  if (typeof window === "undefined") return;
+
+  window.localStorage.setItem(
+    getLocalAgendaCapacityKey(workshopId),
+    String(capacity)
   );
 }
 
@@ -304,7 +433,10 @@ function readLocalAppointments() {
   if (!storedAppointments) return [];
 
   try {
-    return JSON.parse(storedAppointments) as Appointment[];
+    return (JSON.parse(storedAppointments) as Appointment[]).map((appointment) => ({
+      ...appointment,
+      endDate: appointment.endDate || appointment.date,
+    }));
   } catch {
     window.localStorage.removeItem(AGENDA_STORAGE_KEY);
     return [];
@@ -399,6 +531,7 @@ function mapOrderToAppointment(order: AppointmentOrderRow): Appointment {
   return {
     id: order.id,
     date: order.scheduled_date ?? dateKey(new Date()),
+    endDate: order.scheduled_end_date ?? order.scheduled_date ?? dateKey(new Date()),
     startTime: normalizeDbTime(order.scheduled_start),
     endTime: normalizeDbTime(order.scheduled_end),
     clientId: order.client_id,
@@ -610,6 +743,7 @@ export function AgendaCalendar() {
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<AgendaService[]>([]);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
+  const [agendaCapacity, setAgendaCapacity] = useState(DEFAULT_AGENDA_CAPACITY);
   const [loadingClients, setLoadingClients] = useState(true);
   const [loadingServices, setLoadingServices] = useState(true);
   const [loadingAppointments, setLoadingAppointments] = useState(true);
@@ -632,6 +766,8 @@ export function AgendaCalendar() {
   >(null);
   const [form, setForm] = useState<AppointmentForm>({
     date: dateKey(today),
+    endDate: dateKey(today),
+    isMultiDay: false,
     startTime: "",
     endTime: "",
     clientId: "",
@@ -693,6 +829,128 @@ export function AgendaCalendar() {
     return deleteError?.message ?? null;
   }, [supabase]);
 
+  const applySupabaseStockDiscountForAppointment = useCallback(
+    async (appointment: Appointment) => {
+      if (!workshopId) return;
+
+      const { data: existingDiscount, error: findDiscountError } = await supabase
+        .from("product_stock_discounts")
+        .select("service_order_id")
+        .eq("workshop_id", workshopId)
+        .eq("service_order_id", appointment.id)
+        .maybeSingle();
+
+      if (findDiscountError || existingDiscount) return;
+
+      const catalog = await loadSupabaseCatalog(supabase, workshopId);
+      const usageByProductId = new Map<string, number>();
+
+      appointment.serviceIds.forEach((serviceId) => {
+        (catalog.serviceProductUsages[serviceId] ?? []).forEach((usage) => {
+          try {
+            const amount = parsePositiveNumber(usage.amount);
+            usageByProductId.set(
+              usage.productId,
+              (usageByProductId.get(usage.productId) ?? 0) + amount
+            );
+          } catch {
+            // Ignore incomplete service usage rows.
+          }
+        });
+      });
+
+      if (usageByProductId.size === 0) return;
+
+      for (const product of catalog.products) {
+        const discountAmount = usageByProductId.get(product.id);
+        if (!discountAmount) continue;
+
+        await saveSupabaseProduct(supabase, workshopId, {
+          ...product,
+          stockRemaining: String(
+            Math.max(0, getProductRemainingStock(product) - discountAmount)
+          ),
+        });
+      }
+
+      await supabase.from("product_stock_discounts").insert({
+        workshop_id: workshopId,
+        service_order_id: appointment.id,
+      });
+    },
+    [supabase, workshopId]
+  );
+
+  async function importLocalAppointmentsToSupabase(
+    workshopId: string,
+    remoteAppointments: Appointment[]
+  ) {
+    const localAppointments = readLocalAppointments();
+    if (localAppointments.length === 0) return remoteAppointments;
+
+    const existingKeys = new Set(
+      remoteAppointments.map(
+        (appointment) =>
+          `${appointment.date}|${getAppointmentEndDate(appointment)}|${appointment.startTime}|${appointment.endTime}|${appointment.clientId}|${appointment.vehicleId}`
+      )
+    );
+    const importedAppointments: Appointment[] = [];
+
+    for (const appointment of localAppointments) {
+      const appointmentKey = `${appointment.date}|${getAppointmentEndDate(appointment)}|${appointment.startTime}|${appointment.endTime}|${appointment.clientId}|${appointment.vehicleId}`;
+      if (existingKeys.has(appointmentKey)) continue;
+
+      const payload = {
+        ...(isUuid(appointment.id) ? { id: appointment.id } : {}),
+        workshop_id: workshopId,
+        client_id: appointment.clientId,
+        vehicle_id: appointment.vehicleId,
+        total_amount: appointment.totalAmount,
+        scheduled_date: appointment.date,
+        scheduled_end_date: getAppointmentEndDate(appointment),
+        scheduled_start: appointment.startTime,
+        scheduled_end: appointment.endTime,
+        status: getServiceOrderStatus(appointment.status),
+        payment_status: "pendente",
+        completed_at:
+          appointment.status === "Concluído" ? new Date().toISOString() : null,
+      };
+
+      const { data: insertedOrder, error: insertError } = await supabase
+        .from("service_orders")
+        .insert(payload)
+        .select("id")
+        .single();
+
+      if (insertError) throw insertError;
+
+      const savedAppointmentId = insertedOrder.id as string;
+      if (appointment.serviceIds.length > 0) {
+        const { error: itemsError } = await supabase
+          .from("service_order_items")
+          .insert(
+            appointment.serviceIds.map((serviceId) => ({
+              service_order_id: savedAppointmentId,
+              service_id: serviceId,
+              quantity: 1,
+              unit_price: 0,
+            }))
+          );
+
+        if (itemsError) throw itemsError;
+      }
+
+      importedAppointments.push({ ...appointment, id: savedAppointmentId });
+      existingKeys.add(appointmentKey);
+    }
+
+    if (importedAppointments.length > 0) {
+      writeLocalAppointments([]);
+    }
+
+    return [...remoteAppointments, ...importedAppointments];
+  }
+
   async function loadAgendaData() {
     setLoadingClients(true);
     setLoadingServices(true);
@@ -711,6 +969,24 @@ export function AgendaCalendar() {
     }
 
     setWorkshopId(profile.workshop_id);
+
+    const { data: workshopData, error: workshopError } = await supabase
+      .from("workshops")
+      .select("agenda_capacity")
+      .eq("id", profile.workshop_id)
+      .single();
+
+    if (workshopError) {
+      if (isMissingAgendaCapacityError(workshopError)) {
+        setAgendaCapacity(readLocalAgendaCapacity(profile.workshop_id));
+      } else {
+        setError(workshopError.message);
+      }
+    } else {
+      const remoteCapacity = normalizeAgendaCapacity(workshopData?.agenda_capacity);
+      setAgendaCapacity(remoteCapacity);
+      writeLocalAgendaCapacity(profile.workshop_id, remoteCapacity);
+    }
 
     const { data: clientsData, error: clientsError } = await supabase
       .from("clients")
@@ -745,6 +1021,7 @@ export function AgendaCalendar() {
         status,
         total_amount,
         scheduled_date,
+        scheduled_end_date,
         scheduled_start,
         scheduled_end,
         clients(name),
@@ -762,20 +1039,77 @@ export function AgendaCalendar() {
       .order("scheduled_start", { ascending: true });
 
     if (appointmentsError) {
-      if (isMissingAgendaMigrationError(appointmentsError)) {
+      const { data: legacyAppointmentsData, error: legacyAppointmentsError } =
+        await supabase
+          .from("service_orders")
+          .select(
+            `
+            id,
+            client_id,
+            vehicle_id,
+            status,
+            total_amount,
+            scheduled_date,
+            scheduled_start,
+            scheduled_end,
+            clients(name),
+            vehicles(brand, model, plate),
+            service_order_items(
+              service_id,
+              unit_price,
+              services(id, name, price, duration_minutes)
+            )
+          `
+          )
+          .eq("workshop_id", profile.workshop_id)
+          .not("scheduled_date", "is", null)
+          .order("scheduled_date", { ascending: true })
+          .order("scheduled_start", { ascending: true });
+
+      if (!legacyAppointmentsError) {
+        const remoteAppointments =
+          ((legacyAppointmentsData as (Omit<
+            AppointmentOrderRow,
+            "scheduled_end_date"
+          > & { scheduled_end_date?: string | null })[] | null) ?? []).map(
+            (appointment) =>
+              mapOrderToAppointment({
+                ...appointment,
+                scheduled_end_date: appointment.scheduled_end_date ?? null,
+              })
+          );
+        setAgendaStorageMode("supabase");
+        setAppointments(remoteAppointments);
+        setError(
+          "A coluna scheduled_end_date ainda não existe no Supabase. Aplique a migration 010 para salvar e importar agendamentos locais."
+        );
+      } else if (isMissingAgendaMigrationError(legacyAppointmentsError)) {
         setAgendaStorageMode("local");
         setAppointments(readLocalAppointments());
-        setError(null);
+        setError(
+          "As colunas da Agenda ainda não existem no Supabase. Aplique as migrations da Agenda para evitar dados locais."
+        );
       } else {
-        setError(appointmentsError.message);
+        setError(legacyAppointmentsError.message);
       }
     } else {
-      setAgendaStorageMode("supabase");
-      setAppointments(
+      const remoteAppointments =
         ((appointmentsData as AppointmentOrderRow[] | null) ?? []).map(
           mapOrderToAppointment
-        )
-      );
+        );
+      setAgendaStorageMode("supabase");
+      try {
+        setAppointments(
+          await importLocalAppointmentsToSupabase(profile.workshop_id, remoteAppointments)
+        );
+      } catch (err) {
+        setAppointments(remoteAppointments);
+        setError(
+          err instanceof Error
+            ? `Não foi possível importar agendamentos locais para o Supabase: ${err.message}`
+            : "Não foi possível importar agendamentos locais para o Supabase."
+        );
+      }
     }
 
     setLoadingClients(false);
@@ -803,6 +1137,13 @@ export function AgendaCalendar() {
             completedAppointmentIds.push(appointment.id);
             completedAppointments.push(appointment);
             applyStockDiscountForAppointment(appointment);
+            void applySupabaseStockDiscountForAppointment(appointment).catch((err) => {
+              setError(
+                err instanceof Error
+                  ? `Estoque não sincronizou no Supabase: ${err.message}`
+                  : "Estoque não sincronizou no Supabase."
+              );
+            });
             return { ...appointment, status: "Concluído" as const };
           }
 
@@ -845,7 +1186,12 @@ export function AgendaCalendar() {
     }, 60_000);
 
     return () => window.clearInterval(intervalId);
-  }, [agendaStorageMode, supabase, syncFinanceRevenueForAppointment]);
+  }, [
+    agendaStorageMode,
+    applySupabaseStockDiscountForAppointment,
+    supabase,
+    syncFinanceRevenueForAppointment,
+  ]);
 
   const selectedKey = dateKey(selectedDate);
   const calendarDays = useMemo(
@@ -860,9 +1206,26 @@ export function AgendaCalendar() {
     );
   }, [appointments, now]);
   const appointmentsByDate = useMemo(() => {
-    return normalizedAppointments.reduce<Record<string, Appointment[]>>(
+    return normalizedAppointments.reduce<Record<string, AppointmentOccurrence[]>>(
       (acc, appointment) => {
-        acc[appointment.date] = [...(acc[appointment.date] ?? []), appointment];
+        const endDate = getAppointmentEndDate(appointment);
+        const dateRange = getDateRangeKeys(appointment.date, endDate);
+        const durationDays = dateRange.length;
+
+        dateRange.forEach((occurrenceDate, index) => {
+          const occurrence: AppointmentOccurrence = {
+            ...appointment,
+            occurrenceDate,
+            isMultiDay: durationDays > 1,
+            isContinuation: index > 0,
+            isFirstDay: index === 0,
+            isLastDay: index === dateRange.length - 1,
+            durationDays,
+          };
+
+          acc[occurrenceDate] = [...(acc[occurrenceDate] ?? []), occurrence];
+        });
+
         return acc;
       },
       {}
@@ -871,15 +1234,47 @@ export function AgendaCalendar() {
   const selectedAppointments = (appointmentsByDate[selectedKey] ?? []).sort(
     (a, b) => a.startTime.localeCompare(b.startTime)
   );
+  const selectedAppointmentGroups = selectedAppointments.reduce<
+    { time: string; appointments: AppointmentOccurrence[] }[]
+  >((groups, appointment) => {
+    const currentGroup = groups.find((group) => group.time === appointment.startTime);
+
+    if (currentGroup) {
+      currentGroup.appointments.push(appointment);
+      return groups;
+    }
+
+    return [...groups, { time: appointment.startTime, appointments: [appointment] }];
+  }, []);
+  const selectedTimelineLaneCount = Math.max(
+    1,
+    Math.max(
+      ...timeSlots.map(
+        (time) =>
+          selectedAppointments.filter((appointment) =>
+            isTimeInRange(time, appointment.startTime, appointment.endTime)
+          ).length
+      )
+    )
+  );
   const currentDateKey = dateKey(now);
   const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(
     now.getMinutes()
   ).padStart(2, "0")}`;
   const selectedDateIsToday = selectedKey === currentDateKey;
   const occupancyTitle = selectedDateIsToday ? "Ocupação hoje" : "Ocupação do dia";
-  const timelineBlocks = [...selectedAppointments]
-    .sort((a, b) => a.startTime.localeCompare(b.startTime))
-    .map((appointment, index, dayAppointments) => {
+  const timelineBlocks = (() => {
+    const laneEnds: string[] = [];
+
+    return [...selectedAppointments]
+      .sort((a, b) => a.startTime.localeCompare(b.startTime))
+      .map((appointment, index, dayAppointments) => {
+        const availableLaneIndex = laneEnds.findIndex(
+          (endTime) => timeToMinutes(endTime) <= timeToMinutes(appointment.startTime)
+        );
+        const laneIndex =
+          availableLaneIndex >= 0 ? availableLaneIndex : laneEnds.length;
+        laneEnds[laneIndex] = appointment.endTime;
       const start =
         ((timeToMinutes(appointment.startTime) -
           timeToMinutes(BUSINESS_START_TIME)) /
@@ -908,11 +1303,13 @@ export function AgendaCalendar() {
 
       return {
         appointment,
+        laneIndex,
         roundedClass,
         start: Math.max(0, Math.min(start, 100)),
         width: Math.max(0, Math.min(width, 100 - start)),
       };
-    });
+      });
+  })();
   const timelineMarkers = ["07h", "09h", "11h", "13h", "15h", "17h", "19h"];
   const selectedStatusCounts = appointmentStatuses.map((status) => ({
     status,
@@ -981,26 +1378,28 @@ export function AgendaCalendar() {
     hasCustomTotalAmount && !Number.isNaN(customTotalAmount)
       ? customTotalAmount
       : servicesTotal;
-  const busyTimesForFormDate = useMemo(() => {
+  const slotOccupancyForFormDate = useMemo(() => {
     const appointmentsForDate = appointments.filter(
       (appointment) =>
-        appointment.date === form.date &&
+        appointmentOccursOnDate(appointment, form.date) &&
         appointment.id !== editingAppointmentId
     );
 
-    return new Set(
-      timeSlots.filter((time) =>
-        appointmentsForDate.some((appointment) =>
-          isTimeBetween(time, appointment.startTime, appointment.endTime) ||
-          time === appointment.startTime
-        )
-      )
-    );
+    return timeSlots.reduce<Map<string, number>>((acc, time) => {
+      const count = appointmentsForDate.filter((appointment) =>
+        isTimeInRange(time, appointment.startTime, appointment.endTime)
+      ).length;
+
+      acc.set(time, count);
+      return acc;
+    }, new Map());
   }, [appointments, editingAppointmentId, form.date]);
 
   function resetForm() {
     setForm({
       date: selectedKey,
+      endDate: selectedKey,
+      isMultiDay: false,
       startTime: "",
       endTime: "",
       clientId: "",
@@ -1045,6 +1444,8 @@ export function AgendaCalendar() {
       setEditingAppointmentId(null);
       setForm({
         date: targetKey,
+        endDate: targetKey,
+        isMultiDay: false,
         startTime: "",
         endTime: "",
         clientId: linkedClient.id,
@@ -1063,8 +1464,11 @@ export function AgendaCalendar() {
 
   function openEditForm(appointment: Appointment) {
     setOpenStatusMenuId(null);
+    const appointmentEndDate = getAppointmentEndDate(appointment);
     setForm({
       date: appointment.date,
+      endDate: appointmentEndDate,
+      isMultiDay: appointmentEndDate !== appointment.date,
       startTime: appointment.startTime,
       endTime: appointment.endTime,
       clientId: appointment.clientId,
@@ -1101,18 +1505,30 @@ export function AgendaCalendar() {
     }));
   }
 
-  function hasAppointmentConflict(date: string, startTime: string, endTime: string) {
-    return appointments.some(
-      (appointment) =>
-        appointment.date === date &&
-        appointment.id !== editingAppointmentId &&
-        rangesOverlap(
-          startTime,
-          endTime,
-          appointment.startTime,
-          appointment.endTime
-        )
-    );
+  function hasAppointmentConflict(
+    startDate: string,
+    endDate: string,
+    startTime: string,
+    endTime: string
+  ) {
+    return getDateRangeKeys(startDate, endDate).some((date) => {
+      const appointmentsForDate = appointments.filter(
+        (appointment) =>
+          appointmentOccursOnDate(appointment, date) &&
+          appointment.id !== editingAppointmentId &&
+          rangesOverlap(startTime, endTime, appointment.startTime, appointment.endTime)
+      );
+
+      return timeSlots
+        .filter((time) => isTimeInRange(time, startTime, endTime))
+        .some((time) => {
+          const occupiedCount = appointmentsForDate.filter((appointment) =>
+            isTimeInRange(time, appointment.startTime, appointment.endTime)
+          ).length;
+
+          return occupiedCount >= agendaCapacity;
+        });
+    });
   }
 
   function selectTimeSlot(time: string) {
@@ -1127,8 +1543,9 @@ export function AgendaCalendar() {
       return;
     }
 
-    if (hasAppointmentConflict(form.date, form.startTime, time)) {
-      setError("Esse intervalo cruza com outro agendamento.");
+    const formEndDate = form.isMultiDay ? form.endDate : form.date;
+    if (hasAppointmentConflict(form.date, formEndDate, form.startTime, time)) {
+      setError("Capacidade máxima atingida para esse intervalo.");
       return;
     }
 
@@ -1161,7 +1578,11 @@ export function AgendaCalendar() {
     setDayDrawerOpen(true);
 
     if (creating) {
-      setForm((prev) => ({ ...prev, date: key }));
+      setForm((prev) => ({
+        ...prev,
+        date: key,
+        endDate: prev.isMultiDay && prev.endDate >= key ? prev.endDate : key,
+      }));
     }
   }
 
@@ -1175,6 +1596,7 @@ export function AgendaCalendar() {
 
     if (
       !form.date ||
+      (form.isMultiDay && !form.endDate) ||
       !form.startTime ||
       !form.endTime ||
       !form.clientId ||
@@ -1182,6 +1604,12 @@ export function AgendaCalendar() {
       form.serviceIds.length === 0
     ) {
       setError("Informe data, começo, final, cliente, veículo e serviço.");
+      return;
+    }
+
+    const appointmentEndDate = form.isMultiDay ? form.endDate : form.date;
+    if (appointmentEndDate < form.date || (form.isMultiDay && appointmentEndDate === form.date)) {
+      setError("A data de término precisa ser depois da data de início.");
       return;
     }
 
@@ -1198,20 +1626,15 @@ export function AgendaCalendar() {
       return;
     }
 
-    const hasConflict = appointments.some(
-      (appointment) =>
-        appointment.date === form.date &&
-        appointment.id !== editingAppointmentId &&
-        rangesOverlap(
-          form.startTime,
-          form.endTime,
-          appointment.startTime,
-          appointment.endTime
-        )
-    );
-
-    if (hasConflict) {
-      setError("Esse intervalo cruza com outro agendamento.");
+    if (
+      hasAppointmentConflict(
+        form.date,
+        appointmentEndDate,
+        form.startTime,
+        form.endTime
+      )
+    ) {
+      setError("Capacidade máxima atingida para esse intervalo.");
       return;
     }
 
@@ -1227,9 +1650,7 @@ export function AgendaCalendar() {
       return;
     }
 
-    const confirmedClient = appointmentClient;
-    const confirmedVehicle = appointmentVehicle;
-    const vehicleLabel = `${confirmedVehicle.brand} ${confirmedVehicle.model} - ${confirmedVehicle.plate}`;
+    const vehicleLabel = `${appointmentVehicle.brand} ${appointmentVehicle.model} - ${appointmentVehicle.plate}`;
     const serviceLabel = selectedServices.map((service) => service.name).join(", ");
     const appointmentTotal = hasCustomTotalAmount
       ? customTotalAmount
@@ -1242,6 +1663,7 @@ export function AgendaCalendar() {
       vehicle_id: appointmentVehicle.id,
       total_amount: appointmentTotal,
       scheduled_date: form.date,
+      scheduled_end_date: appointmentEndDate,
       scheduled_start: form.startTime,
       scheduled_end: form.endTime,
       status: getServiceOrderStatus(currentStatus),
@@ -1254,40 +1676,10 @@ export function AgendaCalendar() {
       unit_price: getServicePrice(service),
     }));
 
-    function saveAppointmentLocally(appointmentId: string) {
-      const savedAppointment: Appointment = {
-        id: appointmentId,
-        date: form.date,
-        startTime: form.startTime,
-        endTime: form.endTime,
-        clientId: confirmedClient.id,
-        vehicleId: confirmedVehicle.id,
-        serviceIds: selectedServices.map((service) => service.id),
-        client: confirmedClient.name,
-        service: serviceLabel,
-        totalAmount: appointmentTotal,
-        vehicle: vehicleLabel,
-        status: currentStatus,
-      };
-
-      setAppointments((prev) => {
-        const next = editingAppointmentId
-          ? prev.map((appointment) =>
-              appointment.id === editingAppointmentId
-                ? savedAppointment
-                : appointment
-            )
-          : [...prev, savedAppointment];
-
-        writeLocalAppointments(next);
-        return next;
-      });
-      syncSelectedDate(form.date);
-      closeForm();
-    }
-
     if (agendaStorageMode === "local") {
-      saveAppointmentLocally(editingAppointmentId ?? createAppointmentId());
+      setError(
+        "Supabase da Agenda não está pronto. Aplique as migrations antes de salvar novos agendamentos."
+      );
       return;
     }
 
@@ -1344,6 +1736,7 @@ export function AgendaCalendar() {
       const savedAppointment: Appointment = {
         id: savedAppointmentId,
         date: form.date,
+        endDate: appointmentEndDate,
         startTime: form.startTime,
         endTime: form.endTime,
         clientId: appointmentClient.id,
@@ -1376,7 +1769,9 @@ export function AgendaCalendar() {
     } catch (err) {
       if (isMissingAgendaMigrationError(err)) {
         setAgendaStorageMode("local");
-        saveAppointmentLocally(editingAppointmentId ?? createAppointmentId());
+        setError(
+          "Supabase da Agenda não está pronto. Aplique as migrations antes de salvar novos agendamentos."
+        );
         return;
       }
 
@@ -1490,6 +1885,13 @@ export function AgendaCalendar() {
       });
       if (currentAppointment && shouldDiscountStock) {
         applyStockDiscountForAppointment(currentAppointment);
+        void applySupabaseStockDiscountForAppointment(currentAppointment).catch((err) => {
+          setError(
+            err instanceof Error
+              ? `Estoque não sincronizou no Supabase: ${err.message}`
+              : "Estoque não sincronizou no Supabase."
+          );
+        });
       }
       closeStatusMenu(appointmentId);
       return;
@@ -1531,6 +1933,13 @@ export function AgendaCalendar() {
     );
     if (currentAppointment && shouldDiscountStock) {
       applyStockDiscountForAppointment(currentAppointment);
+      void applySupabaseStockDiscountForAppointment(currentAppointment).catch((err) => {
+        setError(
+          err instanceof Error
+            ? `Estoque não sincronizou no Supabase: ${err.message}`
+            : "Estoque não sincronizou no Supabase."
+        );
+      });
     }
     closeStatusMenu(appointmentId);
   }
@@ -1607,9 +2016,15 @@ export function AgendaCalendar() {
           <div className="flex items-start justify-between gap-4 sm:gap-5">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-muted">{occupancyTitle}</p>
-              <div className="timeline-track-loading relative mt-4 h-7 overflow-hidden rounded-full bg-slate-200 shadow-inner">
-                {timelineBlocks.map(({ appointment, roundedClass, start, width }, index) => {
+              <div
+                className="timeline-track-loading relative mt-4 overflow-hidden rounded-2xl bg-slate-200 shadow-inner"
+                style={{
+                  height: `${Math.max(1, selectedTimelineLaneCount) * 1.75}rem`,
+                }}
+              >
+                {timelineBlocks.map(({ appointment, laneIndex, roundedClass, start, width }, index) => {
                   const style = getStatusStyle(appointment.status);
+                  const laneHeight = 100 / selectedTimelineLaneCount;
 
                   return (
                     <button
@@ -1618,10 +2033,12 @@ export function AgendaCalendar() {
                       onClick={() => setFocusedAppointmentId(appointment.id)}
                       title={`${appointment.startTime} - ${appointment.endTime} • ${appointment.client} • ${appointment.service}`}
                       aria-label={`Mostrar ${appointment.client} no próximo cliente`}
-                      className={`timeline-block-loading timeline-service-hover absolute top-0 h-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-white/80 ${roundedClass} ${style.timelineBlock}`}
+                      className={`timeline-block-loading timeline-service-hover absolute cursor-pointer focus:outline-none focus:ring-2 focus:ring-white/80 ${roundedClass} ${style.timelineBlock}`}
                       style={{
                         left: `${start}%`,
                         width: `${width}%`,
+                        top: `${laneIndex * laneHeight}%`,
+                        height: `calc(${laneHeight}% - 2px)`,
                         animationDelay: `${index * 70}ms`,
                       }}
                     />
@@ -1688,6 +2105,11 @@ export function AgendaCalendar() {
                     <Car className="h-4 w-4 shrink-0" />
                     <span>{nextAppointment.vehicle}</span>
                   </p>
+                  {nextAppointment.isMultiDay && (
+                    <p className="mt-2 text-sm font-semibold text-primary">
+                      {formatAppointmentDuration(nextAppointment)}
+                    </p>
+                  )}
                 </>
               ) : (
                 <p className="mt-2 text-lg font-semibold text-foreground">
@@ -1836,14 +2258,23 @@ export function AgendaCalendar() {
                     <div className="mt-2 hidden w-full flex-col items-start gap-0.5 sm:flex">
                       {visibleAppointments.map((appointment) => {
                         const style = getStatusStyle(appointment.status);
+                        const multiDayClass = appointment.isMultiDay
+                          ? appointment.isFirstDay
+                            ? "calendar-multiday-pill calendar-multiday-start"
+                            : appointment.isLastDay
+                              ? "calendar-multiday-pill calendar-multiday-end"
+                              : "calendar-multiday-pill calendar-multiday-middle"
+                          : "";
 
                         return (
                           <span
                             key={appointment.id}
-                            className={`calendar-appointment-pill ${style.calendarPill}`}
-                            title={`${appointment.startTime} - ${appointment.endTime} • ${appointment.client}`}
+                            className={`calendar-appointment-pill ${style.calendarPill} ${multiDayClass}`}
+                            title={`${appointment.startTime} - ${appointment.endTime} • ${appointment.client}${appointment.isMultiDay ? ` • ${formatAppointmentDuration(appointment)}` : ""}`}
                           >
-                            {appointment.startTime} {getShortClientName(appointment.client)}
+                            {appointment.isContinuation
+                              ? `${appointment.startTime} (continuação)`
+                              : `${appointment.startTime} ${getShortClientName(appointment.client)}`}
                           </span>
                         );
                       })}
@@ -1941,10 +2372,66 @@ export function AgendaCalendar() {
                   value={form.date}
                   onChange={(event) => {
                     const nextDate = event.target.value;
-                    setForm((prev) => ({ ...prev, date: nextDate }));
+                    setForm((prev) => ({
+                      ...prev,
+                      date: nextDate,
+                      endDate:
+                        prev.isMultiDay && prev.endDate >= nextDate
+                          ? prev.endDate
+                          : nextDate,
+                    }));
                     if (nextDate) syncSelectedDate(nextDate);
                   }}
                 />
+                <div className="rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setForm((prev) => ({
+                        ...prev,
+                        isMultiDay: !prev.isMultiDay,
+                        endDate: !prev.isMultiDay ? prev.endDate || prev.date : prev.date,
+                      }))
+                    }
+                    className="flex w-full items-center justify-between gap-3 text-left"
+                  >
+                    <span>
+                      <span className="block text-sm font-semibold text-foreground">
+                        Serviço de múltiplos dias
+                      </span>
+                      <span className="mt-1 block text-xs text-muted">
+                        O horário de início e fim será aplicado a todos os dias do período.
+                      </span>
+                    </span>
+                    <span
+                      className={`flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${
+                        form.isMultiDay ? "bg-success" : "bg-muted/20"
+                      }`}
+                    >
+                      <span
+                        className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                          form.isMultiDay ? "translate-x-5" : "translate-x-0"
+                        }`}
+                      />
+                    </span>
+                  </button>
+                  {form.isMultiDay && (
+                    <div className="mt-3">
+                      <Input
+                        label="Data de término"
+                        type="date"
+                        min={form.date}
+                        value={form.endDate}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            endDate: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between gap-3">
                     <label
@@ -2143,20 +2630,24 @@ export function AgendaCalendar() {
                       </span>
                       <div className="min-w-0 justify-self-end">
                         {editingTotalAmount ? (
-                          <input
-                            aria-label="Valor do agendamento"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={form.totalAmount}
-                            onChange={(event) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                totalAmount: event.target.value,
-                              }))
-                            }
-                            className="h-9 w-full max-w-28 rounded-lg border border-border bg-background px-2 text-right text-sm font-bold text-foreground outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20"
-                          />
+                          <div className="relative w-full max-w-32">
+                            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-muted">
+                              R$
+                            </span>
+                            <input
+                              aria-label="Valor do agendamento"
+                              type="text"
+                              inputMode="decimal"
+                              value={form.totalAmount}
+                              onChange={(event) =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  totalAmount: event.target.value,
+                                }))
+                              }
+                              className="h-9 w-full rounded-lg border border-border bg-background pl-9 pr-2 text-right text-sm font-bold text-foreground outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20"
+                            />
+                          </div>
                         ) : (
                           <span className="text-base font-bold text-foreground">
                             {formatCurrency(displayTotalAmount)}
@@ -2178,7 +2669,7 @@ export function AgendaCalendar() {
                           }}
                           className="min-h-11 text-sm font-semibold text-success transition-colors hover:text-success/80 sm:min-h-0 sm:text-xs"
                         >
-                          {editingTotalAmount ? "Fechar" : "Editar"}
+                          {editingTotalAmount ? "Salvar" : "Editar"}
                         </button>
                         {editingTotalAmount && (
                           <button
@@ -2214,13 +2705,20 @@ export function AgendaCalendar() {
                         form.startTime &&
                         form.endTime &&
                         isTimeBetween(time, form.startTime, form.endTime);
-                      const isBusy = busyTimesForFormDate.has(time);
+                      const occupiedCount = slotOccupancyForFormDate.get(time) ?? 0;
+                      const isFull = occupiedCount >= agendaCapacity;
                       const isConflictingEndTime =
                         !!form.startTime &&
                         !form.endTime &&
                         timeToMinutes(time) > timeToMinutes(form.startTime) &&
-                        hasAppointmentConflict(form.date, form.startTime, time);
-                      const isUnavailable = isBusy || isConflictingEndTime;
+                        hasAppointmentConflict(
+                          form.date,
+                          form.isMultiDay ? form.endDate : form.date,
+                          form.startTime,
+                          time
+                        );
+                      const isUnavailable = isFull || isConflictingEndTime;
+                      const showOccupancy = occupiedCount > 0 || isFull;
 
                       return (
                         <button
@@ -2228,7 +2726,7 @@ export function AgendaCalendar() {
                           key={time}
                           disabled={isUnavailable}
                           onClick={() => selectTimeSlot(time)}
-                          className={`min-h-11 rounded-full px-2 py-2 text-sm font-semibold transition-all duration-200 sm:min-h-0 ${
+                          className={`flex min-h-11 flex-col items-center justify-center rounded-full px-2 py-2 text-sm font-semibold leading-tight transition-all duration-200 sm:min-h-0 ${
                             isSelectedEndpoint
                               ? "bg-success text-white shadow-sm"
                               : isInSelectedRange
@@ -2238,7 +2736,14 @@ export function AgendaCalendar() {
                                 : "bg-background text-foreground hover:-translate-y-0.5 hover:bg-success/10 hover:text-success hover:shadow-sm"
                           }`}
                         >
-                          {time}
+                          <span className={isFull ? "line-through" : ""}>{time}</span>
+                          {showOccupancy && (
+                            <span className="mt-0.5 text-[10px] font-bold opacity-80">
+                              {isFull
+                                ? `${agendaCapacity}/${agendaCapacity} lotado`
+                                : `${occupiedCount}/${agendaCapacity} vagas`}
+                            </span>
+                          )}
                         </button>
                       );
                     })}
@@ -2282,14 +2787,37 @@ export function AgendaCalendar() {
                   </p>
                 </div>
               ) : (
-                selectedAppointments.map((appointment) => {
-                  const style = getStatusStyle(appointment.status);
+                selectedAppointmentGroups.map((group) => {
+                  const occupiedCount = group.appointments.length;
+                  const isGroupFull = occupiedCount >= agendaCapacity;
 
                   return (
-                    <div
-                      key={appointment.id}
-                      className={`rounded-xl border border-l-4 p-4 shadow-sm transition-shadow hover:shadow-md ${style.sideCard} ${style.sideAccent}`}
-                    >
+                    <div key={group.time} className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-background px-3 py-2">
+                        <p className="text-xs font-bold uppercase tracking-wide text-muted">
+                          {group.time}
+                        </p>
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${
+                            isGroupFull
+                              ? "bg-danger/10 text-danger"
+                              : "bg-success/10 text-success"
+                          }`}
+                        >
+                          {occupiedCount}/{agendaCapacity} vagas ocupadas
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {group.appointments.map((appointment) => {
+                          const style = getStatusStyle(appointment.status);
+
+                          return (
+                            <div
+                              key={appointment.id}
+                              className={`rounded-xl border border-l-4 p-4 shadow-sm transition-shadow hover:shadow-md ${
+                                appointment.isMultiDay ? "border-dashed" : ""
+                              } ${style.sideCard} ${style.sideAccent}`}
+                            >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
                           <p className="text-sm font-semibold text-foreground">
@@ -2298,6 +2826,12 @@ export function AgendaCalendar() {
                           <p className="mt-1 text-xs text-muted">
                             {appointment.service} • {appointment.vehicle}
                           </p>
+                          {appointment.isMultiDay && (
+                            <p className="mt-2 text-xs font-semibold text-primary">
+                              {formatAppointmentDuration(appointment)}
+                              {appointment.isContinuation ? " • continuação" : ""}
+                            </p>
+                          )}
                           {appointment.totalAmount > 0 && (
                             <p className="mt-2 text-xs font-semibold text-foreground">
                               Total: {formatCurrency(appointment.totalAmount)}
@@ -2378,6 +2912,10 @@ export function AgendaCalendar() {
                           </button>
                         </div>
                       </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })
@@ -2440,8 +2978,6 @@ export function AgendaCalendar() {
           transition:
             filter 180ms ease,
             box-shadow 180ms ease,
-            top 180ms ease,
-            height 180ms ease,
             transform 180ms ease;
           transform: perspective(700px) translateY(0) translateZ(0) rotateX(0);
           transform-origin: center bottom;
@@ -2449,9 +2985,7 @@ export function AgendaCalendar() {
 
         .timeline-service-hover:hover,
         .timeline-service-hover:focus-visible {
-          top: -4px;
           z-index: 10;
-          height: calc(100% + 6px);
           filter: brightness(1.12) saturate(1.18);
           transform: perspective(700px) translateY(-2px) translateZ(18px) rotateX(10deg);
           box-shadow:
@@ -2471,6 +3005,29 @@ export function AgendaCalendar() {
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+        }
+
+        .calendar-multiday-pill {
+          border: 1px dashed currentColor;
+          max-width: 100%;
+          width: calc(100% + 0.5rem);
+        }
+
+        .calendar-multiday-start {
+          border-top-right-radius: 0.25rem;
+          border-bottom-right-radius: 0.25rem;
+        }
+
+        .calendar-multiday-middle {
+          margin-left: -0.25rem;
+          border-radius: 0.25rem;
+        }
+
+        .calendar-multiday-end {
+          margin-left: -0.25rem;
+          width: 100%;
+          border-top-left-radius: 0.25rem;
+          border-bottom-left-radius: 0.25rem;
         }
 
         .calendar-more-pill {

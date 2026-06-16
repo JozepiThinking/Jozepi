@@ -1,4 +1,5 @@
 import { Header } from "@/components/layout/header";
+import { AgendaCapacityCard } from "@/components/settings/agenda-capacity-card";
 import { Bell, LockKeyhole, Settings, SlidersHorizontal } from "lucide-react";
 
 const settingsSections = [
@@ -59,6 +60,10 @@ export default function ConfiguracoesPage() {
             </p>
           </div>
         </div>
+      </div>
+
+      <div className="mt-6">
+        <AgendaCapacityCard />
       </div>
     </>
   );
