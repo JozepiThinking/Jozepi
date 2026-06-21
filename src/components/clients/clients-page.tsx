@@ -16,13 +16,15 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { PlateIcon } from "@/components/ui/plate-icon";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { BrandAutocomplete } from "@/components/clients/brand-autocomplete";
 import { ModelAutocomplete } from "@/components/clients/model-autocomplete";
 import { ClientFormModal } from "@/components/clients/client-form-modal";
 import { VehiclePhotoUpload } from "@/components/clients/vehicle-photo-upload";
-import { formatDate, formatPhone, getWhatsAppUrl } from "@/lib/utils/format";
+import { formatDate, formatPhone, getWhatsAppUrl, normalizePhone } from "@/lib/utils/format";
 import { syncVehicles } from "@/lib/clients/sync-vehicles";
 import { deleteVehiclePhotoByUrl } from "@/lib/supabase/vehicle-photos";
 import {
@@ -47,7 +49,7 @@ function WhatsAppIcon({ className }: { className?: string }) {
 }
 
 const clientInfoCardClass =
-  "inline-flex h-10 min-w-[10rem] items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium shadow-sm";
+  "inline-flex h-10 min-w-[10rem] items-center gap-2 rounded-lg border border-border bg-input px-3 text-sm font-medium shadow-card";
 
 const VEHICLE_MODAL_EXIT_MS = 180;
 
@@ -178,20 +180,20 @@ function VehicleFormModal({
       <button
         type="button"
         aria-label="Fechar formulário de veículo"
-        className={`absolute inset-0 bg-slate-950/45 backdrop-blur-sm ${
+        className={`absolute inset-0 bg-foreground/40 backdrop-blur-sm ${
           closing ? "vehicle-modal-overlay-exit" : "vehicle-modal-overlay-enter"
         }`}
         onClick={onClose}
       />
       <form
         onSubmit={handleSubmit}
-        className={`relative z-[101] max-h-[82vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-4 shadow-2xl sm:p-5 ${
+        className={`relative z-[101] max-h-[82vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border bg-card shadow-card p-4 shadow-2xl sm:p-5 ${
           closing ? "vehicle-modal-card-exit" : "vehicle-modal-card-enter"
         }`}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-success">
+            <p className="text-xs font-semibold uppercase tracking-widest text-success">
               {client.name}
             </p>
             <h2 className="mt-1 text-lg font-bold text-foreground">
@@ -212,7 +214,7 @@ function VehicleFormModal({
         </div>
 
         {error && (
-          <div className="mb-4 rounded-xl border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
+          <div className="mb-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
             {error}
           </div>
         )}
@@ -319,7 +321,7 @@ function ClientVehiclesPanel({
       >
         <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+            <p className="text-xs font-semibold uppercase tracking-widest text-muted">
               Veículos cadastrados
             </p>
             <h2 className="mt-1 text-xl font-bold text-foreground">
@@ -343,7 +345,7 @@ function ClientVehiclesPanel({
           <button
             type="button"
             onClick={() => onAddVehicle(client)}
-            className="flex w-full items-center justify-between rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-left transition-all hover:-translate-y-0.5 hover:border-success/60 hover:bg-success/15 hover:shadow-md"
+            className="flex w-full items-center justify-between rounded-lg border border-success/30 bg-success/10 px-4 py-3 text-left transition-all hover:-translate-y-0.5 hover:border-success/60 hover:bg-success/15 hover:shadow-card-hover"
           >
             <span>
               <span className="block text-sm font-semibold text-success">
@@ -361,7 +363,7 @@ function ClientVehiclesPanel({
 
         <div className="flex-1 space-y-4 overflow-y-auto p-6">
           {vehicles.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-background p-8 text-center">
+            <div className="rounded-lg border border-dashed border-border bg-background p-8 text-center">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
                 <Car className="h-6 w-6" />
               </div>
@@ -382,14 +384,15 @@ function ClientVehiclesPanel({
               return (
                 <article
                   key={vehicle.id}
-                  className="rounded-2xl border border-border bg-background p-4 shadow-sm"
+                  className="rounded-lg border border-border bg-background p-4 shadow-card"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <p className="text-lg font-bold text-foreground">
                         {vehicle.brand} {vehicle.model}
                       </p>
-                      <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-primary">
+                      <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold uppercase tracking-widest text-primary">
+                        <PlateIcon className="h-4 w-4 shrink-0" />
                         {vehicle.plate}
                       </p>
                     </div>
@@ -402,7 +405,7 @@ function ClientVehiclesPanel({
                     <button
                       type="button"
                       onClick={() => onEditVehicle(client, vehicle)}
-                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-success/10 px-3 py-2 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white"
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-success/10 px-3 py-2 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white"
                     >
                       <Pencil className="h-4 w-4" />
                       Editar
@@ -411,7 +414,7 @@ function ClientVehiclesPanel({
                       type="button"
                       disabled={deletingVehicleId === vehicle.id}
                       onClick={() => onDeleteVehicle(client, vehicle)}
-                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-danger/10 px-3 py-2 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Trash2 className="h-4 w-4" />
                       {deletingVehicleId === vehicle.id ? "Excluindo..." : "Excluir"}
@@ -425,7 +428,7 @@ function ClientVehiclesPanel({
                       return photo ? (
                         <div
                           key={photo}
-                          className="relative h-36 overflow-hidden rounded-xl border border-border bg-card"
+                          className="relative h-36 overflow-hidden rounded-lg border border-border bg-card shadow-card"
                         >
                           <Image
                             src={photo}
@@ -438,7 +441,7 @@ function ClientVehiclesPanel({
                       ) : (
                         <div
                           key={`empty-photo-${index}`}
-                          className="flex h-36 items-center justify-center rounded-xl border border-dashed border-border bg-card text-muted"
+                          className="flex h-36 items-center justify-center rounded-lg border border-dashed border-border bg-card text-muted"
                         >
                           <div className="text-center">
                             <Car className="mx-auto h-6 w-6" />
@@ -477,6 +480,11 @@ export function ClientsPage() {
   const [vehicleModalClosing, setVehicleModalClosing] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletingVehicleId, setDeletingVehicleId] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<
+    | { type: "client"; client: Client }
+    | { type: "vehicle"; client: Client; vehicle: Vehicle }
+    | null
+  >(null);
 
   const supabase = useMemo(() => createClient(), []);
 
@@ -628,7 +636,7 @@ export function ClientsPage() {
 
     const payload = {
       name: data.name.trim(),
-      phone: data.phone.trim(),
+      phone: normalizePhone(data.phone),
       notes: data.notes.trim() || null,
     };
 
@@ -662,35 +670,92 @@ export function ClientsPage() {
     await loadClients();
   }
 
-  async function handleDelete(client: Client) {
-    const confirmed = window.confirm(
-      `Deseja excluir o cliente "${client.name}"?`
-    );
-    if (!confirmed) return;
+  async function deleteServiceOrdersLinkedToClient(clientId: string) {
+    const { data: orders, error: ordersError } = await supabase
+      .from("service_orders")
+      .select("id")
+      .eq("client_id", clientId);
 
-    setDeletingId(client.id);
-    const { error } = await supabase
-      .from("clients")
+    if (ordersError) throw new Error(ordersError.message);
+
+    const orderIds = (orders ?? []).map((order) => order.id);
+    if (orderIds.length === 0) return;
+
+    const { error: deleteOrdersError } = await supabase
+      .from("service_orders")
       .delete()
-      .eq("id", client.id);
+      .in("id", orderIds);
 
-    if (error) {
-      alert("Erro ao excluir cliente.");
-    } else {
-      await loadClients();
-    }
-    setDeletingId(null);
+    if (deleteOrdersError) throw new Error(deleteOrdersError.message);
   }
 
-  async function handleDeleteVehicle(client: Client, vehicle: Vehicle) {
-    const confirmed = window.confirm(
-      `Deseja excluir o veículo ${vehicle.brand} ${vehicle.model} - ${vehicle.plate}?`
-    );
-    if (!confirmed) return;
+  async function deleteServiceOrdersLinkedToVehicle(vehicleId: string) {
+    const { data: orders, error: ordersError } = await supabase
+      .from("service_orders")
+      .select("id")
+      .eq("vehicle_id", vehicleId);
 
+    if (ordersError) throw new Error(ordersError.message);
+
+    const orderIds = (orders ?? []).map((order) => order.id);
+    if (orderIds.length === 0) return;
+
+    const { error: deleteOrdersError } = await supabase
+      .from("service_orders")
+      .delete()
+      .in("id", orderIds);
+
+    if (deleteOrdersError) throw new Error(deleteOrdersError.message);
+  }
+
+  function handleDelete(client: Client) {
+    setDeleteConfirm({ type: "client", client });
+  }
+
+  async function executeDeleteClient(client: Client) {
+    setDeletingId(client.id);
+
+    try {
+      await deleteServiceOrdersLinkedToClient(client.id);
+
+      const vehicles = client.vehicles ?? [];
+      await Promise.all(
+        vehicles.flatMap((vehicle) => [
+          deleteVehiclePhotoByUrl(supabase, vehicle.photo_url_1),
+          deleteVehiclePhotoByUrl(supabase, vehicle.photo_url_2),
+        ])
+      );
+
+      const { error } = await supabase
+        .from("clients")
+        .delete()
+        .eq("id", client.id);
+
+      if (error) throw new Error(error.message);
+
+      setDeleteConfirm(null);
+      await loadClients();
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Erro ao excluir cliente."
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  function handleDeleteVehicle(client: Client, vehicle: Vehicle) {
+    setDeleteConfirm({ type: "vehicle", client, vehicle });
+  }
+
+  async function executeDeleteVehicle(client: Client, vehicle: Vehicle) {
     setDeletingVehicleId(vehicle.id);
 
     try {
+      await deleteServiceOrdersLinkedToVehicle(vehicle.id);
+
       await Promise.all([
         deleteVehiclePhotoByUrl(supabase, vehicle.photo_url_1),
         deleteVehiclePhotoByUrl(supabase, vehicle.photo_url_2),
@@ -715,6 +780,7 @@ export function ClientsPage() {
       setVehiclesClient((prev) =>
         prev ? removeVehicleFromClient(prev) : prev
       );
+      setDeleteConfirm(null);
       await loadClients();
     } catch (error) {
       alert(
@@ -748,17 +814,17 @@ export function ClientsPage() {
             placeholder="Buscar por nome, telefone ou placa..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-lg border border-border bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+            className="w-full rounded-lg border border-border bg-input py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
           />
         </div>
       </div>
 
       {loading ? (
-        <div className="rounded-xl border border-border bg-card py-16 text-center text-sm text-muted shadow-sm">
+        <div className="rounded-lg border border-border bg-card shadow-card py-16 text-center text-sm text-muted shadow-card">
           Carregando clientes...
         </div>
       ) : filteredClients.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-16 text-center shadow-sm">
+        <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card shadow-card py-16 text-center shadow-card">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
             <Users className="h-7 w-7 text-primary" />
           </div>
@@ -784,7 +850,7 @@ export function ClientsPage() {
             return (
               <article
                 key={client.id}
-                className="relative rounded-xl border border-border bg-slate-50 p-4 pb-10 shadow-sm transition-shadow hover:shadow-md"
+                className="relative rounded-lg border border-border bg-input p-4 pb-10 shadow-card transition-shadow hover:shadow-card-hover"
               >
                 <div className="absolute right-3 top-3 flex items-center gap-1.5">
                   <button
@@ -815,7 +881,7 @@ export function ClientsPage() {
                       href={getWhatsAppUrl(client.phone)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className={`${clientInfoCardClass} text-[#128C7E] transition-all hover:-translate-y-0.5 hover:border-[#25D366] hover:bg-[#25D366] hover:text-white hover:shadow-md`}
+                      className={`${clientInfoCardClass} text-[#128C7E] transition-all hover:-translate-y-0.5 hover:border-[#25D366] hover:bg-[#25D366] hover:text-white hover:shadow-card-hover`}
                       title="Abrir conversa no WhatsApp"
                     >
                       <WhatsAppIcon className="h-5 w-5" />
@@ -824,7 +890,7 @@ export function ClientsPage() {
                     <button
                       type="button"
                       onClick={() => openVehiclesPanel(client)}
-                      className={`${clientInfoCardClass} text-primary transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-primary hover:text-white hover:shadow-md`}
+                      className={`${clientInfoCardClass} text-primary transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-primary hover:text-white hover:shadow-card-hover`}
                       title="Ver veículos cadastrados"
                     >
                       <Car className="h-4 w-4" />
@@ -835,7 +901,7 @@ export function ClientsPage() {
 
                 <Link
                   href={`/agenda?clientId=${client.id}`}
-                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md"
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white shadow-card transition-all hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-card-hover"
                 >
                   <ClipboardList className="h-4 w-4" />
                   Agendar com cliente
@@ -867,6 +933,46 @@ export function ClientsPage() {
         startWithNewVehicle={startWithNewVehicle}
         onClose={closeModal}
         onSave={handleSave}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirm?.type === "client"}
+        title="Excluir cliente"
+        description={
+          deleteConfirm?.type === "client"
+            ? `Deseja excluir "${deleteConfirm.client.name}"? Agendamentos e veículos vinculados também serão removidos.`
+            : ""
+        }
+        confirmLabel="Excluir cliente"
+        loading={Boolean(deletingId)}
+        onCancel={() => {
+          if (!deletingId) setDeleteConfirm(null);
+        }}
+        onConfirm={() => {
+          if (deleteConfirm?.type === "client") {
+            void executeDeleteClient(deleteConfirm.client);
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirm?.type === "vehicle"}
+        title="Excluir veículo"
+        description={
+          deleteConfirm?.type === "vehicle"
+            ? `Deseja excluir ${deleteConfirm.vehicle.brand} ${deleteConfirm.vehicle.model} (${deleteConfirm.vehicle.plate})? Agendamentos vinculados também serão removidos.`
+            : ""
+        }
+        confirmLabel="Excluir veículo"
+        loading={Boolean(deletingVehicleId)}
+        onCancel={() => {
+          if (!deletingVehicleId) setDeleteConfirm(null);
+        }}
+        onConfirm={() => {
+          if (deleteConfirm?.type === "vehicle") {
+            void executeDeleteVehicle(deleteConfirm.client, deleteConfirm.vehicle);
+          }
+        }}
       />
 
       {vehicleModalClient && (

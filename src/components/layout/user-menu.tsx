@@ -2,10 +2,14 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { GearSix, SignOut } from "@phosphor-icons/react";
+import { UserRound } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
-import { LogOut, Settings, UserRound } from "lucide-react";
+
+const NAV_ICON_SIZE = 22;
+const NAV_ICON_WEIGHT = "light" as const;
 
 interface UserMenuProps {
   email: string;
@@ -15,6 +19,8 @@ interface UserMenuProps {
 
 export function UserMenu({ email, fullName, avatarUrl }: UserMenuProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const isSettingsActive = pathname.startsWith("/configuracoes");
 
   async function handleLogout() {
     const supabase = createClient();
@@ -61,7 +67,14 @@ export function UserMenu({ email, fullName, avatarUrl }: UserMenuProps) {
         title="Configurações"
       >
         <span className="flex h-11 w-14 shrink-0 items-center justify-center">
-          <Settings className="h-4 w-4" />
+          <GearSix
+            size={NAV_ICON_SIZE}
+            weight={NAV_ICON_WEIGHT}
+            className={
+              isSettingsActive ? "text-white" : "text-white opacity-60"
+            }
+            aria-hidden
+          />
         </span>
         <span className="ml-3 translate-x-2 whitespace-nowrap opacity-0 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:translate-x-0 group-hover:opacity-100">
           Configurações
@@ -74,7 +87,12 @@ export function UserMenu({ email, fullName, avatarUrl }: UserMenuProps) {
         title="Sair"
       >
         <span className="flex h-11 w-14 shrink-0 items-center justify-center">
-          <LogOut className="h-4 w-4" />
+          <SignOut
+            size={NAV_ICON_SIZE}
+            weight={NAV_ICON_WEIGHT}
+            className="text-white opacity-60"
+            aria-hidden
+          />
         </span>
         <span className="ml-3 translate-x-2 whitespace-nowrap opacity-0 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:translate-x-0 group-hover:opacity-100">
           Sair

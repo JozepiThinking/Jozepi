@@ -36,25 +36,20 @@ function getLocalAgendaCapacityKey(workshopId: string) {
   return `${AGENDA_CAPACITY_STORAGE_KEY}-${workshopId}`;
 }
 
-function readLocalAgendaCapacity(workshopId: string) {
-  if (typeof window === "undefined") return DEFAULT_AGENDA_CAPACITY;
+function readLocalAgendaCapacityForImport(workshopId: string) {
+  if (typeof window === "undefined") return null;
 
   try {
-    return normalizeCapacity(
-      window.localStorage.getItem(getLocalAgendaCapacityKey(workshopId))
-    );
+    const stored = window.localStorage.getItem(getLocalAgendaCapacityKey(workshopId));
+    return stored ? normalizeCapacity(stored) : null;
   } catch {
-    return DEFAULT_AGENDA_CAPACITY;
+    return null;
   }
 }
 
-function writeLocalAgendaCapacity(workshopId: string, capacity: number) {
+function clearLocalAgendaCapacity(workshopId: string) {
   if (typeof window === "undefined") return;
-
-  window.localStorage.setItem(
-    getLocalAgendaCapacityKey(workshopId),
-    String(capacity)
-  );
+  window.localStorage.removeItem(getLocalAgendaCapacityKey(workshopId));
 }
 
 export function AgendaCapacityCard() {
@@ -92,9 +87,9 @@ export function AgendaCapacityCard() {
 
     if (workshopError) {
       if (isMissingAgendaCapacityError(workshopError)) {
-        setCapacity(String(readLocalAgendaCapacity(profile.workshop_id)));
-        setMessage(
-          "Capacidade local em uso até aplicar a migration da agenda no Supabase."
+        setCapacity(String(DEFAULT_AGENDA_CAPACITY));
+        setError(
+          "A coluna agenda_capacity ainda não existe no Supabase. Aplique a migration 009."
         );
       } else {
         setError(workshopError.message);
@@ -104,8 +99,28 @@ export function AgendaCapacityCard() {
     }
 
     const remoteCapacity = normalizeCapacity(workshop?.agenda_capacity);
+    const localCapacity = readLocalAgendaCapacityForImport(profile.workshop_id);
+
+    if (localCapacity !== null && localCapacity !== remoteCapacity) {
+      const { error: importError } = await supabase
+        .from("workshops")
+        .update({ agenda_capacity: localCapacity })
+        .eq("id", profile.workshop_id);
+
+      if (!importError) {
+        clearLocalAgendaCapacity(profile.workshop_id);
+        setCapacity(String(localCapacity));
+        setMessage("Capacidade local importada para o Supabase.");
+        setLoading(false);
+        return;
+      }
+    }
+
+    if (localCapacity !== null) {
+      clearLocalAgendaCapacity(profile.workshop_id);
+    }
+
     setCapacity(String(remoteCapacity));
-    writeLocalAgendaCapacity(profile.workshop_id, remoteCapacity);
     setLoading(false);
   }, [supabase]);
 
@@ -140,10 +155,8 @@ export function AgendaCapacityCard() {
 
     if (updateError) {
       if (isMissingAgendaCapacityError(updateError)) {
-        writeLocalAgendaCapacity(workshopId, nextCapacity);
-        setCapacity(String(nextCapacity));
-        setMessage(
-          "Capacidade salva localmente. Aplique a migration no Supabase para sincronizar entre dispositivos."
+        setError(
+          "A coluna agenda_capacity ainda não existe no Supabase. Aplique a migration 009."
         );
       } else {
         setError(updateError.message);
@@ -151,7 +164,7 @@ export function AgendaCapacityCard() {
       return;
     }
 
-    writeLocalAgendaCapacity(workshopId, nextCapacity);
+    clearLocalAgendaCapacity(workshopId);
     setCapacity(String(nextCapacity));
     setMessage("Capacidade da agenda salva com sucesso.");
   }
@@ -159,7 +172,7 @@ export function AgendaCapacityCard() {
   return (
     <form
       onSubmit={handleSave}
-      className="rounded-xl border border-border bg-card p-6 shadow-sm"
+      className="card-surface"
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-2xl">

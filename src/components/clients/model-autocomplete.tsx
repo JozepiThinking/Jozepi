@@ -80,7 +80,7 @@ export function ModelAutocomplete({
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           className={cn(
-            "w-full rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm text-foreground",
+            "w-full rounded-lg border border-border bg-input px-4 py-2.5 text-sm text-foreground",
             "placeholder:text-muted/60 transition-colors",
             "focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
           )}

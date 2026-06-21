@@ -174,7 +174,7 @@ export function UserProfileCard({
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
+    <div className="card-surface">
       <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
           <div className="relative shrink-0">
@@ -204,7 +204,7 @@ export function UserProfileCard({
             </button>
 
             {photoMenuOpen && (
-              <div className="absolute left-0 top-24 z-20 w-48 rounded-xl border border-border bg-card p-2 shadow-lg">
+              <div className="absolute left-0 top-24 z-20 w-48 rounded-lg border border-border bg-card p-2 shadow-card-hover">
                 <button
                   type="button"
                   onClick={() => galleryInputRef.current?.click()}
@@ -247,7 +247,7 @@ export function UserProfileCard({
             />
           </div>
           <div>
-            <h2 className="text-2xl font-bold text-foreground">
+            <h2 className="page-title text-2xl sm:text-3xl">
               {displayName}
             </h2>
             <p className="mt-1 text-sm text-muted">{email}</p>
@@ -321,10 +321,10 @@ export function UserProfileCard({
 
       <form
         onSubmit={handleChangePassword}
-        className="mt-6 rounded-xl border border-dashed border-warning/30 bg-warning/5 p-5"
+        className="mt-6 rounded-lg border border-dashed border-warning/30 bg-warning/5 p-5"
       >
         <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-warning/10 text-warning">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
             <KeyRound className="h-5 w-5" />
           </span>
           <div>

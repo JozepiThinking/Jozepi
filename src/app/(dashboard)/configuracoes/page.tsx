@@ -32,9 +32,9 @@ export default function ConfiguracoesPage() {
         {settingsSections.map((section) => (
           <div
             key={section.title}
-            className="rounded-xl border border-border bg-card p-6 shadow-sm"
+            className="card-surface"
           >
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-success/10 text-success">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-premium/10 text-premium">
               <section.icon className="h-5 w-5" />
             </div>
             <h2 className="mt-4 text-lg font-semibold text-foreground">
@@ -45,7 +45,7 @@ export default function ConfiguracoesPage() {
         ))}
       </div>
 
-      <div className="mt-6 rounded-xl border border-border bg-card p-6 shadow-sm">
+      <div className="mt-6 card-surface">
         <div className="flex items-start gap-4">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Settings className="h-5 w-5" />

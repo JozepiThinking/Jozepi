@@ -44,7 +44,7 @@ function PhotoSlot({
       {preview ? (
         <div
           className={cn(
-            "relative overflow-hidden rounded-lg border border-border bg-slate-100",
+            "relative overflow-hidden rounded-lg border border-border bg-input",
             compact ? "h-32 sm:h-36" : "h-64"
           )}
         >
@@ -68,7 +68,7 @@ function PhotoSlot({
           type="button"
           onClick={() => inputRef.current?.click()}
           className={cn(
-            "flex w-full flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border bg-slate-50 text-muted transition-colors hover:border-accent hover:text-accent",
+            "flex w-full flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border bg-input text-muted transition-colors duration-300 hover:border-accent hover:text-accent",
             compact ? "h-32 sm:h-36" : "h-64"
           )}
         >
@@ -135,7 +135,9 @@ export function VehiclePhotoUpload({
           compact={compact}
         />
       </div>
-      <p className="text-xs text-muted">JPG, PNG ou WEBP — até 5MB cada</p>
+      <p className="text-xs text-muted">
+        JPG, PNG ou WEBP — até 10MB cada (comprimidas automaticamente no envio)
+      </p>
     </div>
   );
 }

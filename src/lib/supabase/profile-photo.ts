@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { validatePhotoFile } from "@/lib/supabase/vehicle-photos";
+import { preparePhotoForUpload } from "@/lib/supabase/vehicle-photos";
 
 const BUCKET = "vehicle-photos";
 
@@ -8,15 +8,12 @@ export async function uploadProfilePhoto(
   userId: string,
   file: File
 ): Promise<string> {
-  const validation = validatePhotoFile(file);
-  if (validation) throw new Error(validation);
-
-  const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-  const path = `profiles/${userId}/avatar-${Date.now()}.${ext}`;
+  const uploadFile = await preparePhotoForUpload(file);
+  const path = `profiles/${userId}/avatar-${Date.now()}.jpg`;
 
   const { error } = await supabase.storage
     .from(BUCKET)
-    .upload(path, file, { contentType: file.type });
+    .upload(path, uploadFile, { contentType: "image/jpeg" });
 
   if (error) throw new Error(error.message);
 

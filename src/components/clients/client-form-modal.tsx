@@ -9,6 +9,7 @@ import { Dropdown } from "@/components/ui/dropdown";
 import { BrandAutocomplete } from "@/components/clients/brand-autocomplete";
 import { ModelAutocomplete } from "@/components/clients/model-autocomplete";
 import { VehiclePhotoUpload } from "@/components/clients/vehicle-photo-upload";
+import { PlateIcon } from "@/components/ui/plate-icon";
 import {
   type Client,
   type ClientFormData,
@@ -16,6 +17,7 @@ import {
   emptyClientForm,
   emptyVehicle,
 } from "@/types/client";
+import { formatPhone, normalizePhone } from "@/lib/utils/format";
 
 interface ClientFormModalProps {
   open: boolean;
@@ -152,20 +154,20 @@ function VehicleEditorModal({
       <button
         type="button"
         aria-label="Fechar formulário de veículo"
-        className={`absolute inset-0 bg-slate-950/45 backdrop-blur-sm ${
+        className={`absolute inset-0 bg-foreground/40 backdrop-blur-sm ${
           closing ? "client-vehicle-overlay-exit" : "client-vehicle-overlay-enter"
         }`}
         onClick={onClose}
       />
       <form
         onSubmit={handleSubmit}
-        className={`relative z-[111] max-h-[82vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-4 shadow-2xl sm:p-5 ${
+        className={`relative z-[111] max-h-[82vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border bg-card shadow-card p-4 shadow-2xl sm:p-5 ${
           closing ? "client-vehicle-card-exit" : "client-vehicle-card-enter"
         }`}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-success">
+            <p className="text-xs font-semibold uppercase tracking-widest text-success">
               Veículo do cliente
             </p>
             <h3 className="mt-1 text-lg font-bold text-foreground">
@@ -186,7 +188,7 @@ function VehicleEditorModal({
         </div>
 
         {error && (
-          <div className="mb-4 rounded-xl border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
+          <div className="mb-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
             {error}
           </div>
         )}
@@ -278,7 +280,7 @@ export function ClientFormModal({
       const nextForm = client
         ? {
             name: client.name,
-            phone: client.phone,
+            phone: formatPhone(client.phone),
             notes: client.notes ?? "",
             vehicles: client.vehicles?.map(mapVehicleFromClient) ?? [],
           }
@@ -374,7 +376,10 @@ export function ClientFormModal({
     setLoading(true);
 
     try {
-      await onSave(form);
+      await onSave({
+        ...form,
+        phone: normalizePhone(form.phone),
+      });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar cliente.");
@@ -389,7 +394,7 @@ export function ClientFormModal({
         className="absolute inset-0 bg-foreground/40 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-border bg-card p-6 shadow-xl">
+      <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border bg-card shadow-card p-6 shadow-xl">
         <div className="mb-6 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-foreground">
             {isEditing ? "Editar cliente" : "Novo cliente"}
@@ -435,7 +440,7 @@ export function ClientFormModal({
               <button
                 type="button"
                 onClick={() => openVehicleModal(null)}
-                className="group flex w-full items-center justify-between rounded-xl border border-success/30 bg-success/10 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-success/60 hover:bg-success/15 hover:shadow-md"
+                className="group flex w-full items-center justify-between rounded-lg border border-success/30 bg-success/10 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-success/60 hover:bg-success/15 hover:shadow-card-hover"
               >
                 <span>
                   <span className="block text-sm font-semibold text-success">
@@ -464,7 +469,7 @@ export function ClientFormModal({
                   return (
                     <div
                       key={vehicleKey}
-                      className={`rounded-xl border border-border bg-background/30 p-4 transition-all duration-200 ${
+                      className={`rounded-lg border border-border bg-background shadow-card/30 p-4 transition-all duration-200 ${
                         isRemoving
                           ? "vehicle-card-exit pointer-events-none"
                           : "vehicle-card-enter"
@@ -478,16 +483,19 @@ export function ClientFormModal({
                           <p className="mt-1 truncate text-sm font-semibold text-foreground">
                             {vehicle.brand || "Marca"} {vehicle.model || "Modelo"}
                           </p>
-                          <p className="mt-0.5 text-xs font-semibold uppercase tracking-wide text-primary">
-                            {vehicle.plate || "Placa não informada"}
-                            {vehicle.year ? ` • ${vehicle.year}` : ""}
+                          <p className="mt-0.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-primary">
+                            <PlateIcon className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate">
+                              {vehicle.plate || "Placa não informada"}
+                              {vehicle.year ? ` • ${vehicle.year}` : ""}
+                            </span>
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <button
                             type="button"
                             onClick={() => openVehicleModal(index)}
-                            className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-success/10 px-3 py-2 text-xs font-semibold text-success transition-all duration-200 hover:-translate-y-0.5 hover:bg-success hover:text-white hover:shadow-md"
+                            className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-success/10 px-3 py-2 text-xs font-semibold text-success transition-all duration-200 hover:-translate-y-0.5 hover:bg-success hover:text-white hover:shadow-card-hover"
                           >
                             <Pencil className="h-4 w-4" />
                             Editar
@@ -495,7 +503,7 @@ export function ClientFormModal({
                           <button
                             type="button"
                             onClick={() => removeVehicle(index)}
-                            className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-danger/10 px-3 py-2 text-xs font-semibold text-danger transition-all duration-200 hover:-translate-y-0.5 hover:bg-danger hover:text-white hover:shadow-md"
+                            className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-danger/10 px-3 py-2 text-xs font-semibold text-danger transition-all duration-200 hover:-translate-y-0.5 hover:bg-danger hover:text-white hover:shadow-card-hover"
                           >
                             <Trash2 className="h-4 w-4" />
                             Excluir
@@ -518,7 +526,7 @@ export function ClientFormModal({
               onChange={(e) => updateField("notes", e.target.value)}
               placeholder="Anotações sobre o cliente..."
               rows={3}
-              className="w-full resize-none rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+              className="w-full resize-none rounded-lg border border-border bg-input px-4 py-2.5 text-sm text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
             />
           </div>
 

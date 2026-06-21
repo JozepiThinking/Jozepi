@@ -21,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import {
-  PRODUCTS_STORAGE_KEY,
   parseMoney as parseProductMoney,
   type ProductItem,
 } from "@/lib/products/catalog";
@@ -30,7 +29,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/format";
 
 type FinanceTab = "overview" | "revenues" | "expenses" | "fixedCosts" | "reports";
-type PeriodFilter = "today" | "week" | "month" | "custom";
+type PeriodFilter = "all" | "today" | "week" | "month" | "custom";
 type TransactionType = "receita" | "despesa";
 const SUPPLIERS_STORAGE_KEY = "auto-estetica-suppliers";
 const FIXED_COSTS_STORAGE_KEY = "auto-estetica-fixed-costs";
@@ -141,17 +140,6 @@ function writeStoredFixedCosts(costs: FixedCost[]) {
   window.localStorage.setItem(FIXED_COSTS_STORAGE_KEY, JSON.stringify(costs));
 }
 
-function readStoredProducts() {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const stored = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
-    return stored ? (JSON.parse(stored) as ProductItem[]) : [];
-  } catch {
-    return [];
-  }
-}
-
 function readStoredUtensilWearSettings() {
   if (typeof window === "undefined") return {};
 
@@ -210,6 +198,7 @@ interface FinanceEntry {
   amount: number;
   category: string;
   date: string;
+  createdAt: string;
   clientName?: string;
   serviceName?: string;
   supplierId?: string;
@@ -240,6 +229,7 @@ const tabs: { id: FinanceTab; label: string }[] = [
 ];
 
 const periodOptions = [
+  { value: "all", label: "Todos" },
   { value: "today", label: "Hoje" },
   { value: "week", label: "Semana" },
   { value: "month", label: "Mês" },
@@ -372,6 +362,13 @@ function getPeriodRange(
   customEnd: string,
   baseDate = new Date()
 ): DateRange {
+  if (period === "all") {
+    return {
+      start: new Date(2000, 0, 1),
+      end: endOfDay(baseDate),
+    };
+  }
+
   if (period === "today") {
     return { start: startOfDay(baseDate), end: endOfDay(baseDate) };
   }
@@ -393,6 +390,12 @@ function getPeriodRange(
 function isDateInRange(date: string, range: DateRange) {
   const parsed = parseLocalDate(date);
   return parsed >= range.start && parsed <= range.end;
+}
+
+function sortEntriesByLaunch(a: FinanceEntry, b: FinanceEntry) {
+  const byCreated = b.createdAt.localeCompare(a.createdAt);
+  if (byCreated !== 0) return byCreated;
+  return b.date.localeCompare(a.date);
 }
 
 function parseMoney(value: string) {
@@ -442,8 +445,117 @@ function toCurrencyNumber(value: number | string | null | undefined) {
   return Number(value) || 0;
 }
 
-function isMissingSupplierColumnError(error: { message?: string } | null) {
-  return error?.message?.includes("supplier_id") ?? false;
+function formatSupplierSaveError(message: string) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("supplier_id") && normalized.includes("foreign key")) {
+    return "Fornecedor inválido. Cadastre-o na aba Fornecedores em Produtos antes de vincular à despesa.";
+  }
+
+  return message;
+}
+
+const TRANSACTION_SELECT_FULL =
+  "id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at";
+const TRANSACTION_SELECT_WITH_SUPPLIER =
+  "id, type, description, amount, category, service_order_id, supplier_id, transaction_date, created_at";
+const TRANSACTION_SELECT_LEGACY =
+  "id, type, description, amount, category, service_order_id, transaction_date, created_at";
+
+function normalizeTransactionRow(row: Record<string, unknown>): FinancialTransaction {
+  return {
+    id: String(row.id),
+    type: row.type as TransactionType,
+    description: String(row.description),
+    amount: row.amount as number | string,
+    category: (row.category as string | null) ?? null,
+    service_order_id: (row.service_order_id as string | null) ?? null,
+    supplier_id: (row.supplier_id as string | null) ?? null,
+    product_id: (row.product_id as string | null) ?? null,
+    source: (row.source as string | null) ?? null,
+    transaction_date: String(row.transaction_date),
+    created_at: String(row.created_at ?? row.transaction_date),
+  };
+}
+
+function isMissingColumnError(
+  error: { message?: string } | null,
+  column: string
+) {
+  const message = error?.message?.toLowerCase() ?? "";
+  if (!message.includes(column.toLowerCase())) return false;
+  if (
+    message.includes("foreign key") ||
+    message.includes("violates") ||
+    message.includes("invalid input syntax")
+  ) {
+    return false;
+  }
+
+  return (
+    message.includes("could not find") ||
+    message.includes("schema cache") ||
+    message.includes("does not exist")
+  );
+}
+
+async function loadFinancialTransactions(
+  supabase: ReturnType<typeof createClient>,
+  workshopId: string
+) {
+  const attempts = [
+    TRANSACTION_SELECT_FULL,
+    TRANSACTION_SELECT_WITH_SUPPLIER,
+    TRANSACTION_SELECT_LEGACY,
+  ];
+
+  let lastError: { message: string } | null = null;
+
+  for (const columns of attempts) {
+    const { data, error } = await supabase
+      .from("financial_transactions")
+      .select(columns)
+      .eq("workshop_id", workshopId)
+      .order("transaction_date", { ascending: false });
+
+    if (!error) {
+      return ((data ?? []) as Record<string, unknown>[]).map(normalizeTransactionRow);
+    }
+
+    lastError = error;
+  }
+
+  throw new Error(lastError?.message ?? "Não foi possível carregar lançamentos.");
+}
+
+async function fetchFinancialTransactionById(
+  supabase: ReturnType<typeof createClient>,
+  workshopId: string,
+  transactionId: string
+) {
+  const attempts = [
+    TRANSACTION_SELECT_FULL,
+    TRANSACTION_SELECT_WITH_SUPPLIER,
+    TRANSACTION_SELECT_LEGACY,
+  ];
+
+  let lastError: { message: string } | null = null;
+
+  for (const columns of attempts) {
+    const { data, error } = await supabase
+      .from("financial_transactions")
+      .select(columns)
+      .eq("id", transactionId)
+      .eq("workshop_id", workshopId)
+      .single();
+
+    if (!error && data) {
+      return normalizeTransactionRow(data as Record<string, unknown>);
+    }
+
+    lastError = error;
+  }
+
+  throw new Error(lastError?.message ?? "Não foi possível carregar o lançamento.");
 }
 
 function SummaryCard({
@@ -489,18 +601,18 @@ function SummaryCard({
   return (
     <div
       style={{ borderLeftColor: toneStyles.borderLeftColor }}
-      className="group relative rounded-xl border border-l-4 border-border bg-card p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+      className="group relative rounded-lg border border-l-4 border-border bg-card p-5 shadow-card transition-all hover:-translate-y-0.5 hover:shadow-card-hover"
       aria-label={detail ? `${title}: ${detail}` : title}
     >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm font-medium text-muted">{title}</p>
-          <p className={`mt-2 text-2xl font-bold sm:text-3xl ${valueClass}`}>
+          <p className={`mt-2 currency-display ${valueClass}`}>
             {value}
           </p>
         </div>
         <span
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${toneStyles.icon}`}
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${toneStyles.icon}`}
         >
           {icon}
         </span>
@@ -508,7 +620,7 @@ function SummaryCard({
       {detail && (
         <div
           role="tooltip"
-          className="pointer-events-none absolute left-5 right-5 top-full z-30 mt-2 translate-y-1 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground opacity-0 shadow-lg ring-1 ring-slate-900/5 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100"
+          className="pointer-events-none absolute left-5 right-5 top-full z-30 mt-2 translate-y-1 rounded-lg border border-border bg-card shadow-card px-3 py-2 text-xs font-semibold text-foreground opacity-0 shadow-lg ring-1 ring-slate-900/5 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100"
         >
           {detail}
         </div>
@@ -588,11 +700,11 @@ function PeriodFilterButton({
       </button>
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 px-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 px-4"
           onClick={onClose}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl"
+            className="w-full max-w-md rounded-lg border border-border bg-card shadow-card p-5 shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-4">
@@ -683,8 +795,12 @@ function PeriodControls({
             onChange={(event) => onCustomEndChange(event.target.value)}
           />
         </>
+      ) : value === "all" ? (
+        <div className="rounded-lg bg-background px-4 py-3 text-sm font-semibold text-muted">
+          Mostrando todos os lançamentos.
+        </div>
       ) : (
-        <div className="rounded-xl bg-background px-4 py-3 text-sm font-semibold text-muted">
+        <div className="rounded-lg bg-background px-4 py-3 text-sm font-semibold text-muted">
           Mostrando lançamentos de {periodOptions.find((option) => option.value === value)?.label.toLowerCase()}.
         </div>
       )}
@@ -721,7 +837,7 @@ function TransactionList({
         {filter && <div className="mb-2 flex justify-end px-3">{filter}</div>}
         <div className="flex flex-col items-center px-4 py-12 text-center">
           <span
-            className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
+            className={`flex h-12 w-12 items-center justify-center rounded-lg ${
               accent === "expense"
                 ? "bg-danger/10 text-danger"
                 : "bg-primary/10 text-primary"
@@ -863,7 +979,7 @@ function TransactionFormCard({
     <form
       onSubmit={onSubmit}
       autoComplete="off"
-      className="finance-manual-form-enter rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5"
+      className="finance-manual-form-enter rounded-lg border border-border bg-card shadow-card p-4 shadow-card sm:p-5"
     >
       <div className="mb-4">
         <h2 className="text-lg font-semibold text-foreground">{title}</h2>
@@ -937,7 +1053,7 @@ function MonthlyBarChart({
   return (
     <>
       <div
-        className={`flex items-end gap-3 rounded-xl bg-background px-4 py-5 ${
+        className={`flex items-end gap-3 rounded-lg bg-background px-4 py-5 ${
           compact ? "h-64" : "h-72"
         }`}
       >
@@ -1006,7 +1122,7 @@ export function FinancePage() {
   const [revenueError, setRevenueError] = useState<string | null>(null);
   const [expenseError, setExpenseError] = useState<string | null>(null);
   const [revenuePeriod, setRevenuePeriod] = useState<PeriodFilter>("month");
-  const [expensePeriod, setExpensePeriod] = useState<PeriodFilter>("month");
+  const [expensePeriod, setExpensePeriod] = useState<PeriodFilter>("all");
   const [revenueCustomStart, setRevenueCustomStart] = useState(dateKey(startOfMonth(today)));
   const [revenueCustomEnd, setRevenueCustomEnd] = useState(dateKey(today));
   const [expenseCustomStart, setExpenseCustomStart] = useState(dateKey(startOfMonth(today)));
@@ -1019,9 +1135,7 @@ export function FinancePage() {
   const [fixedCostForm, setFixedCostForm] = useState<FixedCostForm>(initialFixedCostForm);
   const [fixedCostError, setFixedCostError] = useState<string | null>(null);
   const [savingFixedCost, setSavingFixedCost] = useState(false);
-  const [catalogProducts, setCatalogProducts] = useState<ProductItem[]>(
-    () => readStoredProducts()
-  );
+  const [catalogProducts, setCatalogProducts] = useState<ProductItem[]>([]);
   const [utensilWearSettings, setUtensilWearSettings] = useState<
     Record<string, UtensilWearSetting>
   >(() => readStoredUtensilWearSettings());
@@ -1079,39 +1193,18 @@ export function FinancePage() {
           .eq("workshop_id", profile.workshop_id)
           .order("name", { ascending: true }),
       ]);
-    let { data: transactionsData, error: transactionsError } = await supabase
-      .from("financial_transactions")
-      .select(
-        "id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at"
-      )
-      .eq("workshop_id", profile.workshop_id)
-      .order("transaction_date", { ascending: false });
-
-    if (transactionsError) {
-      const legacyResult = await supabase
-        .from("financial_transactions")
-        .select(
-          "id, type, description, amount, category, service_order_id, transaction_date, created_at"
-        )
-        .eq("workshop_id", profile.workshop_id)
-        .order("transaction_date", { ascending: false });
-
-      transactionsData = legacyResult.data
-        ? legacyResult.data.map((transaction) => ({
-            ...transaction,
-            supplier_id: null,
-            product_id: null,
-            source: null,
-          }))
-        : null;
-      transactionsError = legacyResult.error;
+    let transactionsData: FinancialTransaction[] = [];
+    try {
+      transactionsData = await loadFinancialTransactions(supabase, profile.workshop_id);
+    } catch (transactionsError) {
+      setError(
+        transactionsError instanceof Error
+          ? transactionsError.message
+          : "Não foi possível carregar lançamentos."
+      );
     }
 
-    if (transactionsError) {
-      setError(transactionsError.message);
-    } else {
-      setTransactions((transactionsData as FinancialTransaction[] | null) ?? []);
-    }
+    setTransactions(transactionsData);
 
     if (ordersError) {
       setError(ordersError.message);
@@ -1123,9 +1216,7 @@ export function FinancePage() {
     if (suppliersResult.error) {
       setSuppliers(storedSuppliers);
     } else {
-      setSuppliers(
-        mergeSuppliers(storedSuppliers, (suppliersResult.data as Supplier[] | null) ?? [])
-      );
+      setSuppliers(sortSuppliers((suppliersResult.data as Supplier[] | null) ?? []));
     }
 
     const storedFixedCosts = readStoredFixedCosts();
@@ -1162,20 +1253,6 @@ export function FinancePage() {
   }, [fixedCosts]);
 
   useEffect(() => {
-    function handleStorageChange(event: StorageEvent) {
-      if (event.key === PRODUCTS_STORAGE_KEY) {
-        setCatalogProducts(readStoredProducts());
-      }
-    }
-
-    window.addEventListener("storage", handleStorageChange);
-
-    return () => {
-      window.removeEventListener("storage", handleStorageChange);
-    };
-  }, []);
-
-  useEffect(() => {
     if (!workshopId) return;
 
     void loadSupabaseCatalog(supabase, workshopId)
@@ -1183,7 +1260,7 @@ export function FinancePage() {
         setCatalogProducts(catalog.products);
       })
       .catch(() => {
-        setCatalogProducts(readStoredProducts());
+        setCatalogProducts([]);
       });
   }, [supabase, workshopId]);
 
@@ -1278,6 +1355,7 @@ export function FinancePage() {
         amount: toCurrencyNumber(transaction.amount),
         category: transaction.category ?? "Outros",
         date: transaction.transaction_date,
+        createdAt: transaction.created_at ?? transaction.transaction_date,
         clientName: order ? firstRelation(order.clients)?.name : undefined,
         serviceName: serviceNames,
         supplierId: transaction.supplier_id ?? undefined,
@@ -1294,14 +1372,14 @@ export function FinancePage() {
     () =>
       transactionEntries
         .filter((entry) => entry.type === "receita")
-        .sort((a, b) => b.date.localeCompare(a.date)),
+        .sort(sortEntriesByLaunch),
     [transactionEntries]
   );
   const expenseEntries = useMemo(
     () =>
       transactionEntries
         .filter((entry) => entry.type === "despesa")
-        .sort((a, b) => b.date.localeCompare(a.date)),
+        .sort(sortEntriesByLaunch),
     [transactionEntries]
   );
   const automaticRevenueServiceOrderIds = useMemo(() => {
@@ -1385,7 +1463,7 @@ export function FinancePage() {
   );
   const filteredExpenseEntries = expenseEntries.filter(
     (entry) =>
-      isDateInRange(entry.date, expenseRange) &&
+      (expensePeriod === "all" || isDateInRange(entry.date, expenseRange)) &&
       (expenseCategoryFilter === categoryFilterAll ||
         entry.category === expenseCategoryFilter) &&
       (expenseSupplierFilter === categoryFilterAll ||
@@ -1575,77 +1653,77 @@ export function FinancePage() {
       return;
     }
 
-    setSaving(true);
-    setFormError(null);
     const supplierId =
       type === "despesa" && form.supplierId !== categoryFilterAll
         ? form.supplierId
         : null;
+
+    if (supplierId && !suppliersById.has(supplierId)) {
+      setFormError(
+        "Fornecedor inválido. Cadastre-o na aba Fornecedores em Produtos antes de vincular à despesa."
+      );
+      return;
+    }
+
+    setSaving(true);
+    setFormError(null);
     const transactionPayload = {
       description: form.description.trim(),
       amount,
       category: form.category,
       transaction_date: form.date,
     };
-    const selectColumns =
-      "id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at";
-    const legacySelectColumns =
-      "id, type, description, amount, category, service_order_id, transaction_date, created_at";
 
     if (transactionId) {
-      let { data, error: updateError } = await supabase
+      let { error: updateError } = await supabase
         .from("financial_transactions")
         .update({
           ...transactionPayload,
           supplier_id: supplierId,
         })
         .eq("id", transactionId)
-        .eq("workshop_id", workshopId)
-        .select(selectColumns)
-        .single();
+        .eq("workshop_id", workshopId);
 
-      if (isMissingSupplierColumnError(updateError)) {
+      if (isMissingColumnError(updateError, "supplier_id")) {
         const legacyResult = await supabase
           .from("financial_transactions")
           .update(transactionPayload)
           .eq("id", transactionId)
-          .eq("workshop_id", workshopId)
-          .select(legacySelectColumns)
-          .single();
+          .eq("workshop_id", workshopId);
 
-        data = legacyResult.data
-          ? {
-              ...legacyResult.data,
-              supplier_id: null,
-              product_id: null,
-              source: null,
-            }
-          : null;
         updateError = legacyResult.error;
       }
 
       setSaving(false);
 
       if (updateError) {
-        setFormError(updateError.message);
+        setFormError(formatSupplierSaveError(updateError.message));
         return;
       }
 
-      if (data) {
+      try {
+        const savedTransaction = await fetchFinancialTransactionById(
+          supabase,
+          workshopId,
+          transactionId
+        );
         setTransactions((prev) =>
           prev.map((transaction) =>
-            transaction.id === transactionId
-              ? (data as FinancialTransaction)
-              : transaction
+            transaction.id === transactionId ? savedTransaction : transaction
           )
         );
+      } catch (err) {
+        setFormError(
+          err instanceof Error ? err.message : "Despesa salva, mas não foi possível recarregar."
+        );
+        void loadFinanceData();
       }
 
       closeManualForm(type);
       return;
     }
 
-    let { data, error: insertError } = await supabase
+    let { data: insertedRow, error: insertError } = await supabase
       .from("financial_transactions")
       .insert({
         workshop_id: workshopId,
@@ -1653,10 +1731,10 @@ export function FinancePage() {
         ...transactionPayload,
         supplier_id: supplierId,
       })
-      .select(selectColumns)
+      .select("id")
       .single();
 
-    if (isMissingSupplierColumnError(insertError)) {
+    if (isMissingColumnError(insertError, "supplier_id")) {
       const legacyResult = await supabase
         .from("financial_transactions")
         .insert({
@@ -1664,30 +1742,34 @@ export function FinancePage() {
           type,
           ...transactionPayload,
         })
-        .select(legacySelectColumns)
+        .select("id")
         .single();
 
-      data = legacyResult.data
-        ? {
-            ...legacyResult.data,
-            supplier_id: null,
-            product_id: null,
-            source: null,
-          }
-        : null;
+      insertedRow = legacyResult.data;
       insertError = legacyResult.error;
     }
 
     setSaving(false);
 
-    if (insertError) {
-      setFormError(insertError.message);
+    if (insertError || !insertedRow?.id) {
+      setFormError(formatSupplierSaveError(insertError?.message ?? "Erro ao salvar."));
       return;
     }
 
-    if (data) {
-      setTransactions((prev) => [data as FinancialTransaction, ...prev]);
+    try {
+      const savedTransaction = await fetchFinancialTransactionById(
+        supabase,
+        workshopId,
+        insertedRow.id
+      );
+      setTransactions((prev) => [savedTransaction, ...prev]);
+    } catch (err) {
+      setFormError(
+        err instanceof Error ? err.message : "Despesa salva, mas não foi possível recarregar."
+      );
+      void loadFinanceData();
     }
+
     closeManualForm(type);
   }
 
@@ -1943,17 +2025,17 @@ export function FinancePage() {
         />
       </div>
 
-      <div className="rounded-2xl border border-border bg-card p-1.5 shadow-sm">
+      <div className="rounded-lg border border-border bg-card shadow-card p-1.5 shadow-card">
         <div className="grid grid-cols-2 gap-1.5 md:grid-cols-5">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`min-h-11 rounded-xl px-3 py-2 text-sm font-semibold transition-all ${
+              className={`min-h-11 rounded-lg px-3 py-2 text-sm font-semibold transition-all ${
                 activeTab === tab.id
-                  ? "bg-primary text-white shadow-sm"
-                  : "text-muted hover:bg-background hover:text-foreground hover:shadow-sm"
+                  ? "bg-primary text-white shadow-card"
+                  : "text-muted hover:bg-background hover:text-foreground hover:shadow-card"
               }`}
             >
               {tab.label}
@@ -1963,7 +2045,7 @@ export function FinancePage() {
       </div>
 
       {loading ? (
-        <div className="rounded-xl border border-border bg-card py-16 text-center text-sm text-muted shadow-sm">
+        <div className="rounded-lg border border-border bg-card shadow-card py-16 text-center text-sm text-muted shadow-card">
           Carregando financeiro...
         </div>
       ) : (
@@ -1971,9 +2053,9 @@ export function FinancePage() {
           {activeTab === "overview" && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
               <div className="space-y-6">
-                <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+                <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                   <div className="mb-5 flex items-center gap-3">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
                       <CalendarDays className="h-5 w-5" />
                     </span>
                     <div>
@@ -1986,39 +2068,39 @@ export function FinancePage() {
                     </div>
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    <div className="rounded-xl bg-background px-4 py-3">
-                      <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                    <div className="rounded-lg bg-background px-4 py-3">
+                      <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-muted">
                         <ClipboardList className="h-3.5 w-3.5" />
                         Serviços
                       </p>
-                      <p className="mt-1 text-2xl font-bold text-foreground">
+                      <p className="mt-1 currency-display text-foreground">
                         {todayOrders.length}
                       </p>
                     </div>
-                    <div className="rounded-xl bg-background px-4 py-3">
-                      <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                    <div className="rounded-lg bg-background px-4 py-3">
+                      <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-muted">
                         <ArrowDownRight className="h-3.5 w-3.5" />
                         Receita
                       </p>
-                      <p className="mt-1 text-2xl font-bold text-success">
+                      <p className="mt-1 currency-display text-success">
                         {formatCurrency(todayRevenue)}
                       </p>
                     </div>
-                    <div className="rounded-xl bg-background px-4 py-3">
-                      <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                    <div className="rounded-lg bg-background px-4 py-3">
+                      <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-muted">
                         <Wallet className="h-3.5 w-3.5" />
                         Lucro
                       </p>
-                      <p className={`mt-1 text-2xl font-bold ${todayProfit >= 0 ? "text-success" : "text-danger"}`}>
+                      <p className={`mt-1 currency-display ${todayProfit >= 0 ? "text-success" : "text-danger"}`}>
                         {formatCurrency(todayProfit)}
                       </p>
                     </div>
                   </div>
                 </section>
 
-                <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+                <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                   <div className="mb-5 flex items-center gap-3">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-success/10 text-success">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
                       <BarChart3 className="h-5 w-5" />
                     </span>
                     <div>
@@ -2036,13 +2118,17 @@ export function FinancePage() {
                 </section>
               </div>
 
-              <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+              <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                 <h2 className="text-lg font-semibold text-foreground">
                   Últimas receitas
                 </h2>
-                <div className="mt-4 divide-y divide-border overflow-hidden rounded-xl border border-border bg-background/50">
+                <div className="mt-4 divide-y divide-border overflow-hidden rounded-lg border border-border bg-background shadow-card/50">
                   {revenueEntries.slice(0, 5).map((entry) => {
                     const displayName = entry.clientName ?? "Receita manual";
+                    const displayDetail =
+                      entry.kind === "automatic" && entry.serviceName
+                        ? entry.serviceName
+                        : entry.description;
                     const badgeLabel =
                       entry.kind === "automatic" ? entry.category : "Manual";
 
@@ -2071,7 +2157,7 @@ export function FinancePage() {
                             </span>
                           </div>
                           <p className="mt-0.5 truncate text-xs text-muted">
-                            {entry.description} • {formatShortDate(entry.date)}
+                            {displayDetail} • {formatShortDate(entry.date)}
                           </p>
                         </div>
                       </div>
@@ -2205,7 +2291,7 @@ export function FinancePage() {
               )}
               <TransactionList
                 entries={filteredExpenseEntries}
-                emptyMessage="Nenhuma despesa registrada neste período"
+                emptyMessage="Nenhuma despesa registrada"
                 emptyDescription="Use o botão + Nova despesa para adicionar um lançamento manual."
                 accent="expense"
                 filter={
@@ -2226,7 +2312,7 @@ export function FinancePage() {
                     onCategoryChange={setExpenseCategoryFilter}
                     onSupplierChange={setExpenseSupplierFilter}
                     onClear={() => {
-                      setExpensePeriod("month");
+                      setExpensePeriod("all");
                       setExpenseCustomStart(dateKey(startOfMonth(today)));
                       setExpenseCustomEnd(dateKey(today));
                       setExpenseCategoryFilter(categoryFilterAll);
@@ -2268,32 +2354,32 @@ export function FinancePage() {
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-                <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                <div className="rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted">
                     Total fixos reais
                   </p>
                   <p className="mt-1 text-xl font-bold text-foreground">
                     {formatCurrency(fixedRealTotal)}
                   </p>
                 </div>
-                <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                <div className="rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted">
                     Total estimados
                   </p>
                   <p className="mt-1 text-xl font-bold text-primary">
                     {formatCurrency(fixedEstimatedTotal)}
                   </p>
                 </div>
-                <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                <div className="rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted">
                     Total mensal
                   </p>
                   <p className="mt-1 text-xl font-bold text-foreground">
                     {formatCurrency(fixedMonthlyTotal)}
                   </p>
                 </div>
-                <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                <div className="rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted">
                     Total desgaste utensílios
                   </p>
                   <p className="mt-1 text-xl font-bold text-warning">
@@ -2303,8 +2389,8 @@ export function FinancePage() {
                     {formatCurrency(utensilWearPerWash)} por lavagem
                   </p>
                 </div>
-                <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                <div className="rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted">
                     Custo por lavagem
                   </p>
                   <p className="mt-1 text-xl font-bold text-success">
@@ -2320,7 +2406,7 @@ export function FinancePage() {
                 <form
                   onSubmit={handleSaveFixedCost}
                   autoComplete="off"
-                  className="finance-manual-form-enter rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5"
+                  className="finance-manual-form-enter rounded-lg border border-border bg-card shadow-card p-4 shadow-card sm:p-5"
                 >
                   <div className="mb-4">
                     <h2 className="text-lg font-semibold text-foreground">
@@ -2548,7 +2634,7 @@ export function FinancePage() {
                             }
                             placeholder="Ex: 200"
                             aria-label={`Durabilidade de ${item.product.name} em lavagens`}
-                            className="w-full rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                            className="w-full rounded-lg border border-border bg-input px-4 py-2.5 text-sm text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
                           />
                           <p className="text-sm font-bold text-success">
                             {formatCurrency(item.costPerWash)}
@@ -2575,9 +2661,9 @@ export function FinancePage() {
 
           {activeTab === "reports" && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+              <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                 <div className="mb-5 flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-success/10 text-success">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
                     <BarChart3 className="h-5 w-5" />
                   </span>
                   <div>
@@ -2590,9 +2676,9 @@ export function FinancePage() {
                 <MonthlyBarChart data={monthlyReport} maxValue={maxMonthlyValue} />
               </section>
 
-              <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+              <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                 <div className="mb-5 flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Target className="h-5 w-5" />
                   </span>
                   <div>
@@ -2630,7 +2716,7 @@ export function FinancePage() {
                     </svg>
                     <div className="space-y-3">
                       {serviceRanking.map((item, index) => (
-                        <div key={item.name} className="flex items-center justify-between gap-3 rounded-xl bg-background px-4 py-3">
+                        <div key={item.name} className="flex items-center justify-between gap-3 rounded-lg bg-background px-4 py-3">
                           <span className="min-w-0 truncate text-sm font-semibold text-foreground">
                             {index + 1}. {item.name}
                           </span>
@@ -2642,15 +2728,15 @@ export function FinancePage() {
                     </div>
                   </div>
                 ) : (
-                  <p className="rounded-xl border border-dashed border-border bg-background px-4 py-10 text-center text-sm text-muted">
+                  <p className="rounded-lg border border-dashed border-border bg-background px-4 py-10 text-center text-sm text-muted">
                     Nenhum serviço finalizado para gerar o gráfico.
                   </p>
                 )}
               </section>
 
-              <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+              <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                 <div className="mb-5 flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-success/10 text-success">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
                     <CircleDollarSign className="h-5 w-5" />
                   </span>
                   <div>
@@ -2663,7 +2749,7 @@ export function FinancePage() {
                 <div className="space-y-3">
                   {clientRanking.length > 0 ? (
                     clientRanking.map((client, index) => (
-                      <div key={client.name} className="flex items-center justify-between gap-3 rounded-xl bg-background px-4 py-3">
+                      <div key={client.name} className="flex items-center justify-between gap-3 rounded-lg bg-background px-4 py-3">
                         <span className="text-sm font-semibold text-foreground">
                           {index + 1}. {client.name}
                         </span>
@@ -2673,16 +2759,16 @@ export function FinancePage() {
                       </div>
                     ))
                   ) : (
-                    <p className="rounded-xl border border-dashed border-border bg-background px-4 py-10 text-center text-sm text-muted">
+                    <p className="rounded-lg border border-dashed border-border bg-background px-4 py-10 text-center text-sm text-muted">
                       Nenhum cliente com receita finalizada.
                     </p>
                   )}
                 </div>
               </section>
 
-              <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+              <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                 <div className="mb-5 flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-warning/10 text-warning">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10 text-warning">
                     <ClipboardList className="h-5 w-5" />
                   </span>
                   <div>
@@ -2693,27 +2779,27 @@ export function FinancePage() {
                   </div>
                 </div>
                 <div className="grid grid-cols-1 gap-3">
-                  <div className="rounded-xl bg-background px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  <div className="rounded-lg bg-background px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted">
                       Serviços finalizados
                     </p>
-                    <p className="mt-1 text-2xl font-bold text-foreground">
+                    <p className="mt-1 currency-display text-foreground">
                       {todayOrders.length}
                     </p>
                   </div>
-                  <div className="rounded-xl bg-background px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  <div className="rounded-lg bg-background px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted">
                       Receita do dia
                     </p>
-                    <p className="mt-1 text-2xl font-bold text-success">
+                    <p className="mt-1 currency-display text-success">
                       {formatCurrency(todayRevenue)}
                     </p>
                   </div>
-                  <div className="rounded-xl bg-background px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  <div className="rounded-lg bg-background px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted">
                       Lucro do dia
                     </p>
-                    <p className={`mt-1 text-2xl font-bold ${todayProfit >= 0 ? "text-success" : "text-danger"}`}>
+                    <p className={`mt-1 currency-display ${todayProfit >= 0 ? "text-success" : "text-danger"}`}>
                       {formatCurrency(todayProfit)}
                     </p>
                   </div>

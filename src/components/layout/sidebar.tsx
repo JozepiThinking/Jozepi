@@ -1,67 +1,51 @@
 "use client";
 
-import type { SVGProps } from "react";
+import type { Icon } from "@phosphor-icons/react";
+import {
+  Buildings,
+  CalendarBlank,
+  CurrencyDollar,
+  Package,
+  SquaresFour,
+  UsersThree,
+  Wrench,
+} from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  CalendarDays,
-  Users,
-  Wrench,
-  Building2,
-} from "lucide-react";
 import { UserMenu } from "./user-menu";
 
-function StackedBoxesIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+const NAV_ICON_SIZE = 22;
+const NAV_ICON_WEIGHT = "light" as const;
+
+function SidebarNavIcon({
+  icon: IconComponent,
+  isActive,
+}: {
+  icon: Icon;
+  isActive: boolean;
+}) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-      {...props}
-    >
-      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
-      <path d="m3.3 7 8.7 5 8.7-5" />
-      <path d="M12 22V12" />
-    </svg>
+    <IconComponent
+      size={NAV_ICON_SIZE}
+      weight={NAV_ICON_WEIGHT}
+      className={isActive ? "text-white" : "text-white opacity-60"}
+      aria-hidden
+    />
   );
 }
 
-function CircleDollarIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-      {...props}
-    >
-      <circle cx="12" cy="12" r="10" />
-      <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" />
-      <path d="M12 18V6" />
-    </svg>
-  );
-}
-
-const iconClassName = "h-5 w-5 text-white stroke-[2.45]";
-
-const navigation = [
-  { name: "Dashboard", href: "/", icon: LayoutDashboard },
-  { name: "Agenda", href: "/agenda", icon: CalendarDays },
-  { name: "Clientes", href: "/clientes", icon: Users },
+const navigation: {
+  name: string;
+  href: string;
+  icon: Icon;
+}[] = [
+  { name: "Dashboard", href: "/", icon: SquaresFour },
+  { name: "Agenda", href: "/agenda", icon: CalendarBlank },
+  { name: "Clientes", href: "/clientes", icon: UsersThree },
   { name: "Serviços", href: "/servicos", icon: Wrench },
-  { name: "Produtos", href: "/produtos", icon: StackedBoxesIcon },
-  { name: "Financeiro", href: "/financeiro", icon: CircleDollarIcon },
-  { name: "Perfil da Empresa", href: "/empresa", icon: Building2 },
+  { name: "Produtos", href: "/produtos", icon: Package },
+  { name: "Financeiro", href: "/financeiro", icon: CurrencyDollar },
+  { name: "Perfil da Empresa", href: "/empresa", icon: Buildings },
 ];
 
 interface SidebarProps {
@@ -75,7 +59,7 @@ export function Sidebar({ userEmail, userName, avatarUrl }: SidebarProps) {
 
   return (
     <>
-      <aside className="group fixed inset-y-0 left-0 z-50 hidden w-20 flex-col overflow-hidden bg-sidebar shadow-xl transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] hover:w-64 md:flex">
+      <aside className="group fixed inset-y-0 left-0 z-50 hidden w-20 flex-col overflow-hidden bg-sidebar shadow-card transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] hover:w-64 md:flex">
         <div className="flex h-20 items-center px-3">
           <div className="font-brand flex h-14 w-52 shrink-0 items-center overflow-hidden leading-none text-white">
             <div className="flex w-14 shrink-0 flex-col justify-center text-left transition-opacity duration-300 group-hover:opacity-0">
@@ -111,12 +95,12 @@ export function Sidebar({ userEmail, userName, avatarUrl }: SidebarProps) {
                 title={item.name}
                 className={`flex h-11 items-center rounded-lg px-3 text-sm font-medium transition-colors duration-300 ${
                   isActive
-                    ? "bg-sidebar-active text-white"
+                    ? "border-l-2 border-premium bg-sidebar-active text-white"
                     : "text-white/70 hover:bg-sidebar-hover hover:text-white"
                 }`}
               >
-                <span className="flex w-8 shrink-0 justify-center text-white">
-                  <item.icon className={iconClassName} />
+                <span className="flex w-8 shrink-0 justify-center">
+                  <SidebarNavIcon icon={item.icon} isActive={isActive} />
                 </span>
                 <span className="ml-3 translate-x-2 whitespace-nowrap opacity-0 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:translate-x-0 group-hover:opacity-100">
                   {item.name}
@@ -130,31 +114,31 @@ export function Sidebar({ userEmail, userName, avatarUrl }: SidebarProps) {
       </aside>
 
       <nav
-        className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-sidebar/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2 shadow-[0_-16px_40px_rgba(15,23,42,0.22)] backdrop-blur md:hidden"
+        className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-sidebar/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2 shadow-card backdrop-blur md:hidden"
         aria-label="Navegação principal"
       >
         <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {navigation.map((item) => {
-          const isActive =
-            item.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(item.href);
+          {navigation.map((item) => {
+            const isActive =
+              item.href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(item.href);
 
-          return (
-            <Link
-              key={item.name}
-              href={item.href}
-              className={`flex min-h-14 min-w-[4.75rem] flex-1 flex-col items-center justify-center rounded-2xl px-2 text-[11px] font-semibold transition-colors ${
-                isActive
-                  ? "bg-sidebar-active text-white shadow-sm"
-                  : "text-white/65 hover:bg-sidebar-hover hover:text-white"
-              }`}
-            >
-              <item.icon className={`${iconClassName} mb-1`} />
-              <span className="max-w-[4.25rem] truncate">{item.name}</span>
-            </Link>
-          );
-        })}
+            return (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={`flex min-h-14 min-w-[4.75rem] flex-1 flex-col items-center justify-center rounded-lg px-2 text-[11px] font-semibold transition-colors ${
+                  isActive
+                    ? "border-t-2 border-premium bg-sidebar-active text-white shadow-card"
+                    : "text-white/65 hover:bg-sidebar-hover hover:text-white"
+                }`}
+              >
+                <SidebarNavIcon icon={item.icon} isActive={isActive} />
+                <span className="mt-1 max-w-[4.25rem] truncate">{item.name}</span>
+              </Link>
+            );
+          })}
         </div>
       </nav>
     </>

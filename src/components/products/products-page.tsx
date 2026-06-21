@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatPhone, normalizeOptionalPhone } from "@/lib/utils/format";
 import {
   createProductId,
   createProductPriceHistoryId,
@@ -33,13 +33,9 @@ import {
   getProductStockPercent,
   getProductStockUnit,
   getProductTypeLabel,
-  normalizeProductStock,
   parseMoney,
   parsePositiveNumber,
-  PRODUCT_TYPES_STORAGE_KEY,
   productTypeOptions,
-  PRODUCTS_STORAGE_KEY,
-  SERVICE_PRODUCT_USAGE_STORAGE_KEY,
   type ProductForm,
   type ProductItem,
   type ProductPriceHistoryReason,
@@ -48,16 +44,16 @@ import {
   type ProductTypeOption,
 } from "@/lib/products/catalog";
 import {
+  clearLocalCatalogStorage,
   deleteSupabaseProduct,
   importLocalCatalogToSupabase,
   loadSupabaseCatalog,
-  mergeProductLists,
+  readLocalCatalogFromStorage,
   saveSupabaseProduct,
   saveSupabaseProductTypes,
 } from "@/lib/products/supabase-catalog";
 
 const PRODUCT_FORM_EXIT_MS = 180;
-const SUPPLIERS_STORAGE_KEY = "auto-estetica-suppliers";
 
 type ProductTypeFilter = "all" | "liquid" | "utensil";
 type ProductPageTab = "products" | "suppliers";
@@ -115,12 +111,6 @@ const emptySupplierForm: SupplierForm = {
   notes: "",
 };
 
-function createSupplierId() {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `supplier-${Date.now()}-${Math.random()}`;
-}
-
 function sortSuppliers(list: Supplier[]) {
   return [...list].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -153,13 +143,6 @@ const priceHistoryReasonLabels: Record<ProductPriceHistoryReason, string> = {
   edited: "Edição",
   replenished: "Reposição",
 };
-
-function isQuotaExceededError(err: unknown) {
-  return (
-    err instanceof DOMException &&
-    (err.name === "QuotaExceededError" || err.code === 22)
-  );
-}
 
 function resizeProductImage(source: File | string) {
   return new Promise<string>((resolve, reject) => {
@@ -248,8 +231,8 @@ function SupplierDetail({
   );
 
   return (
-    <div className="rounded-xl bg-background px-4 py-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+    <div className="rounded-lg bg-background px-4 py-3">
+      <p className="text-xs font-semibold uppercase tracking-widest text-muted">
         {label}
       </p>
       <div className="mt-1">
@@ -275,7 +258,6 @@ export function ProductsPage() {
   const today = useMemo(() => new Date(), []);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductItem[]>([]);
-  const [productsLoaded, setProductsLoaded] = useState(false);
   const [catalogSyncReady, setCatalogSyncReady] = useState(false);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [suppliersLoaded, setSuppliersLoaded] = useState(false);
@@ -287,7 +269,6 @@ export function ProductsPage() {
   const [savingSupplier, setSavingSupplier] = useState(false);
   const [typeOptions, setTypeOptions] =
     useState<ProductTypeOption[]>(productTypeOptions);
-  const [typeOptionsLoaded, setTypeOptionsLoaded] = useState(false);
   const [serviceProductUsages, setServiceProductUsages] = useState<
     Record<string, ServiceProductUsage[]>
   >({});
@@ -326,59 +307,6 @@ export function ProductsPage() {
   }
 
   useEffect(() => {
-    void Promise.resolve().then(async () => {
-      const storedProducts = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
-      const storedTypes = window.localStorage.getItem(PRODUCT_TYPES_STORAGE_KEY);
-      const storedServiceProductUsages = window.localStorage.getItem(
-        SERVICE_PRODUCT_USAGE_STORAGE_KEY
-      );
-      const storedSuppliers = window.localStorage.getItem(SUPPLIERS_STORAGE_KEY);
-      if (storedProducts) {
-        try {
-          const parsedProducts = JSON.parse(storedProducts) as ProductItem[];
-          const normalizedProducts = parsedProducts.map(normalizeProductStock);
-          setProducts(await Promise.all(normalizedProducts.map(compactProductPhoto)));
-        } catch {
-          window.localStorage.removeItem(PRODUCTS_STORAGE_KEY);
-        }
-      }
-
-      if (storedTypes) {
-        try {
-          const customTypes = JSON.parse(storedTypes) as ProductTypeOption[];
-          setTypeOptions([...productTypeOptions, ...customTypes]);
-        } catch {
-          window.localStorage.removeItem(PRODUCT_TYPES_STORAGE_KEY);
-        }
-      }
-
-      if (storedServiceProductUsages) {
-        try {
-          setServiceProductUsages(
-            JSON.parse(storedServiceProductUsages) as Record<
-              string,
-              ServiceProductUsage[]
-            >
-          );
-        } catch {
-          window.localStorage.removeItem(SERVICE_PRODUCT_USAGE_STORAGE_KEY);
-        }
-      }
-
-      if (storedSuppliers) {
-        try {
-          setSuppliers(JSON.parse(storedSuppliers) as Supplier[]);
-        } catch {
-          window.localStorage.removeItem(SUPPLIERS_STORAGE_KEY);
-        }
-      }
-
-      setProductsLoaded(true);
-      setTypeOptionsLoaded(true);
-    });
-  }, []);
-
-  useEffect(() => {
     async function loadSuppliers() {
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
@@ -400,9 +328,9 @@ export function ProductsPage() {
         .order("name", { ascending: true });
 
       if (suppliersError) {
-        setSupplierError(null);
+        setSupplierError(suppliersError.message);
       } else {
-        setSuppliers((prev) => mergeSuppliers(prev, (data as Supplier[] | null) ?? []));
+        setSuppliers(sortSuppliers((data as Supplier[] | null) ?? []));
       }
 
       setSuppliersLoaded(true);
@@ -412,12 +340,7 @@ export function ProductsPage() {
   }, [supabase]);
 
   useEffect(() => {
-    if (
-      !workshopId ||
-      !productsLoaded ||
-      !typeOptionsLoaded ||
-      catalogSyncStartedRef.current
-    ) {
+    if (!workshopId || catalogSyncStartedRef.current) {
       return;
     }
 
@@ -425,16 +348,22 @@ export function ProductsPage() {
 
     void Promise.resolve().then(async () => {
       try {
-        await importLocalCatalogToSupabase(
-          supabase,
-          workshopId,
-          products,
-          typeOptions,
-          serviceProductUsages
-        );
+        const localCatalog = readLocalCatalogFromStorage();
+        if (localCatalog.hasData) {
+          await importLocalCatalogToSupabase(
+            supabase,
+            workshopId,
+            localCatalog.products,
+            localCatalog.typeOptions,
+            localCatalog.serviceProductUsages
+          );
+          clearLocalCatalogStorage();
+        }
 
         const catalog = await loadSupabaseCatalog(supabase, workshopId);
-        setProducts((prev) => mergeProductLists(prev, catalog.products));
+        setProducts(
+          await Promise.all(catalog.products.map(compactProductPhoto))
+        );
         setTypeOptions(catalog.typeOptions);
         setServiceProductUsages(catalog.serviceProductUsages);
         setCatalogSyncReady(true);
@@ -447,48 +376,7 @@ export function ProductsPage() {
         );
       }
     });
-  }, [
-    products,
-    productsLoaded,
-    serviceProductUsages,
-    supabase,
-    typeOptions,
-    typeOptionsLoaded,
-    workshopId,
-  ]);
-
-  useEffect(() => {
-    if (!suppliersLoaded) return;
-    window.localStorage.setItem(SUPPLIERS_STORAGE_KEY, JSON.stringify(suppliers));
-  }, [suppliers, suppliersLoaded]);
-
-  useEffect(() => {
-    if (!productsLoaded) return;
-    try {
-      window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products));
-    } catch (err) {
-      if (isQuotaExceededError(err)) {
-        window.setTimeout(() => {
-          setError(
-            "O armazenamento do navegador ficou cheio. Remova fotos grandes de produtos ou use imagens menores."
-          );
-        }, 0);
-        return;
-      }
-
-      throw err;
-    }
-  }, [products, productsLoaded]);
-
-  useEffect(() => {
-    if (!typeOptionsLoaded) return;
-
-    const customTypes = typeOptions.filter((option) => option.custom);
-    window.localStorage.setItem(
-      PRODUCT_TYPES_STORAGE_KEY,
-      JSON.stringify(customTypes)
-    );
-  }, [typeOptions, typeOptionsLoaded]);
+  }, [supabase, workshopId]);
 
   useEffect(() => {
     if (!catalogSyncReady || !workshopId) return;
@@ -587,9 +475,12 @@ export function ProductsPage() {
     );
   }
 
+  const persistedSuppliers = suppliers.filter(
+    (supplier) => supplier.workshop_id !== "local"
+  );
   const supplierOptions = [
     { value: "", label: "Sem fornecedor" },
-    ...suppliers.map((supplier) => ({
+    ...persistedSuppliers.map((supplier) => ({
       value: supplier.id,
       label: supplier.name,
     })),
@@ -613,11 +504,12 @@ export function ProductsPage() {
 
   function startEditingSupplier(supplier: Supplier) {
     setEditingSupplierId(supplier.id);
+    const whatsapp = getSupplierExtra(supplier, "whatsapp");
     setSupplierForm({
       name: supplier.name,
       contactName: getSupplierExtra(supplier, "contactName"),
-      phone: supplier.phone ?? "",
-      whatsapp: getSupplierExtra(supplier, "whatsapp"),
+      phone: supplier.phone ? formatPhone(supplier.phone) : "",
+      whatsapp: whatsapp ? formatPhone(whatsapp) : "",
       email: getSupplierExtra(supplier, "email"),
       document: getSupplierExtra(supplier, "document"),
       cityState: getSupplierExtra(supplier, "cityState"),
@@ -642,77 +534,80 @@ export function ProductsPage() {
       return;
     }
 
+    if (!workshopId) {
+      setSupplierError("Oficina não encontrada.");
+      return;
+    }
+
     setSavingSupplier(true);
     setSupplierError(null);
 
+    let normalizedPhone: string | null = null;
+    let normalizedWhatsapp: string | null = null;
+
+    try {
+      normalizedPhone = normalizeOptionalPhone(supplierForm.phone);
+      normalizedWhatsapp = normalizeOptionalPhone(supplierForm.whatsapp);
+    } catch (err) {
+      setSavingSupplier(false);
+      setSupplierError(
+        err instanceof Error ? err.message : "Informe um telefone válido com DDD."
+      );
+      return;
+    }
+
     const now = new Date().toISOString();
     const existingSupplier = suppliers.find((supplier) => supplier.id === editingSupplierId);
-    const localSupplier: Supplier = {
-      id: editingSupplierId ?? createSupplierId(),
-      workshop_id: workshopId ?? existingSupplier?.workshop_id ?? "local",
-      name: supplierForm.name.trim(),
-      contactName: supplierForm.contactName.trim() || null,
-      phone: supplierForm.phone.trim() || null,
-      whatsapp: supplierForm.whatsapp.trim() || null,
-      email: supplierForm.email.trim() || null,
-      document: supplierForm.document.trim() || null,
-      cityState: supplierForm.cityState.trim() || null,
-      category: existingSupplier?.category ?? "Outros",
-      notes: supplierForm.notes.trim() || null,
-      created_at: existingSupplier?.created_at ?? now,
-      updated_at: now,
-    };
     const payload = {
-      workshop_id: workshopId ?? localSupplier.workshop_id,
+      workshop_id: workshopId,
       name: supplierForm.name.trim(),
-      phone: supplierForm.phone.trim() || null,
+      phone: normalizedPhone,
       category: existingSupplier?.category ?? "Outros",
       notes: supplierForm.notes.trim() || null,
       updated_at: now,
     };
 
-    const result = workshopId
-      ? await (editingSupplierId
-          ? supabase
-              .from("suppliers")
-              .update(payload)
-              .eq("id", editingSupplierId)
-              .eq("workshop_id", workshopId)
-          : supabase.from("suppliers").insert(payload)
-        )
+    const result = editingSupplierId
+      ? await supabase
+          .from("suppliers")
+          .update(payload)
+          .eq("id", editingSupplierId)
+          .eq("workshop_id", workshopId)
           .select("id, workshop_id, name, phone, category, notes, created_at, updated_at")
           .single()
-      : { data: null, error: new Error("Supabase indisponível.") };
+      : await supabase
+          .from("suppliers")
+          .insert(payload)
+          .select("id, workshop_id, name, phone, category, notes, created_at, updated_at")
+          .single();
 
     setSavingSupplier(false);
 
-    const supplier = result.data
-      ? ({
-          ...(result.data as Supplier),
-          id: editingSupplierId ?? (result.data as Supplier).id,
-          contactName: localSupplier.contactName,
-          whatsapp: localSupplier.whatsapp,
-          email: localSupplier.email,
-          document: localSupplier.document,
-          cityState: localSupplier.cityState,
-        } as Supplier)
-      : localSupplier;
-    setSuppliers((prev) => {
-      const nextSuppliers = editingSupplierId
+    if (result.error || !result.data) {
+      setSupplierError(
+        result.error?.message ?? "Não foi possível salvar o fornecedor no Supabase."
+      );
+      return;
+    }
+
+    const supplier: Supplier = {
+      ...(result.data as Supplier),
+      contactName: supplierForm.contactName.trim() || null,
+      whatsapp: normalizedWhatsapp,
+      email: supplierForm.email.trim() || null,
+      document: supplierForm.document.trim() || null,
+      cityState: supplierForm.cityState.trim() || null,
+    };
+
+    setSuppliers((prev) =>
+      editingSupplierId
         ? sortSuppliers([
             ...prev.filter((item) => item.id !== editingSupplierId),
             supplier,
           ])
-        : mergeSuppliers(prev, [supplier]);
-      window.localStorage.setItem(
-        SUPPLIERS_STORAGE_KEY,
-        JSON.stringify(nextSuppliers)
-      );
-      return nextSuppliers;
-    });
+        : mergeSuppliers(prev, [supplier])
+    );
     setSelectedSupplierId(supplier.id);
-    setSupplierError(null);
-
     resetSupplierForm();
   }
 
@@ -838,6 +733,19 @@ export function ProductsPage() {
       return;
     }
 
+    const persistedSupplierId =
+      form.supplierId &&
+      persistedSuppliers.some((supplier) => supplier.id === form.supplierId)
+        ? form.supplierId
+        : undefined;
+
+    if (form.supplierId && !persistedSupplierId) {
+      setError(
+        "O fornecedor selecionado não está salvo no Supabase. Cadastre-o na aba Fornecedores antes de vincular ao produto."
+      );
+      return;
+    }
+
     const baseProduct: ProductItem = {
       id: editingProduct?.id ?? createProductId(),
       name: form.name.trim(),
@@ -848,7 +756,7 @@ export function ProductsPage() {
       durabilityWashes: "",
       totalCost: form.totalCost,
       photoUrl: form.photoUrl || undefined,
-      supplierId: form.supplierId || undefined,
+      supplierId: persistedSupplierId,
       priceHistory: editingProduct?.priceHistory ?? [],
     };
     const previousPrice = editingProduct
@@ -1207,7 +1115,7 @@ export function ProductsPage() {
                 options={productTypeFilterOptions}
                 onChange={(value) => setTypeFilter(value as ProductTypeFilter)}
               />
-              <div className="rounded-xl bg-background px-4 py-3 text-sm font-semibold text-foreground">
+              <div className="rounded-lg bg-background px-4 py-3 text-sm font-semibold text-foreground">
                 {filteredProducts.length} produto
                 {filteredProducts.length !== 1 ? "s" : ""} encontrado
                 {filteredProducts.length !== 1 ? "s" : ""}
@@ -1243,7 +1151,7 @@ export function ProductsPage() {
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] xl:items-start">
         <section className="order-2 xl:order-1">
           {products.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-16 text-center shadow-sm">
+            <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card shadow-card py-16 text-center shadow-card">
               <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-success/10">
                 <Package className="h-7 w-7 text-success" />
               </div>
@@ -1259,7 +1167,7 @@ export function ProductsPage() {
               </Button>
             </div>
           ) : filteredProducts.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border bg-card py-14 text-center shadow-sm">
+            <div className="rounded-lg border border-dashed border-border bg-card py-14 text-center shadow-card">
               <p className="font-medium text-foreground">
                 Nenhum produto encontrado
               </p>
@@ -1275,32 +1183,32 @@ export function ProductsPage() {
                 return (
                   <article
                     key={product.id}
-                    className="relative z-0 rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:z-50 hover:-translate-y-0.5 hover:shadow-md"
+                    className="relative z-0 rounded-lg border border-border bg-card shadow-card p-5 shadow-card transition-all hover:z-50 hover:-translate-y-0.5 hover:shadow-card-hover"
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-center gap-3">
                         {product.photoUrl ? (
-                          <span className="product-photo-preview group/photo relative h-10 w-10 shrink-0 cursor-zoom-in overflow-visible rounded-xl border border-border bg-card shadow-sm transition-all duration-300 hover:border-success/40 hover:shadow-md hover:ring-2 hover:ring-success/15">
+                          <span className="product-photo-preview group/photo relative h-10 w-10 shrink-0 cursor-zoom-in overflow-visible rounded-lg border border-border bg-card shadow-card shadow-card transition-all duration-300 hover:border-success/40 hover:shadow-card-hover hover:ring-2 hover:ring-success/15">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={product.photoUrl}
                               alt={`Foto de ${product.name}`}
-                              className="h-full w-full rounded-xl object-cover transition duration-300 group-hover/photo:scale-105 group-hover/photo:brightness-110"
+                              className="h-full w-full rounded-lg object-cover transition duration-300 group-hover/photo:scale-105 group-hover/photo:brightness-110"
                             />
-                            <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl bg-slate-950/0 text-white opacity-0 transition-all duration-300 group-hover/photo:bg-slate-950/25 group-hover/photo:opacity-100">
-                              <ZoomIn className="h-4 w-4 drop-shadow-sm" />
+                            <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-foreground/0 text-white opacity-0 transition-all duration-300 group-hover/photo:bg-foreground/25 group-hover/photo:opacity-100">
+                              <ZoomIn className="h-4 w-4 drop-shadow-card" />
                             </span>
-                            <span className="pointer-events-none absolute left-0 top-12 z-[999] hidden h-44 w-44 overflow-hidden rounded-2xl border border-border bg-card p-1 opacity-0 shadow-2xl ring-1 ring-slate-900/5 group-hover/photo:block product-photo-preview-popover">
+                            <span className="pointer-events-none absolute left-0 top-12 z-[999] hidden h-44 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-card p-1 opacity-0 shadow-2xl ring-1 ring-slate-900/5 group-hover/photo:block product-photo-preview-popover">
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={product.photoUrl}
                                 alt={`Prévia ampliada de ${product.name}`}
-                                className="h-full w-full rounded-xl object-cover"
+                                className="h-full w-full rounded-lg object-cover"
                               />
                             </span>
                           </span>
                         ) : (
-                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-success/10 text-success">
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
                             {isLiquid ? (
                               <Droplets className="h-5 w-5" />
                             ) : (
@@ -1342,7 +1250,7 @@ export function ProductsPage() {
                     </div>
 
                     <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
-                      <div className="rounded-xl bg-background px-4 py-3">
+                      <div className="rounded-lg bg-background px-4 py-3">
                         <span className="font-medium text-muted">
                           {isLiquid ? "Volume total" : "Quantidade"}
                         </span>
@@ -1350,7 +1258,7 @@ export function ProductsPage() {
                           {isLiquid ? `${product.volumeMl} ml` : product.quantity}
                         </p>
                       </div>
-                      <div className="rounded-xl bg-background px-4 py-3">
+                      <div className="rounded-lg bg-background px-4 py-3">
                         <span className="font-medium text-muted">Valor</span>
                         <p className="mt-1 font-bold text-foreground">
                           {formatCurrency(parseMoney(product.totalCost || "0"))}
@@ -1370,7 +1278,7 @@ export function ProductsPage() {
               key={formAnimationKey}
               onSubmit={handleSaveProduct}
               autoComplete="off"
-              className={`rounded-xl border border-border bg-card p-6 shadow-sm ${
+              className={`rounded-lg border border-border bg-card shadow-card p-6 shadow-card ${
                 formClosing ? "product-form-exit" : "product-form-enter"
               }`}
             >
@@ -1394,10 +1302,10 @@ export function ProductsPage() {
               </div>
 
               <div className="grid grid-cols-1 gap-4">
-                <div className="rounded-xl border border-border bg-background p-4">
+                <div className="rounded-lg border border-border bg-background shadow-card p-4">
                   <div className="flex items-center gap-4">
                     <div
-                      className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-card bg-cover bg-center text-muted"
+                      className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-card shadow-card bg-cover bg-center text-muted"
                       style={
                         form.photoUrl
                           ? { backgroundImage: `url(${form.photoUrl})` }
@@ -1517,23 +1425,23 @@ export function ProductsPage() {
               </div>
             </form>
           ) : products.length > 0 ? (
-            <div className="flex h-[calc(100vh-2rem)] min-h-[28rem] flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm">
+            <div className="flex h-[calc(100vh-2rem)] min-h-[28rem] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
               <div className="mb-5 flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-muted">
+                  <p className="text-xs font-bold uppercase tracking-widest text-muted">
                     Estoque
                   </p>
                   <h2 className="mt-1 text-lg font-semibold text-foreground">
                     Produtos disponíveis
                   </h2>
                 </div>
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-success/10 text-success">
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
                   <Package className="h-5 w-5" />
                 </span>
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                <div className="rounded-xl bg-background px-4 py-3">
+                <div className="rounded-lg bg-background px-4 py-3">
                   <p className="text-xs font-semibold text-muted">
                     Total investido
                   </p>
@@ -1541,7 +1449,7 @@ export function ProductsPage() {
                     {formatCurrency(totalInvested)}
                   </p>
                 </div>
-                <div className="rounded-xl bg-background px-4 py-3">
+                <div className="rounded-lg bg-background px-4 py-3">
                   <p className="text-xs font-semibold text-muted">
                     Produtos no estoque
                   </p>
@@ -1553,7 +1461,7 @@ export function ProductsPage() {
 
               <div className="mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
                 {stockProducts.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-border bg-background px-4 py-6 text-center text-sm text-muted">
+                  <p className="rounded-lg border border-dashed border-border bg-background px-4 py-6 text-center text-sm text-muted">
                     Nenhum produto líquido no estoque.
                   </p>
                 ) : stockProducts.map((product) => {
@@ -1578,7 +1486,7 @@ export function ProductsPage() {
                   return (
                     <div
                       key={product.id}
-                      className={`rounded-xl border p-4 transition-colors ${
+                      className={`rounded-lg border p-4 transition-colors ${
                         criticalStock
                           ? "border-danger/25 bg-danger/5"
                           : "border-border bg-background"
@@ -1676,7 +1584,7 @@ export function ProductsPage() {
                           />
                         </div>
                       ) : (
-                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-border">
                           <div
                             className={`h-full rounded-full transition-all ${progressClass}`}
                             style={{ width: `${progressWidth}%` }}
@@ -1685,8 +1593,8 @@ export function ProductsPage() {
                       )}
 
                       {usageSummary.serviceCount > 0 ? (
-                        <div className="mt-3 rounded-xl bg-card px-3 py-2">
-                          <p className="text-[10px] font-bold uppercase tracking-wide text-muted">
+                        <div className="mt-3 rounded-lg bg-card px-3 py-2">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-muted">
                             Autonomia
                           </p>
                           <p className="mt-0.5 text-sm font-bold text-foreground">
@@ -1696,8 +1604,8 @@ export function ProductsPage() {
                       ) : null}
 
                       {priceHistory.length > 0 && (
-                        <div className="mt-3 rounded-xl border border-border bg-card px-3 py-2">
-                          <p className="text-[10px] font-bold uppercase tracking-wide text-muted">
+                        <div className="mt-3 rounded-lg border border-border bg-card shadow-card px-3 py-2">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-muted">
                             Histórico de preços
                           </p>
                           <div className="mt-2 space-y-1.5">
@@ -1722,7 +1630,7 @@ export function ProductsPage() {
                       )}
 
                       {replenishingProductId === product.id && (
-                        <div className="mt-3 rounded-xl border border-border bg-card p-3">
+                        <div className="mt-3 rounded-lg border border-border bg-card shadow-card p-3">
                           <p className="mb-3 rounded-lg bg-background px-3 py-2 text-xs font-semibold text-muted">
                             Produto:{" "}
                             <span className="text-foreground">
@@ -1847,7 +1755,7 @@ export function ProductsPage() {
           <form
             onSubmit={handleSaveSupplier}
             autoComplete="off"
-            className="rounded-xl border border-border bg-card p-5 shadow-sm"
+            className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card"
           >
             <h3 className="text-sm font-semibold text-foreground">
               {editingSupplierId ? "Editar fornecedor" : "Novo fornecedor"}
@@ -1906,7 +1814,7 @@ export function ProductsPage() {
                   value={supplierForm.notes}
                   onChange={(event) => updateSupplierForm({ notes: event.target.value })}
                   rows={4}
-                  className="w-full resize-none rounded-lg border border-border bg-slate-50 px-4 py-3 text-base text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:py-2.5 sm:text-sm"
+                  className="w-full resize-none rounded-lg border border-border bg-input px-4 py-3 text-base text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:py-2.5 sm:text-sm"
                   placeholder="Condições de pagamento, entrega, contato..."
                 />
               </div>
@@ -1968,7 +1876,11 @@ export function ProductsPage() {
                           )}
                         </div>
                         <p className="text-sm font-medium text-foreground">
-                          {supplier.phone || getSupplierExtra(supplier, "whatsapp") || "-"}
+                          {supplier.phone
+                            ? formatPhone(supplier.phone)
+                            : getSupplierExtra(supplier, "whatsapp")
+                              ? formatPhone(getSupplierExtra(supplier, "whatsapp"))
+                              : "-"}
                         </p>
                         <div className="flex justify-end gap-2">
                           <button
@@ -2001,12 +1913,12 @@ export function ProductsPage() {
                   </div>
                 </div>
               )}
-              <aside className="rounded-xl border border-border bg-card p-5 shadow-sm xl:sticky xl:top-4">
+              <aside className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card xl:sticky xl:top-4">
                 {selectedSupplier ? (
                   <div>
                     <div className="mb-5 flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-xs font-bold uppercase tracking-wide text-muted">
+                        <p className="text-xs font-bold uppercase tracking-widest text-muted">
                           Fornecedor
                         </p>
                         <h3 className="mt-1 text-xl font-bold text-foreground">
@@ -2025,10 +1937,21 @@ export function ProductsPage() {
                     </div>
                     <div className="space-y-3 text-sm">
                       <SupplierDetail label="Contato" value={getSupplierExtra(selectedSupplier, "contactName")} />
-                      <SupplierDetail label="Telefone" value={selectedSupplier.phone ?? ""} />
+                      <SupplierDetail
+                        label="Telefone"
+                        value={
+                          selectedSupplier.phone
+                            ? formatPhone(selectedSupplier.phone)
+                            : ""
+                        }
+                      />
                       <SupplierDetail
                         label="WhatsApp"
-                        value={getSupplierExtra(selectedSupplier, "whatsapp")}
+                        value={
+                          getSupplierExtra(selectedSupplier, "whatsapp")
+                            ? formatPhone(getSupplierExtra(selectedSupplier, "whatsapp"))
+                            : ""
+                        }
                         href={getSupplierWhatsAppUrl(getSupplierExtra(selectedSupplier, "whatsapp"))}
                         icon={<MessageCircle className="h-4 w-4" />}
                       />

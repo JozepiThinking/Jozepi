@@ -19,6 +19,26 @@ export function formatPhone(phone: string): string {
   return phone;
 }
 
+export function normalizePhone(phone: string): string {
+  let digits = phone.replace(/\D/g, "");
+
+  if (digits.startsWith("55") && digits.length >= 12) {
+    digits = digits.slice(2);
+  }
+
+  if (digits.length !== 10 && digits.length !== 11) {
+    throw new Error("Informe um telefone válido com DDD.");
+  }
+
+  return formatPhone(digits);
+}
+
+export function normalizeOptionalPhone(phone: string): string | null {
+  const trimmed = phone.trim();
+  if (!trimmed) return null;
+  return normalizePhone(trimmed);
+}
+
 export function formatDate(date: string | Date): string {
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",

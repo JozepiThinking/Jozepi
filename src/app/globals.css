@@ -1,20 +1,25 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
+  --background: #f5f4f0;
+  --foreground: #1a1a1a;
   --sidebar: #1a2744;
   --sidebar-hover: #ffffff14;
   --sidebar-active: #ffffff24;
+  --sidebar-active-border: #c9a84c;
   --primary: #1a2744;
   --primary-hover: #111b33;
   --accent: #1a2744;
+  --premium: #c9a84c;
   --card: #ffffff;
-  --border: #e2e8f0;
-  --muted: #9ca3af;
+  --border: #e8e6e1;
+  --muted: #6b6560;
+  --input-bg: #faf9f7;
   --success: #1a2744;
   --warning: #d97706;
   --danger: #dc2626;
+  --shadow-card: 0 1px 3px rgba(26, 26, 26, 0.05), 0 4px 14px rgba(107, 101, 96, 0.07);
+  --shadow-card-hover: 0 2px 6px rgba(26, 26, 26, 0.06), 0 8px 24px rgba(107, 101, 96, 0.1);
 }
 
 @theme inline {
@@ -23,15 +28,20 @@
   --color-sidebar: var(--sidebar);
   --color-sidebar-hover: var(--sidebar-hover);
   --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-active-border: var(--sidebar-active-border);
   --color-primary: var(--primary);
   --color-primary-hover: var(--primary-hover);
   --color-accent: var(--accent);
+  --color-premium: var(--premium);
   --color-card: var(--card);
   --color-border: var(--border);
   --color-muted: var(--muted);
+  --color-input: var(--input-bg);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
+  --shadow-card: var(--shadow-card);
+  --shadow-card-hover: var(--shadow-card-hover);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-brand: var(--font-rajdhani);
@@ -47,9 +57,125 @@ h1,
 h2,
 h3 {
   font-family: var(--font-brand), var(--font-sans), system-ui, sans-serif;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.04em;
 }
 
 .font-brand {
   font-family: var(--font-brand), var(--font-sans), system-ui, sans-serif;
+}
+
+.page-title {
+  font-family: var(--font-brand), var(--font-sans), system-ui, sans-serif;
+  font-size: 1.875rem;
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  color: var(--foreground);
+  line-height: 1.2;
+}
+
+@media (min-width: 640px) {
+  .page-title {
+    font-size: 2.25rem;
+  }
+}
+
+.page-subtitle {
+  margin-top: 0.375rem;
+  font-size: 0.875rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.label-caps {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.currency-display {
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+  line-height: 1.2;
+}
+
+@media (min-width: 640px) {
+  .currency-display {
+    font-size: 1.875rem;
+  }
+}
+
+.card-surface {
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 1.25rem;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 300ms ease;
+}
+
+.card-surface:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+@media (min-width: 640px) {
+  .card-surface {
+    padding: 1.5rem;
+  }
+}
+
+.badge-premium {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--premium) 12%, transparent);
+  color: color-mix(in srgb, var(--premium) 90%, var(--foreground));
+  backdrop-filter: blur(4px);
+}
+
+.divider-gradient {
+  height: 1px;
+  border: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--border) 20%,
+    var(--border) 80%,
+    transparent 100%
+  );
+}
+
+.dropdown-menu-enter {
+  animation: dropdown-menu-enter 180ms ease-out both;
+}
+
+.dropdown-menu-exit {
+  animation: dropdown-menu-exit 160ms ease-in both;
+}
+
+@keyframes dropdown-menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes dropdown-menu-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
 }

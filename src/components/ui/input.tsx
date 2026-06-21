@@ -15,10 +15,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
 
     return (
       <div className="space-y-1.5">
-        <label
-          htmlFor={inputId}
-          className="block text-sm font-semibold text-foreground"
-        >
+        <label htmlFor={inputId} className="label-caps">
           {label}
         </label>
         <div className="relative">
@@ -31,9 +28,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             ref={ref}
             id={inputId}
             className={cn(
-              "w-full rounded-lg border border-border bg-slate-50 px-4 py-3 text-base text-foreground sm:py-2.5 sm:text-sm",
+              "w-full rounded-md border border-border bg-input px-4 py-3 text-base text-foreground sm:py-2.5 sm:text-sm",
               prefix && "pl-11",
-              "placeholder:text-muted/60 transition-colors",
+              "placeholder:text-muted/60 transition-colors duration-300",
               "focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20",
               "disabled:cursor-not-allowed disabled:opacity-50",
               error && "border-danger focus:border-danger focus:ring-danger/20",

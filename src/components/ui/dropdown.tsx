@@ -134,10 +134,7 @@ export function Dropdown({
 
   return (
     <div className={cn("relative space-y-1.5", className)}>
-      <label
-        htmlFor={inputId}
-        className="block text-sm font-semibold text-foreground"
-      >
+      <label htmlFor={inputId} className="label-caps">
         {label}
       </label>
       <button
@@ -147,7 +144,7 @@ export function Dropdown({
         aria-haspopup="listbox"
         aria-expanded={open && !closing}
         onClick={toggleDropdown}
-        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-border bg-slate-50 px-4 py-3 text-left text-base text-foreground transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-2.5 sm:text-sm"
+        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-md border border-border bg-input px-4 py-3 text-left text-base text-foreground transition-colors duration-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-2.5 sm:text-sm"
       >
         <span className={selectedOption ? "font-medium" : "text-muted/70"}>
           {selectedOption?.label ?? placeholder}
@@ -162,7 +159,7 @@ export function Dropdown({
       {open && !disabled && (
         <div
           className={cn(
-            "absolute left-0 right-0 top-full z-40 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-border bg-card p-2 shadow-xl",
+            "absolute left-0 right-0 top-full z-40 mt-2 max-h-64 overflow-y-auto rounded-lg border border-border bg-card p-2 shadow-card-hover",
             closing ? "dropdown-menu-exit" : "dropdown-menu-enter"
           )}
         >
@@ -174,8 +171,8 @@ export function Dropdown({
                 <div
                   key={option.value}
                   className={cn(
-                    "flex items-center gap-2 rounded-xl transition-colors",
-                    selected ? "bg-success/10" : "hover:bg-background"
+                    "flex items-center gap-2 rounded-md transition-colors duration-300",
+                    selected ? "bg-premium/10" : "hover:bg-background"
                   )}
                 >
                   <button
@@ -185,7 +182,7 @@ export function Dropdown({
                     onClick={() => selectOption(option.value)}
                     className={cn(
                       "min-h-11 min-w-0 flex-1 px-3 py-3 text-left text-base font-semibold transition-colors sm:min-h-0 sm:py-2.5 sm:text-sm",
-                      selected ? "text-success" : "text-foreground"
+                      selected ? "text-premium" : "text-foreground"
                     )}
                   >
                     {option.label}
@@ -209,7 +206,7 @@ export function Dropdown({
             })}
           </div>
           {creating && onCreateOption ? (
-            <div className="mt-2 rounded-xl border border-dashed border-success/30 bg-success/5 p-2">
+            <div className="mt-2 rounded-lg border border-dashed border-success/30 bg-success/5 p-2">
               <input
                 value={createValue}
                 onChange={(event) => {
@@ -228,7 +225,7 @@ export function Dropdown({
                 }}
                 autoFocus
                 placeholder={createPlaceholder}
-                className="w-full rounded-lg border border-border bg-slate-50 px-3 py-3 text-base font-medium text-foreground placeholder:text-muted/60 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:py-2 sm:text-sm"
+                className="w-full rounded-md border border-border bg-input px-3 py-3 text-base font-medium text-foreground placeholder:text-muted/60 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:py-2 sm:text-sm"
               />
               {createError && (
                 <p className="mt-2 text-xs font-medium text-danger">
@@ -264,7 +261,7 @@ export function Dropdown({
                 onAction?.();
                 closeDropdown();
               }}
-              className="mt-2 flex min-h-11 w-full items-center gap-2 rounded-xl border border-dashed border-success/30 px-3 py-3 text-left text-base font-semibold text-success transition-colors hover:bg-success/10 sm:min-h-0 sm:py-2.5 sm:text-sm"
+              className="mt-2 flex min-h-11 w-full items-center gap-2 rounded-lg border border-dashed border-success/30 px-3 py-3 text-left text-base font-semibold tracking-wide text-success transition-colors duration-300 hover:bg-success/10 sm:min-h-0 sm:py-2.5 sm:text-sm"
             >
               <Plus className="h-4 w-4" />
               {actionLabel}

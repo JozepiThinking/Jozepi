@@ -8,11 +8,12 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variants = {
   primary:
-    "bg-primary text-white hover:bg-primary-hover focus:ring-primary/30 shadow-sm",
+    "bg-primary text-white hover:bg-primary-hover focus:ring-primary/30 shadow-card",
   secondary:
-    "border border-border bg-white text-foreground hover:bg-background focus:ring-accent/20",
+    "border border-border bg-card text-foreground hover:bg-background focus:ring-accent/20 shadow-card",
   ghost: "text-muted hover:bg-background hover:text-foreground",
-  success: "bg-success text-white hover:bg-success/90 focus:ring-success/30 shadow-sm",
+  success:
+    "bg-success text-white hover:bg-success/90 focus:ring-success/30 shadow-card",
 };
 
 export function Button({
@@ -26,8 +27,8 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-3 sm:min-h-0 sm:py-2.5",
-        "text-base font-medium transition-colors focus:outline-none focus:ring-2 sm:text-sm",
+        "inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-4 py-3 sm:min-h-0 sm:py-2.5",
+        "text-base font-medium tracking-wide transition-all duration-300 focus:outline-none focus:ring-2 sm:text-sm",
         "disabled:cursor-not-allowed disabled:opacity-50",
         variants[variant],
         className

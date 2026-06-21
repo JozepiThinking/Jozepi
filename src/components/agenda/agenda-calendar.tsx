@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
+  CalendarDays,
   Car,
   Check,
   ChevronLeft,
@@ -18,16 +19,10 @@ import { Input } from "@/components/ui/input";
 import { ClientFormModal } from "@/components/clients/client-form-modal";
 import { syncVehicles } from "@/lib/clients/sync-vehicles";
 import { createClient } from "@/lib/supabase/client";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, normalizePhone } from "@/lib/utils/format";
 import {
   getProductRemainingStock,
-  normalizeProductStock,
   parsePositiveNumber,
-  PRODUCTS_STORAGE_KEY,
-  SERVICE_PRODUCT_USAGE_STORAGE_KEY,
-  STOCK_DISCOUNTS_STORAGE_KEY,
-  type ProductItem,
-  type ServiceProductUsage,
 } from "@/lib/products/catalog";
 import {
   loadSupabaseCatalog,
@@ -137,7 +132,7 @@ const statusStyles: Record<
   }
 > = {
   Confirmado: {
-    calendarPill: "status-confirmed-soft",
+    calendarPill: "status-pill-confirmed",
     timelineBlock: "status-confirmed-solid",
     sideCard: "status-confirmed-card",
     sideAccent: "status-confirmed-side-accent",
@@ -145,7 +140,7 @@ const statusStyles: Record<
     timeBadge: "status-confirmed-soft",
   },
   Pendente: {
-    calendarPill: "bg-warning/10 text-warning",
+    calendarPill: "status-pill-pending",
     timelineBlock: "bg-warning",
     sideCard: "border-warning/20 bg-warning/5",
     sideAccent: "border-l-[var(--warning)]",
@@ -153,7 +148,7 @@ const statusStyles: Record<
     timeBadge: "bg-warning/10 text-warning",
   },
   Cancelado: {
-    calendarPill: "bg-danger/10 text-danger",
+    calendarPill: "status-pill-cancelled",
     timelineBlock: "bg-danger",
     sideCard: "border-danger/20 bg-danger/5",
     sideAccent: "border-l-[var(--danger)]",
@@ -161,7 +156,7 @@ const statusStyles: Record<
     timeBadge: "bg-danger/10 text-danger",
   },
   Concluído: {
-    calendarPill: "status-completed-soft",
+    calendarPill: "status-pill-completed",
     timelineBlock: "status-completed-solid",
     sideCard: "status-completed-card",
     sideAccent: "status-completed-side-accent",
@@ -180,6 +175,10 @@ type AgendaSelectId = "client" | "vehicle" | "service";
 
 function getStatusStyle(status: AppointmentStatus) {
   return statusStyles[status];
+}
+
+function formatAppointmentCount(count: number) {
+  return count === 1 ? "1 agendamento" : `${count} agendamentos`;
 }
 
 function timeToMinutes(time: string) {
@@ -405,25 +404,20 @@ function getLocalAgendaCapacityKey(workshopId: string) {
   return `${AGENDA_CAPACITY_STORAGE_KEY}-${workshopId}`;
 }
 
-function readLocalAgendaCapacity(workshopId: string) {
-  if (typeof window === "undefined") return DEFAULT_AGENDA_CAPACITY;
+function readLocalAgendaCapacityForImport(workshopId: string) {
+  if (typeof window === "undefined") return null;
 
   try {
-    return normalizeAgendaCapacity(
-      window.localStorage.getItem(getLocalAgendaCapacityKey(workshopId))
-    );
+    const stored = window.localStorage.getItem(getLocalAgendaCapacityKey(workshopId));
+    return stored ? normalizeAgendaCapacity(stored) : null;
   } catch {
-    return DEFAULT_AGENDA_CAPACITY;
+    return null;
   }
 }
 
-function writeLocalAgendaCapacity(workshopId: string, capacity: number) {
+function clearLocalAgendaCapacity(workshopId: string) {
   if (typeof window === "undefined") return;
-
-  window.localStorage.setItem(
-    getLocalAgendaCapacityKey(workshopId),
-    String(capacity)
-  );
+  window.localStorage.removeItem(getLocalAgendaCapacityKey(workshopId));
 }
 
 function readLocalAppointments() {
@@ -443,81 +437,9 @@ function readLocalAppointments() {
   }
 }
 
-function writeLocalAppointments(appointments: Appointment[]) {
+function clearLocalAppointments() {
   if (typeof window === "undefined") return;
-
-  window.localStorage.setItem(AGENDA_STORAGE_KEY, JSON.stringify(appointments));
-}
-
-function applyStockDiscountForAppointment(appointment: Appointment) {
-  if (typeof window === "undefined") return;
-
-  let discountedAppointmentIds: string[] = [];
-  try {
-    discountedAppointmentIds = JSON.parse(
-      window.localStorage.getItem(STOCK_DISCOUNTS_STORAGE_KEY) ?? "[]"
-    ) as string[];
-  } catch {
-    window.localStorage.removeItem(STOCK_DISCOUNTS_STORAGE_KEY);
-  }
-
-  if (discountedAppointmentIds.includes(appointment.id)) return;
-
-  let products: ProductItem[] = [];
-  let serviceProductUsages: Record<string, ServiceProductUsage[]> = {};
-
-  try {
-    products = (
-      JSON.parse(window.localStorage.getItem(PRODUCTS_STORAGE_KEY) ?? "[]") as
-        | ProductItem[]
-        | null
-    )?.map(normalizeProductStock) ?? [];
-  } catch {
-    return;
-  }
-
-  try {
-    serviceProductUsages = JSON.parse(
-      window.localStorage.getItem(SERVICE_PRODUCT_USAGE_STORAGE_KEY) ?? "{}"
-    ) as Record<string, ServiceProductUsage[]>;
-  } catch {
-    return;
-  }
-
-  const usageByProductId = new Map<string, number>();
-  appointment.serviceIds.forEach((serviceId) => {
-    (serviceProductUsages[serviceId] ?? []).forEach((usage) => {
-      try {
-        const amount = parsePositiveNumber(usage.amount);
-        usageByProductId.set(
-          usage.productId,
-          (usageByProductId.get(usage.productId) ?? 0) + amount
-        );
-      } catch {
-        // Ignore incomplete service usage rows.
-      }
-    });
-  });
-
-  if (usageByProductId.size === 0) return;
-
-  const updatedProducts = products.map((product) => {
-    const discountAmount = usageByProductId.get(product.id);
-    if (!discountAmount) return product;
-
-    return {
-      ...product,
-      stockRemaining: String(
-        Math.max(0, getProductRemainingStock(product) - discountAmount)
-      ),
-    };
-  });
-
-  window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(updatedProducts));
-  window.localStorage.setItem(
-    STOCK_DISCOUNTS_STORAGE_KEY,
-    JSON.stringify([...discountedAppointmentIds, appointment.id])
-  );
+  window.localStorage.removeItem(AGENDA_STORAGE_KEY);
 }
 
 function mapOrderToAppointment(order: AppointmentOrderRow): Appointment {
@@ -641,7 +563,7 @@ function AgendaDropdown({
           if (open) setSearchQuery("");
           onToggle();
         }}
-        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-base text-foreground shadow-sm transition-all duration-200 hover:border-success/40 hover:bg-white focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-2.5 sm:text-sm"
+        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-border bg-white px-4 py-3 text-left text-base text-foreground shadow-card transition-all duration-200 hover:border-success/40 hover:bg-white focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-2.5 sm:text-sm"
       >
         <span className={selectedOption ? "font-medium" : "text-muted"}>
           {selectedOption?.label ?? placeholder}
@@ -652,7 +574,7 @@ function AgendaDropdown({
       </button>
 
       {open && !disabled && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-border bg-white p-2 shadow-xl ring-1 ring-slate-900/5">
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-64 overflow-y-auto rounded-lg border border-border bg-white p-2 shadow-xl ring-1 ring-slate-900/5">
           {searchable && (
             <input
               ref={searchInputRef}
@@ -666,7 +588,7 @@ function AgendaDropdown({
                 }
               }}
               placeholder={searchPlaceholder}
-              className="mb-2 min-h-11 w-full rounded-xl border border-slate-200 bg-background px-3 py-3 text-base font-medium text-foreground placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:min-h-0 sm:py-2.5 sm:text-sm"
+              className="mb-2 min-h-11 w-full rounded-lg border border-border bg-background px-3 py-3 text-base font-medium text-foreground placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:min-h-0 sm:py-2.5 sm:text-sm"
             />
           )}
           {selectedOption && onClear && (
@@ -676,7 +598,7 @@ function AgendaDropdown({
                 setSearchQuery("");
                 onClear();
               }}
-              className="mb-2 flex min-h-11 w-full items-center justify-between rounded-xl border border-danger/10 bg-danger/5 px-3 py-3 text-left text-base font-semibold text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:py-2.5 sm:text-sm"
+              className="mb-2 flex min-h-11 w-full items-center justify-between rounded-lg border border-danger/10 bg-danger/5 px-3 py-3 text-left text-base font-semibold text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:py-2.5 sm:text-sm"
             >
               {clearLabel}
               <X className="h-4 w-4" />
@@ -697,7 +619,7 @@ function AgendaDropdown({
                       setSearchQuery("");
                       onSelect(option.value);
                     }}
-                    className={`min-h-11 w-full rounded-xl px-3 py-3 text-left text-base transition-colors sm:min-h-0 sm:py-2.5 sm:text-sm ${
+                    className={`min-h-11 w-full rounded-lg px-3 py-3 text-left text-base transition-colors sm:min-h-0 sm:py-2.5 sm:text-sm ${
                       selected
                         ? "bg-success/10 text-success"
                         : "text-foreground hover:bg-background"
@@ -716,7 +638,7 @@ function AgendaDropdown({
               })}
             </div>
           ) : (
-            <p className="rounded-xl bg-background px-3 py-2.5 text-sm text-muted">
+            <p className="rounded-lg bg-background px-3 py-2.5 text-sm text-muted">
               {options.length > 0 ? noResultsMessage : emptyMessage}
             </p>
           )}
@@ -737,9 +659,6 @@ export function AgendaCalendar() {
   const [selectedDate, setSelectedDate] = useState(today);
   const [dayDrawerOpen, setDayDrawerOpen] = useState(false);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [agendaStorageMode, setAgendaStorageMode] = useState<
-    "supabase" | "local"
-  >("supabase");
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<AgendaService[]>([]);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
@@ -945,7 +864,7 @@ export function AgendaCalendar() {
     }
 
     if (importedAppointments.length > 0) {
-      writeLocalAppointments([]);
+      clearLocalAppointments();
     }
 
     return [...remoteAppointments, ...importedAppointments];
@@ -978,14 +897,33 @@ export function AgendaCalendar() {
 
     if (workshopError) {
       if (isMissingAgendaCapacityError(workshopError)) {
-        setAgendaCapacity(readLocalAgendaCapacity(profile.workshop_id));
+        setAgendaCapacity(DEFAULT_AGENDA_CAPACITY);
+        setError(
+          "A coluna agenda_capacity ainda não existe no Supabase. Aplique a migration 009."
+        );
       } else {
         setError(workshopError.message);
       }
     } else {
-      const remoteCapacity = normalizeAgendaCapacity(workshopData?.agenda_capacity);
-      setAgendaCapacity(remoteCapacity);
-      writeLocalAgendaCapacity(profile.workshop_id, remoteCapacity);
+      const localCapacity = readLocalAgendaCapacityForImport(profile.workshop_id);
+      if (localCapacity !== null && localCapacity !== normalizeAgendaCapacity(workshopData?.agenda_capacity)) {
+        const { error: capacityImportError } = await supabase
+          .from("workshops")
+          .update({ agenda_capacity: localCapacity })
+          .eq("id", profile.workshop_id);
+
+        if (!capacityImportError) {
+          clearLocalAgendaCapacity(profile.workshop_id);
+          setAgendaCapacity(localCapacity);
+        } else {
+          setAgendaCapacity(normalizeAgendaCapacity(workshopData?.agenda_capacity));
+        }
+      } else {
+        if (localCapacity !== null) {
+          clearLocalAgendaCapacity(profile.workshop_id);
+        }
+        setAgendaCapacity(normalizeAgendaCapacity(workshopData?.agenda_capacity));
+      }
     }
 
     const { data: clientsData, error: clientsError } = await supabase
@@ -1078,16 +1016,29 @@ export function AgendaCalendar() {
                 scheduled_end_date: appointment.scheduled_end_date ?? null,
               })
           );
-        setAgendaStorageMode("supabase");
-        setAppointments(remoteAppointments);
-        setError(
-          "A coluna scheduled_end_date ainda não existe no Supabase. Aplique a migration 010 para salvar e importar agendamentos locais."
+        try {
+          setAppointments(
+            await importLocalAppointmentsToSupabase(
+              profile.workshop_id,
+              remoteAppointments
+            )
+          );
+        } catch (err) {
+          setAppointments(remoteAppointments);
+          setError(
+            err instanceof Error
+              ? `Não foi possível importar agendamentos locais para o Supabase: ${err.message}`
+              : "Não foi possível importar agendamentos locais para o Supabase."
+          );
+        }
+        setError((current) =>
+          current ??
+            "A coluna scheduled_end_date ainda não existe no Supabase. Aplique a migration 010 para serviços de múltiplos dias."
         );
       } else if (isMissingAgendaMigrationError(legacyAppointmentsError)) {
-        setAgendaStorageMode("local");
-        setAppointments(readLocalAppointments());
+        setAppointments([]);
         setError(
-          "As colunas da Agenda ainda não existem no Supabase. Aplique as migrations da Agenda para evitar dados locais."
+          "As colunas da Agenda ainda não existem no Supabase. Aplique as migrations da Agenda."
         );
       } else {
         setError(legacyAppointmentsError.message);
@@ -1097,7 +1048,6 @@ export function AgendaCalendar() {
         ((appointmentsData as AppointmentOrderRow[] | null) ?? []).map(
           mapOrderToAppointment
         );
-      setAgendaStorageMode("supabase");
       try {
         setAppointments(
           await importLocalAppointmentsToSupabase(profile.workshop_id, remoteAppointments)
@@ -1136,7 +1086,6 @@ export function AgendaCalendar() {
           ) {
             completedAppointmentIds.push(appointment.id);
             completedAppointments.push(appointment);
-            applyStockDiscountForAppointment(appointment);
             void applySupabaseStockDiscountForAppointment(appointment).catch((err) => {
               setError(
                 err instanceof Error
@@ -1150,14 +1099,7 @@ export function AgendaCalendar() {
           return appointment;
         });
 
-        if (completedAppointmentIds.length > 0 && agendaStorageMode === "local") {
-          writeLocalAppointments(next);
-        }
-
-        if (
-          completedAppointmentIds.length > 0 &&
-          agendaStorageMode === "supabase"
-        ) {
+        if (completedAppointmentIds.length > 0) {
           void supabase
             .from("service_orders")
             .update({
@@ -1187,7 +1129,6 @@ export function AgendaCalendar() {
 
     return () => window.clearInterval(intervalId);
   }, [
-    agendaStorageMode,
     applySupabaseStockDiscountForAppointment,
     supabase,
     syncFinanceRevenueForAppointment,
@@ -1378,6 +1319,41 @@ export function AgendaCalendar() {
     hasCustomTotalAmount && !Number.isNaN(customTotalAmount)
       ? customTotalAmount
       : servicesTotal;
+
+  function startEditingTotalAmount() {
+    setForm((prev) => {
+      const current =
+        hasCustomTotalAmount && !Number.isNaN(customTotalAmount)
+          ? prev.totalAmount
+          : servicesTotal.toLocaleString("pt-BR", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            });
+
+      return { ...prev, totalAmount: current };
+    });
+    setEditingTotalAmount(true);
+  }
+
+  function saveTotalAmount() {
+    const normalized = form.totalAmount.trim().replace(/\./g, "").replace(",", ".");
+    const amount = Number(normalized);
+
+    if (!form.totalAmount.trim() || !Number.isFinite(amount) || amount < 0) {
+      setError("Informe um valor válido para o total dos serviços.");
+      return;
+    }
+
+    setForm((prev) => ({ ...prev, totalAmount: String(amount) }));
+    setEditingTotalAmount(false);
+    setError(null);
+  }
+
+  function resetTotalAmountToServicesSum() {
+    setForm((prev) => ({ ...prev, totalAmount: "" }));
+    setEditingTotalAmount(false);
+    setError(null);
+  }
   const slotOccupancyForFormDate = useMemo(() => {
     const appointmentsForDate = appointments.filter(
       (appointment) =>
@@ -1676,13 +1652,6 @@ export function AgendaCalendar() {
       unit_price: getServicePrice(service),
     }));
 
-    if (agendaStorageMode === "local") {
-      setError(
-        "Supabase da Agenda não está pronto. Aplique as migrations antes de salvar novos agendamentos."
-      );
-      return;
-    }
-
     setSavingAppointment(true);
     setError(null);
 
@@ -1768,7 +1737,6 @@ export function AgendaCalendar() {
       closeForm();
     } catch (err) {
       if (isMissingAgendaMigrationError(err)) {
-        setAgendaStorageMode("local");
         setError(
           "Supabase da Agenda não está pronto. Aplique as migrations antes de salvar novos agendamentos."
         );
@@ -1790,19 +1758,6 @@ export function AgendaCalendar() {
     );
 
     if (!confirmed) return;
-
-    if (agendaStorageMode === "local") {
-      setAppointments((prev) => {
-        const next = prev.filter((item) => item.id !== appointment.id);
-        writeLocalAppointments(next);
-        return next;
-      });
-
-      if (editingAppointmentId === appointment.id) {
-        closeForm();
-      }
-      return;
-    }
 
     const { error: deleteError } = await supabase
       .from("service_orders")
@@ -1833,16 +1788,6 @@ export function AgendaCalendar() {
 
     const appointmentIds = selectedAppointments.map((appointment) => appointment.id);
 
-    if (agendaStorageMode === "local") {
-      setAppointments((prev) => {
-        const next = prev.filter((appointment) => appointment.date !== selectedKey);
-        writeLocalAppointments(next);
-        return next;
-      });
-      closeForm();
-      return;
-    }
-
     if (appointmentIds.length > 0) {
       const { error: deleteError } = await supabase
         .from("service_orders")
@@ -1872,30 +1817,6 @@ export function AgendaCalendar() {
       status === "Concluído" && currentAppointment?.status !== "Concluído";
     const shouldRemoveFinanceRevenue =
       status !== "Concluído" && currentAppointment?.status === "Concluído";
-
-    if (agendaStorageMode === "local") {
-      setAppointments((prev) => {
-        const next = prev.map((appointment) =>
-          appointment.id === appointmentId
-            ? { ...appointment, status }
-            : appointment
-        );
-        writeLocalAppointments(next);
-        return next;
-      });
-      if (currentAppointment && shouldDiscountStock) {
-        applyStockDiscountForAppointment(currentAppointment);
-        void applySupabaseStockDiscountForAppointment(currentAppointment).catch((err) => {
-          setError(
-            err instanceof Error
-              ? `Estoque não sincronizou no Supabase: ${err.message}`
-              : "Estoque não sincronizou no Supabase."
-          );
-        });
-      }
-      closeStatusMenu(appointmentId);
-      return;
-    }
 
     const { error: updateError } = await supabase
       .from("service_orders")
@@ -1932,7 +1853,6 @@ export function AgendaCalendar() {
       )
     );
     if (currentAppointment && shouldDiscountStock) {
-      applyStockDiscountForAppointment(currentAppointment);
       void applySupabaseStockDiscountForAppointment(currentAppointment).catch((err) => {
         setError(
           err instanceof Error
@@ -1974,7 +1894,7 @@ export function AgendaCalendar() {
       .from("clients")
       .insert({
         name: data.name.trim(),
-        phone: data.phone.trim(),
+        phone: normalizePhone(data.phone),
         notes: data.notes.trim() || null,
         workshop_id: workshopId,
       })
@@ -2012,12 +1932,12 @@ export function AgendaCalendar() {
   return (
     <>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
-        <div className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6">
+        <div className="rounded-lg border border-border bg-card p-4 shadow-card sm:p-6">
           <div className="flex items-start justify-between gap-4 sm:gap-5">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-muted">{occupancyTitle}</p>
               <div
-                className="timeline-track-loading relative mt-4 overflow-hidden rounded-2xl bg-slate-200 shadow-inner"
+                className="timeline-track-loading relative mt-4 overflow-hidden rounded-lg bg-border shadow-inner"
                 style={{
                   height: `${Math.max(1, selectedTimelineLaneCount) * 1.75}rem`,
                 }}
@@ -2072,26 +1992,26 @@ export function AgendaCalendar() {
                 </div>
               ) : null}
               <p className="mt-3 text-sm font-medium text-foreground">
-                {selectedAppointments.length} agendamentos
+                {formatAppointmentCount(selectedAppointments.length)}
               </p>
             </div>
           </div>
         </div>
 
         <div
-          className={`rounded-xl border-l-4 bg-card p-4 shadow-sm sm:p-6 ${
+          className={`rounded-lg border-l-4 bg-card p-4 shadow-card sm:p-6 ${
             nextAppointmentStyle?.sideAccent ?? "border-l-border"
           }`}
         >
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-5">
+          <div className="flex min-h-[10.5rem] flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-5">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-muted">Próximo cliente</p>
               {nextAppointment ? (
                 <>
-                  <p className="mt-2 text-2xl font-bold leading-tight text-foreground sm:text-3xl">
+                  <p className="mt-2 currency-display leading-tight text-foreground sm:text-3xl">
                     {nextAppointment.client}
                   </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-3 flex min-h-[1.75rem] flex-wrap gap-2">
                     {nextAppointmentServices.map((service) => (
                       <span
                         key={service}
@@ -2112,16 +2032,24 @@ export function AgendaCalendar() {
                   )}
                 </>
               ) : (
-                <p className="mt-2 text-lg font-semibold text-foreground">
-                  Nenhum agendamento pendente
-                </p>
+                <div className="mt-4 flex flex-col items-center justify-center py-3 text-center">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted/10 text-muted/50">
+                    <CalendarDays className="h-5 w-5" strokeWidth={1.5} />
+                  </div>
+                  <p className="mt-3 text-sm font-medium text-muted">
+                    Nenhum agendamento pendente
+                  </p>
+                  <p className="mt-1 max-w-[14rem] text-xs leading-relaxed text-muted/70">
+                    Aproveite para organizar sua agenda
+                  </p>
+                </div>
               )}
             </div>
             <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
               {nextAppointment && (
                 <>
                   <span
-                    className={`w-full whitespace-nowrap rounded-2xl px-5 py-4 text-center text-xl font-bold leading-tight shadow-sm sm:min-w-44 ${nextAppointmentStyle?.timeBadge}`}
+                    className={`w-full whitespace-nowrap rounded-lg px-5 py-4 text-center text-xl font-bold leading-tight shadow-card sm:min-w-44 ${nextAppointmentStyle?.timeBadge}`}
                   >
                     {nextAppointment.startTime} - {nextAppointment.endTime}
                   </span>
@@ -2149,7 +2077,7 @@ export function AgendaCalendar() {
                             className={`min-h-9 rounded-full border px-2 py-1 text-[10px] font-semibold transition-all sm:min-h-0 ${
                               isCurrentStatus
                                 ? "cursor-default border-current opacity-60"
-                                : "border-transparent hover:-translate-y-0.5 hover:shadow-sm"
+                                : "border-transparent hover:-translate-y-0.5 hover:shadow-card"
                             } ${optionStyle.statusBadge}`}
                           >
                             {status}
@@ -2166,7 +2094,7 @@ export function AgendaCalendar() {
       </div>
 
       <div className="mt-6 grid grid-cols-1 items-start gap-6 md:mt-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <section className="self-start rounded-xl border border-border bg-card shadow-sm">
+        <section className="self-start rounded-lg border border-border bg-card shadow-card shadow-card">
           <div className="flex flex-col gap-4 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div>
               <h2 className="text-lg font-semibold capitalize text-foreground">
@@ -2207,7 +2135,7 @@ export function AgendaCalendar() {
             </div>
           </div>
 
-          <div className="grid grid-cols-7 border-b border-border bg-background/60 px-2 py-3 text-center text-[10px] font-semibold uppercase tracking-wide text-muted sm:px-4 sm:text-xs">
+          <div className="grid grid-cols-7 border-b border-border bg-background/60 px-2 py-3 text-center text-[10px] font-semibold uppercase tracking-widest text-muted sm:px-4 sm:text-xs">
             {weekdays.map((weekday) => (
               <span key={weekday}>{weekday}</span>
             ))}
@@ -2233,9 +2161,9 @@ export function AgendaCalendar() {
                   key={key}
                   onClick={() => selectCalendarDate(day)}
                   style={index === 0 ? { gridColumnStart: day.getDay() + 1 } : undefined}
-                  className={`flex min-h-14 flex-col items-start rounded-xl border p-1 text-left transition-colors sm:min-h-24 sm:p-2 ${
+                  className={`flex min-h-14 flex-col items-start rounded-lg border p-1 text-left transition-colors sm:min-h-24 sm:p-2 ${
                     isSelected
-                      ? "border-primary bg-primary/10 shadow-sm"
+                      ? "border-primary bg-primary/10 shadow-card"
                       : "border-transparent hover:border-border hover:bg-background"
                   }`}
                 >
@@ -2272,9 +2200,18 @@ export function AgendaCalendar() {
                             className={`calendar-appointment-pill ${style.calendarPill} ${multiDayClass}`}
                             title={`${appointment.startTime} - ${appointment.endTime} • ${appointment.client}${appointment.isMultiDay ? ` • ${formatAppointmentDuration(appointment)}` : ""}`}
                           >
-                            {appointment.isContinuation
-                              ? `${appointment.startTime} (continuação)`
-                              : `${appointment.startTime} ${getShortClientName(appointment.client)}`}
+                            {appointment.isContinuation ? (
+                              <>
+                                <span className="calendar-pill-label">
+                                  {appointment.startTime} (continuação)
+                                </span>
+                              </>
+                            ) : (
+                              <span className="calendar-pill-label">
+                                {appointment.startTime}{" "}
+                                {getShortClientName(appointment.client)}
+                              </span>
+                            )}
                           </span>
                         );
                       })}
@@ -2296,19 +2233,19 @@ export function AgendaCalendar() {
           <button
             type="button"
             aria-label="Fechar detalhes do dia"
-            className="fixed inset-0 z-40 bg-slate-950/35 md:hidden"
+            className="fixed inset-0 z-40 bg-foreground/30 md:hidden"
             onClick={() => setDayDrawerOpen(false)}
           />
         )}
 
         <aside
-          className={`fixed inset-x-0 bottom-0 z-50 max-h-[88vh] overflow-y-auto rounded-t-3xl border border-border bg-card shadow-2xl transition-transform duration-300 md:static md:z-auto md:max-h-none md:translate-y-0 md:overflow-visible md:rounded-xl md:shadow-sm ${
+          className={`fixed inset-x-0 bottom-0 z-50 max-h-[88vh] overflow-y-auto rounded-t-3xl border border-border bg-card shadow-2xl transition-transform duration-300 md:static md:z-auto md:max-h-none md:translate-y-0 md:overflow-visible md:rounded-lg md:shadow-card ${
             dayDrawerOpen ? "translate-y-0" : "translate-y-full"
           }`}
         >
           <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
             <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+            <p className="text-xs font-semibold uppercase tracking-widest text-muted">
               Dia selecionado
             </p>
             <h2 className="mt-1 text-lg font-semibold capitalize text-foreground">
@@ -2349,7 +2286,7 @@ export function AgendaCalendar() {
             {creating && (
               <form
                 onSubmit={handleSaveAppointment}
-                className={`space-y-4 rounded-xl border border-border bg-background p-4 ${
+                className={`space-y-4 rounded-lg border border-border bg-background shadow-card p-4 ${
                   formClosing ? "agenda-form-exit" : "agenda-form-enter"
                 }`}
               >
@@ -2383,7 +2320,7 @@ export function AgendaCalendar() {
                     if (nextDate) syncSelectedDate(nextDate);
                   }}
                 />
-                <div className="rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+                <div className="rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card">
                   <button
                     type="button"
                     onClick={() =>
@@ -2409,7 +2346,7 @@ export function AgendaCalendar() {
                       }`}
                     >
                       <span
-                        className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                        className={`h-5 w-5 rounded-full bg-white shadow-card transition-transform ${
                           form.isMultiDay ? "translate-x-5" : "translate-x-0"
                         }`}
                       />
@@ -2572,26 +2509,28 @@ export function AgendaCalendar() {
                     </button>
                   </div>
 
-                  {selectedServices.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {selectedServices.map((service) => (
-                        <span
-                          key={service.id}
-                          className="inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1.5 text-xs font-semibold text-success shadow-sm"
-                        >
-                          {service.name}
-                          <button
-                            type="button"
-                            onClick={() => removeServiceFromForm(service.id)}
-                            className="rounded-full p-1 transition-colors hover:bg-success/20"
-                            aria-label={`Remover ${service.name}`}
+                  <div className="min-h-[2.75rem]">
+                    {selectedServices.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {selectedServices.map((service) => (
+                          <span
+                            key={service.id}
+                            className="inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1.5 text-xs font-semibold text-success shadow-card"
                           >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                            {service.name}
+                            <button
+                              type="button"
+                              onClick={() => removeServiceFromForm(service.id)}
+                              className="rounded-full p-1 transition-colors hover:bg-success/20"
+                              aria-label={`Remover ${service.name}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                   {addingService && (
                     <AgendaDropdown
@@ -2623,21 +2562,22 @@ export function AgendaCalendar() {
                     </p>
                   )}
 
-                  <div className="rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
-                    <div className="grid grid-cols-[minmax(0,1fr)_minmax(6rem,auto)] items-center gap-3">
+                  <div className="rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card">
+                    <div className="flex items-start justify-between gap-3">
                       <span className="min-w-0 text-sm font-medium text-muted">
                         Total dos serviços
                       </span>
-                      <div className="min-w-0 justify-self-end">
+                      <div className="min-w-0 text-right">
                         {editingTotalAmount ? (
-                          <div className="relative w-full max-w-32">
-                            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-muted">
+                          <div className="flex items-center justify-end gap-1">
+                            <span className="text-base font-bold text-foreground">
                               R$
                             </span>
                             <input
                               aria-label="Valor do agendamento"
                               type="text"
                               inputMode="decimal"
+                              autoFocus
                               value={form.totalAmount}
                               onChange={(event) =>
                                 setForm((prev) => ({
@@ -2645,7 +2585,13 @@ export function AgendaCalendar() {
                                   totalAmount: event.target.value,
                                 }))
                               }
-                              className="h-9 w-full rounded-lg border border-border bg-background pl-9 pr-2 text-right text-sm font-bold text-foreground outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20"
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  saveTotalAmount();
+                                }
+                              }}
+                              className="w-[7.5rem] bg-transparent text-right text-base font-bold text-foreground outline-none placeholder:text-muted/50 focus:underline focus:decoration-success focus:underline-offset-4"
                             />
                           </div>
                         ) : (
@@ -2653,36 +2599,36 @@ export function AgendaCalendar() {
                             {formatCurrency(displayTotalAmount)}
                           </span>
                         )}
-                      </div>
-                    </div>
 
-                    <div className="mt-2 flex flex-wrap justify-end gap-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingTotalAmount((current) => !current);
-                            setForm((prev) =>
-                              prev.totalAmount
-                                ? prev
-                                : { ...prev, totalAmount: String(servicesTotal) }
-                            );
-                          }}
-                          className="min-h-11 text-sm font-semibold text-success transition-colors hover:text-success/80 sm:min-h-0 sm:text-xs"
-                        >
-                          {editingTotalAmount ? "Salvar" : "Editar"}
-                        </button>
-                        {editingTotalAmount && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setForm((prev) => ({ ...prev, totalAmount: "" }));
-                              setEditingTotalAmount(false);
-                            }}
-                            className="text-xs font-semibold text-muted transition-colors hover:text-foreground"
-                          >
-                            Usar soma
-                          </button>
-                        )}
+                        <div className="mt-1 flex items-center justify-end gap-2">
+                          {editingTotalAmount ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={saveTotalAmount}
+                                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-card transition-all hover:bg-emerald-700"
+                              >
+                                Salvar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={resetTotalAmountToServicesSum}
+                                className="text-xs font-semibold text-muted transition-colors hover:text-foreground"
+                              >
+                                Usar soma
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={startEditingTotalAmount}
+                              className="text-xs font-semibold text-foreground transition-colors hover:text-success"
+                            >
+                              Editar
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2697,7 +2643,7 @@ export function AgendaCalendar() {
                       </span>
                     )}
                   </div>
-                  <div className="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto rounded-2xl border border-slate-200 bg-card p-2.5 shadow-sm sm:grid-cols-4">
+                  <div className="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto rounded-lg border border-border bg-card p-2.5 shadow-card sm:grid-cols-4">
                     {timeSlots.map((time) => {
                       const isSelectedEndpoint =
                         form.startTime === time || form.endTime === time;
@@ -2728,12 +2674,12 @@ export function AgendaCalendar() {
                           onClick={() => selectTimeSlot(time)}
                           className={`flex min-h-11 flex-col items-center justify-center rounded-full px-2 py-2 text-sm font-semibold leading-tight transition-all duration-200 sm:min-h-0 ${
                             isSelectedEndpoint
-                              ? "bg-success text-white shadow-sm"
+                              ? "bg-success text-white shadow-card"
                               : isInSelectedRange
                                 ? "bg-success/20 text-success"
                               : isUnavailable
                                 ? "cursor-not-allowed bg-muted/10 text-muted/50 line-through"
-                                : "bg-background text-foreground hover:-translate-y-0.5 hover:bg-success/10 hover:text-success hover:shadow-sm"
+                                : "bg-background text-foreground hover:-translate-y-0.5 hover:bg-success/10 hover:text-success hover:shadow-card"
                           }`}
                         >
                           <span className={isFull ? "line-through" : ""}>{time}</span>
@@ -2758,7 +2704,7 @@ export function AgendaCalendar() {
                   type="submit"
                   variant="success"
                   disabled={savingAppointment}
-                  className="w-full bg-gradient-to-r from-success to-emerald-500 text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:from-success hover:to-emerald-600 hover:shadow-md"
+                  className="w-full bg-gradient-to-r from-success to-emerald-500 text-white shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:from-success hover:to-emerald-600 hover:shadow-card-hover"
                 >
                   <Check className="h-4 w-4" />
                   {savingAppointment
@@ -2772,13 +2718,13 @@ export function AgendaCalendar() {
 
             <div className="space-y-3">
               {loadingAppointments ? (
-                <div className="rounded-xl border border-dashed border-border bg-background px-4 py-8 text-center">
+                <div className="rounded-lg border border-dashed border-border bg-background px-4 py-8 text-center">
                   <p className="text-sm font-medium text-foreground">
                     Carregando horários...
                   </p>
                 </div>
               ) : selectedAppointments.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-border bg-background px-4 py-8 text-center">
+                <div className="rounded-lg border border-dashed border-border bg-background px-4 py-8 text-center">
                   <p className="text-sm font-medium text-foreground">
                     Nenhum horário neste dia
                   </p>
@@ -2793,8 +2739,8 @@ export function AgendaCalendar() {
 
                   return (
                     <div key={group.time} className="space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-background px-3 py-2">
-                        <p className="text-xs font-bold uppercase tracking-wide text-muted">
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-background px-3 py-2">
+                        <p className="text-xs font-bold uppercase tracking-widest text-muted">
                           {group.time}
                         </p>
                         <span
@@ -2814,7 +2760,7 @@ export function AgendaCalendar() {
                           return (
                             <div
                               key={appointment.id}
-                              className={`rounded-xl border border-l-4 p-4 shadow-sm transition-shadow hover:shadow-md ${
+                              className={`rounded-lg border border-l-4 p-4 shadow-card transition-shadow hover:shadow-card-hover ${
                                 appointment.isMultiDay ? "border-dashed" : ""
                               } ${style.sideCard} ${style.sideAccent}`}
                             >
@@ -2849,7 +2795,7 @@ export function AgendaCalendar() {
                           <button
                             type="button"
                             onClick={() => toggleStatusMenu(appointment.id)}
-                            className={`inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-shadow hover:shadow-sm sm:min-h-0 sm:py-1 sm:text-xs ${style.statusBadge}`}
+                            className={`inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-shadow hover:shadow-card sm:min-h-0 sm:py-1 sm:text-xs ${style.statusBadge}`}
                             aria-haspopup="menu"
                             aria-expanded={openStatusMenuId === appointment.id}
                           >
@@ -2866,7 +2812,7 @@ export function AgendaCalendar() {
                           {(openStatusMenuId === appointment.id ||
                             closingStatusMenuId === appointment.id) && (
                             <div
-                              className={`absolute bottom-full left-0 z-30 mb-2 w-40 rounded-xl border border-border bg-card p-2 shadow-lg ${
+                              className={`absolute bottom-full left-0 z-30 mb-2 w-40 rounded-lg border border-border bg-card shadow-card p-2 shadow-lg ${
                                 closingStatusMenuId === appointment.id
                                   ? "status-menu-exit"
                                   : "status-menu-enter"
@@ -2995,20 +2941,49 @@ export function AgendaCalendar() {
 
         .calendar-appointment-pill {
           display: inline-block;
-          max-width: 4.75rem;
+          max-width: 5.75rem;
           width: auto;
-          border-radius: 9999px;
-          padding: 1px 6px;
+          border-radius: 4px;
+          padding: 3px 7px;
           font-size: 9px;
           line-height: 12px;
-          font-weight: 700;
+          letter-spacing: 0.01em;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+          border: 1px solid transparent;
+        }
+
+        .calendar-pill-label {
+          font-weight: 700;
+        }
+
+        .status-pill-confirmed {
+          background: #dce8f5;
+          color: #1a3a6b;
+          border-color: #7aaee0;
+        }
+
+        .status-pill-pending {
+          background: #fdf0d5;
+          color: #8a5f0a;
+          border-color: #f0c060;
+        }
+
+        .status-pill-cancelled {
+          background: #fde8e8;
+          color: #8a2020;
+          border-color: #f0a0a0;
+        }
+
+        .status-pill-completed {
+          background: #d1e8d1;
+          color: #2d6a2d;
+          border-color: #a8d5a8;
         }
 
         .calendar-multiday-pill {
-          border: 1px dashed currentColor;
+          border-style: dashed;
           max-width: 100%;
           width: calc(100% + 0.5rem);
         }
@@ -3031,9 +3006,10 @@ export function AgendaCalendar() {
         }
 
         .calendar-more-pill {
-          max-width: 4rem;
-          background: #f1f5f9;
-          color: #64748b;
+          max-width: 4.5rem;
+          background: #e8e6e1;
+          color: #5a5550;
+          border-color: #c8c4be;
         }
 
         .status-confirmed-soft {

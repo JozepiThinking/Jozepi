@@ -5,19 +5,21 @@ alwaysApply: true
 
 # Consistência Visual do App
 
-- Preserve o padrão visual existente antes de criar ou alterar componentes.
-- Mantenha cards, botões, inputs e dropdowns com tamanhos proporcionais aos já usados no app.
-- Use as cores do tema atual: `primary`, `success`, `warning`, `danger`, `muted`, `border`, `card` e `background`.
-- Evite introduzir cores soltas quando já existir uma cor semântica equivalente no projeto.
-- Prefira cantos arredondados, sombras suaves e espaçamentos consistentes com os componentes atuais.
-- Dropdowns devem seguir o visual do próprio app, sem usar `<select>` nativo do sistema.
-- Movimentos devem ser suaves e discretos, com `transition`, `transform`, `opacity` ou keyframes curtos.
-- Ao adicionar hover, mantenha efeitos leves como elevação pequena, sombra suave, brilho ou mudança de cor controlada.
-- Não aumente badges, pílulas ou cards em telas maiores apenas porque há mais espaço; use limites de largura quando necessário.
+- Preserve o padrão visual premium do estúdio de luxo automotivo antes de criar ou alterar componentes.
+- Paleta principal: fundo off-white (`background` `#f5f4f0`), cards brancos (`card`), bordas `#e8e6e1`, texto `#1a1a1a`, secundário `muted` `#6b6560`.
+- Botões principais e sidebar: azul escuro `primary` / `success` `#1a2744`.
+- Acento premium: dourado `premium` `#c9a84c` para badges, destaques e item ativo da sidebar (borda esquerda).
+- Use tokens semânticos (`primary`, `premium`, `muted`, `border`, `card`, `background`, `input`) em vez de cores soltas.
+- Tipografia: títulos de página com `.page-title` (leve, letter-spacing); labels com `.label-caps` (caixa alta, tracking-widest); valores monetários com `.currency-display`.
+- Cards: `.card-surface` com sombras quentes (`shadow-card`, `shadow-card-hover`), cantos `rounded-lg`, padding generoso e hover suave.
+- Dropdowns devem seguir o visual do app, sem `<select>` nativo.
+- Movimentos discretos com `transition`, `transform`, `opacity` ou keyframes curtos.
+- Verde `emerald-600` apenas para ações inline de salvar/confirmação positiva quando o contexto exigir cor verde real.
+- Não aumente badges, pílulas ou cards em telas maiores sem necessidade; use limites de largura quando fizer sentido.
 
 Exemplo de direção visual:
 
 ```tsx
-// Bom: mantém identidade, bordas e movimento suave
-className="rounded-xl border border-border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+// Bom: identidade premium, sombra quente, movimento suave
+className="card-surface transition-all duration-300 hover:shadow-card-hover"
 ```

@@ -10,9 +10,9 @@ interface StatCardProps {
 
 const variantStyles = {
   default: "bg-primary/10 text-primary",
-  success: "bg-success/10 text-success",
+  success: "bg-premium/10 text-premium",
   warning: "bg-warning/10 text-warning",
-  info: "bg-accent/10 text-accent",
+  info: "bg-premium/10 text-premium",
 };
 
 export function StatCard({
@@ -23,16 +23,16 @@ export function StatCard({
   variant = "default",
 }: StatCardProps) {
   return (
-    <div className="rounded-xl border border-border bg-card p-6 shadow-sm transition-shadow hover:shadow-md">
+    <div className="card-surface">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-sm font-medium text-muted">{title}</p>
-          <p className="mt-2 text-3xl font-bold text-foreground">{value}</p>
-          {trend && <p className="mt-1 text-xs text-muted">{trend}</p>}
+          <p className="label-caps">{title}</p>
+          <p className="currency-display mt-2">{value}</p>
+          {trend && <p className="mt-2 text-xs text-muted">{trend}</p>}
         </div>
         <div
           className={cn(
-            "flex h-12 w-12 items-center justify-center rounded-xl",
+            "flex h-12 w-12 items-center justify-center rounded-md",
             variantStyles[variant]
           )}
         >

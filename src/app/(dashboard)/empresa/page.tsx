@@ -12,7 +12,7 @@ function InfoItem({
 }) {
   return (
     <div className="rounded-lg border border-border bg-background px-4 py-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted">
+      <p className="label-caps">
         {label}
       </p>
       <p className="mt-1 text-sm font-semibold text-foreground">
@@ -53,13 +53,13 @@ export default async function EmpresaPage() {
         description="Dados da empresa vinculada à sua conta"
       />
 
-      <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
+      <div className="card-surface">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
-          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-lg bg-premium/10 text-premium">
             <Building2 className="h-9 w-9" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold text-foreground">
+            <h2 className="page-title text-2xl sm:text-3xl">
               {company?.name || "Empresa não cadastrada"}
             </h2>
             <p className="mt-1 text-sm text-muted">
@@ -81,7 +81,7 @@ export default async function EmpresaPage() {
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <div className="card-surface">
           <Mail className="h-5 w-5 text-info" />
           <p className="mt-3 text-sm font-semibold text-foreground">
             Contato principal
@@ -90,7 +90,7 @@ export default async function EmpresaPage() {
             E-mail comercial da empresa.
           </p>
         </div>
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <div className="card-surface">
           <Phone className="h-5 w-5 text-success" />
           <p className="mt-3 text-sm font-semibold text-foreground">
             Atendimento
@@ -99,7 +99,7 @@ export default async function EmpresaPage() {
             Telefone usado com clientes.
           </p>
         </div>
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <div className="card-surface">
           <FileText className="h-5 w-5 text-warning" />
           <p className="mt-3 text-sm font-semibold text-foreground">
             Documento
@@ -108,7 +108,7 @@ export default async function EmpresaPage() {
             CPF ou CNPJ da operação.
           </p>
         </div>
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <div className="card-surface">
           <MapPin className="h-5 w-5 text-primary" />
           <p className="mt-3 text-sm font-semibold text-foreground">
             Localização

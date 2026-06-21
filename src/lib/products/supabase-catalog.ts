@@ -1,6 +1,9 @@
 import {
   normalizeProductStock,
   productTypeOptions,
+  PRODUCTS_STORAGE_KEY,
+  PRODUCT_TYPES_STORAGE_KEY,
+  SERVICE_PRODUCT_USAGE_STORAGE_KEY,
   type ProductItem,
   type ProductPriceHistoryEntry,
   type ProductTypeOption,
@@ -245,6 +248,67 @@ export async function replaceSupabaseServiceUsages(
   if (error) throw new Error(error.message);
 }
 
+export function readLocalCatalogFromStorage() {
+  if (typeof window === "undefined") {
+    return {
+      products: [] as ProductItem[],
+      typeOptions: productTypeOptions,
+      serviceProductUsages: {} as Record<string, ServiceProductUsage[]>,
+      hasData: false,
+    };
+  }
+
+  let products: ProductItem[] = [];
+  let typeOptions = [...productTypeOptions];
+  let serviceProductUsages: Record<string, ServiceProductUsage[]> = {};
+  let hasData = false;
+
+  try {
+    const storedProducts = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
+    if (storedProducts) {
+      products = (JSON.parse(storedProducts) as ProductItem[]).map(normalizeProductStock);
+      hasData = hasData || products.length > 0;
+    }
+  } catch {
+    window.localStorage.removeItem(PRODUCTS_STORAGE_KEY);
+  }
+
+  try {
+    const storedTypes = window.localStorage.getItem(PRODUCT_TYPES_STORAGE_KEY);
+    if (storedTypes) {
+      const customTypes = JSON.parse(storedTypes) as ProductTypeOption[];
+      typeOptions = mergeProductTypes(customTypes);
+      hasData = hasData || customTypes.length > 0;
+    }
+  } catch {
+    window.localStorage.removeItem(PRODUCT_TYPES_STORAGE_KEY);
+  }
+
+  try {
+    const storedUsages = window.localStorage.getItem(SERVICE_PRODUCT_USAGE_STORAGE_KEY);
+    if (storedUsages) {
+      serviceProductUsages = JSON.parse(storedUsages) as Record<
+        string,
+        ServiceProductUsage[]
+      >;
+      hasData =
+        hasData || Object.values(serviceProductUsages).some((usages) => usages.length > 0);
+    }
+  } catch {
+    window.localStorage.removeItem(SERVICE_PRODUCT_USAGE_STORAGE_KEY);
+  }
+
+  return { products, typeOptions, serviceProductUsages, hasData };
+}
+
+export function clearLocalCatalogStorage() {
+  if (typeof window === "undefined") return;
+
+  window.localStorage.removeItem(PRODUCTS_STORAGE_KEY);
+  window.localStorage.removeItem(PRODUCT_TYPES_STORAGE_KEY);
+  window.localStorage.removeItem(SERVICE_PRODUCT_USAGE_STORAGE_KEY);
+}
+
 export async function importLocalCatalogToSupabase(
   supabase: SupabaseLike,
   workshopId: string,
@@ -253,7 +317,10 @@ export async function importLocalCatalogToSupabase(
   usages: Record<string, ServiceProductUsage[]>
 ) {
   for (const product of products) {
-    await saveSupabaseProduct(supabase, workshopId, product);
+    await saveSupabaseProduct(supabase, workshopId, {
+      ...product,
+      supplierId: undefined,
+    });
   }
 
   await saveSupabaseProductTypes(supabase, workshopId, types);

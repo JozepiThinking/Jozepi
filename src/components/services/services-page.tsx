@@ -24,10 +24,7 @@ import {
   getProductAmountLabel,
   getProductTypeLabel,
   parsePositiveNumber,
-  PRODUCT_TYPES_STORAGE_KEY,
   productTypeOptions,
-  PRODUCTS_STORAGE_KEY,
-  SERVICE_PRODUCT_USAGE_STORAGE_KEY,
   type ProductForm,
   type ProductItem,
   type ProductType,
@@ -35,8 +32,10 @@ import {
   type ServiceProductUsage,
 } from "@/lib/products/catalog";
 import {
+  clearLocalCatalogStorage,
   importLocalCatalogToSupabase,
   loadSupabaseCatalog,
+  readLocalCatalogFromStorage,
   saveSupabaseProduct,
   saveSupabaseProductTypes,
   replaceSupabaseServiceUsages,
@@ -149,15 +148,11 @@ export function ServicesPage() {
   const supabase = useMemo(() => createClient(), []);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
-  const [productsLoaded, setProductsLoaded] = useState(false);
   const [typeOptions, setTypeOptions] =
     useState<ProductTypeOption[]>(productTypeOptions);
-  const [typeOptionsLoaded, setTypeOptionsLoaded] = useState(false);
   const [serviceProductUsages, setServiceProductUsages] = useState<
     Record<string, ServiceProductUsage[]>
   >({});
-  const [serviceProductUsagesLoaded, setServiceProductUsagesLoaded] =
-    useState(false);
   const [serviceCategories, setServiceCategories] = useState<Record<string, string>>(
     {}
   );
@@ -234,47 +229,12 @@ export function ServicesPage() {
 
   useEffect(() => {
     void Promise.resolve().then(() => {
-      const storedProducts = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
-      const storedTypes = window.localStorage.getItem(PRODUCT_TYPES_STORAGE_KEY);
-      const storedUsages = window.localStorage.getItem(
-        SERVICE_PRODUCT_USAGE_STORAGE_KEY
-      );
       const storedServiceCategories = window.localStorage.getItem(
         SERVICE_CATEGORIES_STORAGE_KEY
       );
       const storedServiceCategoryOptions = window.localStorage.getItem(
         SERVICE_CATEGORY_OPTIONS_STORAGE_KEY
       );
-
-      if (storedProducts) {
-        try {
-          setProducts(JSON.parse(storedProducts) as ProductItem[]);
-        } catch {
-          window.localStorage.removeItem(PRODUCTS_STORAGE_KEY);
-        }
-      }
-      setProductsLoaded(true);
-
-      if (storedTypes) {
-        try {
-          const customTypes = JSON.parse(storedTypes) as ProductTypeOption[];
-          setTypeOptions([...productTypeOptions, ...customTypes]);
-        } catch {
-          window.localStorage.removeItem(PRODUCT_TYPES_STORAGE_KEY);
-        }
-      }
-      setTypeOptionsLoaded(true);
-
-      if (storedUsages) {
-        try {
-          setServiceProductUsages(
-            JSON.parse(storedUsages) as Record<string, ServiceProductUsage[]>
-          );
-        } catch {
-          window.localStorage.removeItem(SERVICE_PRODUCT_USAGE_STORAGE_KEY);
-        }
-      }
-      setServiceProductUsagesLoaded(true);
 
       if (storedServiceCategories) {
         try {
@@ -305,13 +265,7 @@ export function ServicesPage() {
   }, []);
 
   useEffect(() => {
-    if (
-      !workshopId ||
-      !productsLoaded ||
-      !typeOptionsLoaded ||
-      !serviceProductUsagesLoaded ||
-      catalogSyncStartedRef.current
-    ) {
+    if (!workshopId || catalogSyncStartedRef.current) {
       return;
     }
 
@@ -319,13 +273,18 @@ export function ServicesPage() {
 
     void Promise.resolve().then(async () => {
       try {
-        await importLocalCatalogToSupabase(
-          supabase,
-          workshopId,
-          products,
-          typeOptions,
-          serviceProductUsages
-        );
+        const localCatalog = readLocalCatalogFromStorage();
+        if (localCatalog.hasData) {
+          await importLocalCatalogToSupabase(
+            supabase,
+            workshopId,
+            localCatalog.products,
+            localCatalog.typeOptions,
+            localCatalog.serviceProductUsages
+          );
+          clearLocalCatalogStorage();
+        }
+
         const catalog = await loadSupabaseCatalog(supabase, workshopId);
         setProducts(catalog.products);
         setTypeOptions(catalog.typeOptions);
@@ -338,39 +297,7 @@ export function ServicesPage() {
         );
       }
     });
-  }, [
-    products,
-    productsLoaded,
-    serviceProductUsages,
-    serviceProductUsagesLoaded,
-    supabase,
-    typeOptions,
-    typeOptionsLoaded,
-    workshopId,
-  ]);
-
-  useEffect(() => {
-    if (!productsLoaded) return;
-    window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products));
-  }, [products, productsLoaded]);
-
-  useEffect(() => {
-    if (!serviceProductUsagesLoaded) return;
-    window.localStorage.setItem(
-      SERVICE_PRODUCT_USAGE_STORAGE_KEY,
-      JSON.stringify(serviceProductUsages)
-    );
-  }, [serviceProductUsages, serviceProductUsagesLoaded]);
-
-  useEffect(() => {
-    if (!typeOptionsLoaded) return;
-
-    const customTypes = typeOptions.filter((option) => option.custom);
-    window.localStorage.setItem(
-      PRODUCT_TYPES_STORAGE_KEY,
-      JSON.stringify(customTypes)
-    );
-  }, [typeOptions, typeOptionsLoaded]);
+  }, [supabase, workshopId]);
 
   useEffect(() => {
     if (!serviceCategoriesLoaded) return;
@@ -876,7 +803,7 @@ export function ServicesPage() {
           key={formAnimationKey}
           onSubmit={handleSaveService}
           autoComplete="off"
-          className={`mb-6 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6 ${
+          className={`mb-6 rounded-lg border border-border bg-card shadow-card p-4 shadow-card sm:p-6 ${
             formClosing ? "service-form-exit" : "service-form-enter"
           }`}
         >
@@ -961,8 +888,8 @@ export function ServicesPage() {
             />
           </div>
 
-          <div className="mt-5 rounded-xl border border-border bg-background p-4 sm:p-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-5 rounded-lg border border-border bg-background shadow-card p-4 sm:p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-foreground">
                   Produtos utilizados neste serviço
@@ -971,15 +898,32 @@ export function ServicesPage() {
                   Escolha produtos do catálogo e informe quanto será usado.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setAddingProduct(true)}
-                disabled={availableProducts.length === 0}
-                className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:justify-start sm:py-1.5 sm:text-xs"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Adicionar produto
-              </button>
+
+              <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
+                <button
+                  type="button"
+                  onClick={() => setAddingProduct(true)}
+                  disabled={availableProducts.length === 0}
+                  className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:justify-center sm:py-1.5 sm:text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Adicionar produto
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProductForm(emptyProductForm);
+                    setProductError(null);
+                    setProductTypeError(null);
+                    setProductFormOpen(true);
+                  }}
+                  className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all hover:bg-success hover:text-white sm:min-h-0 sm:justify-center sm:py-1.5 sm:text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Cadastrar novo produto
+                </button>
+              </div>
             </div>
 
             {addingProduct && (
@@ -1000,23 +944,10 @@ export function ServicesPage() {
             )}
 
             {products.length === 0 && (
-              <p className="mt-4 rounded-xl border border-dashed border-border bg-card px-4 py-3 text-center text-xs text-muted">
+              <p className="mt-4 rounded-lg border border-dashed border-border bg-card px-4 py-3 text-center text-xs text-muted">
                 Nenhum produto cadastrado no catálogo.
               </p>
             )}
-
-            <button
-              type="button"
-              onClick={() => {
-                setProductForm(emptyProductForm);
-                setProductError(null);
-                setProductTypeError(null);
-                setProductFormOpen(true);
-              }}
-              className="mt-3 min-h-11 text-sm font-semibold text-success transition-colors hover:text-success/80 sm:min-h-0 sm:text-xs"
-            >
-              Cadastrar novo produto
-            </button>
 
             {productError && (
               <div className="mt-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
@@ -1025,7 +956,7 @@ export function ServicesPage() {
             )}
 
             {productFormOpen && (
-              <div className="mt-4 rounded-xl border border-border bg-card p-4 shadow-sm">
+              <div className="mt-4 rounded-lg border border-border bg-card shadow-card p-4 shadow-card">
                 <div className="mb-4 flex items-center justify-between">
                   <h4 className="text-sm font-semibold text-foreground">
                     Produto rápido
@@ -1144,7 +1075,7 @@ export function ServicesPage() {
                   return (
                     <div
                       key={usage.id}
-                      className="rounded-xl border border-border bg-card p-4 shadow-sm"
+                      className="rounded-lg border border-border bg-card shadow-card p-4 shadow-card"
                     >
                   <div className="flex items-start justify-between gap-3">
                         <div>
@@ -1180,8 +1111,8 @@ export function ServicesPage() {
                           }
                           placeholder={product.type === "liquid" ? "50" : "1"}
                         />
-                        <div className="rounded-xl border border-success/20 bg-success/10 px-4 py-3">
-                          <p className="text-[11px] font-semibold uppercase tracking-wide text-success">
+                        <div className="rounded-lg border border-success/20 bg-success/10 px-4 py-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-widest text-success">
                             Custo
                           </p>
                           <p className="text-base font-bold text-success">
@@ -1193,7 +1124,7 @@ export function ServicesPage() {
                   );
                 })}
 
-                <div className="flex flex-col gap-1 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-col gap-1 rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card sm:flex-row sm:items-center sm:justify-between">
                   <span className="text-sm font-medium text-muted">
                     Custo total de produtos
                   </span>
@@ -1226,7 +1157,7 @@ export function ServicesPage() {
         </form>
       )}
 
-      <div className="mb-5 rounded-xl border border-border bg-card p-4 shadow-sm">
+      <div className="mb-5 rounded-lg border border-border bg-card shadow-card p-4 shadow-card">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,1fr)_190px_150px_160px] md:items-end">
           <Input
             label="Buscar serviço"
@@ -1247,7 +1178,7 @@ export function ServicesPage() {
             options={statusFilterOptions}
             onChange={(status) => setStatusFilter(status as ServiceStatusFilter)}
           />
-          <div className="rounded-xl bg-background px-4 py-3 text-base font-semibold text-foreground sm:text-sm">
+          <div className="rounded-lg bg-background px-4 py-3 text-base font-semibold text-foreground sm:text-sm">
             {filteredServices.length} serviço
             {filteredServices.length !== 1 ? "s" : ""} encontrado
             {filteredServices.length !== 1 ? "s" : ""}
@@ -1256,11 +1187,11 @@ export function ServicesPage() {
       </div>
 
       {loading ? (
-        <div className="rounded-xl border border-border bg-card py-16 text-center text-sm text-muted shadow-sm">
+        <div className="rounded-lg border border-border bg-card shadow-card py-16 text-center text-sm text-muted shadow-card">
           Carregando serviços...
         </div>
       ) : services.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-16 text-center shadow-sm">
+        <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card shadow-card py-16 text-center shadow-card">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-success/10">
             <Wrench className="h-7 w-7 text-success" />
           </div>
@@ -1280,7 +1211,7 @@ export function ServicesPage() {
           </Button>
         </div>
       ) : filteredServices.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-card py-14 text-center shadow-sm">
+        <div className="rounded-lg border border-dashed border-border bg-card py-14 text-center shadow-card">
           <p className="font-medium text-foreground">
             Nenhum serviço encontrado
           </p>
@@ -1293,10 +1224,10 @@ export function ServicesPage() {
           {orderedCategories.map((category) => (
             <section
               key={category}
-              className="overflow-hidden rounded-xl border border-border bg-card shadow-sm"
+              className="overflow-hidden rounded-lg border border-border bg-card shadow-card shadow-card"
             >
               <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-3 sm:px-5">
-                <h2 className="text-sm font-bold uppercase tracking-wide text-muted">
+                <h2 className="text-sm font-bold uppercase tracking-widest text-muted">
                   {category}
                 </h2>
                 <span className="rounded-full bg-success/10 px-3 py-1 text-xs font-semibold text-success">
@@ -1305,7 +1236,7 @@ export function ServicesPage() {
                 </span>
               </div>
 
-              <div className="hidden grid-cols-[minmax(180px,1fr)_88px_96px_96px_96px_120px] gap-3 border-b border-border px-5 py-3 text-xs font-bold uppercase tracking-wide text-muted md:grid">
+              <div className="hidden grid-cols-[minmax(180px,1fr)_88px_96px_96px_96px_120px] gap-3 border-b border-border px-5 py-3 text-xs font-bold uppercase tracking-widest text-muted md:grid">
                 <span>Serviço</span>
                 <span>Duração</span>
                 <span>Preço</span>
@@ -1325,7 +1256,7 @@ export function ServicesPage() {
                   return (
                     <article
                       key={service.id}
-                      className={`grid grid-cols-1 gap-4 rounded-2xl border border-border bg-background/50 px-4 py-4 shadow-sm transition-colors hover:bg-background/70 md:rounded-none md:border-0 md:bg-transparent md:px-5 md:shadow-none md:grid-cols-[minmax(180px,1fr)_88px_96px_96px_96px_120px] md:items-center md:gap-3 ${
+                      className={`grid grid-cols-1 gap-4 rounded-lg border border-border bg-background/50 px-4 py-4 shadow-card transition-colors hover:bg-background/70 md:rounded-none md:border-0 md:bg-transparent md:px-5 md:shadow-none md:grid-cols-[minmax(180px,1fr)_88px_96px_96px_96px_120px] md:items-center md:gap-3 ${
                         service.active ? "" : "opacity-70"
                       }`}
                     >
@@ -1354,8 +1285,8 @@ export function ServicesPage() {
                         )}
                       </div>
 
-                      <div className="flex items-center justify-between gap-3 rounded-xl bg-card px-3 py-2 text-sm font-semibold md:block md:bg-transparent md:p-0">
-                        <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
+                      <div className="flex items-center justify-between gap-3 rounded-lg bg-card px-3 py-2 text-sm font-semibold md:block md:bg-transparent md:p-0">
+                        <span className="text-xs font-bold uppercase tracking-widest text-muted md:hidden">
                           Duração
                         </span>
                         <span className="inline-flex items-center gap-1.5 font-medium text-muted">
@@ -1363,14 +1294,14 @@ export function ServicesPage() {
                           {formatDuration(service.duration_minutes)}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between gap-3 rounded-xl bg-card px-3 py-2 text-sm font-semibold text-foreground md:block md:bg-transparent md:p-0">
-                        <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
+                      <div className="flex items-center justify-between gap-3 rounded-lg bg-card px-3 py-2 text-sm font-semibold text-foreground md:block md:bg-transparent md:p-0">
+                        <span className="text-xs font-bold uppercase tracking-widest text-muted md:hidden">
                           Preço
                         </span>
                         <span>{formatCurrency(Number(service.price))}</span>
                       </div>
-                      <div className="flex items-center justify-between gap-3 rounded-xl bg-card px-3 py-2 text-sm font-semibold text-foreground md:block md:bg-transparent md:p-0">
-                        <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
+                      <div className="flex items-center justify-between gap-3 rounded-lg bg-card px-3 py-2 text-sm font-semibold text-foreground md:block md:bg-transparent md:p-0">
+                        <span className="text-xs font-bold uppercase tracking-widest text-muted md:hidden">
                           Custo
                         </span>
                         <span>
@@ -1380,11 +1311,11 @@ export function ServicesPage() {
                         </span>
                       </div>
                       <div
-                        className={`flex items-center justify-between gap-3 rounded-xl bg-card px-3 py-2 text-sm font-bold md:block md:bg-transparent md:p-0 ${
+                        className={`flex items-center justify-between gap-3 rounded-lg bg-card px-3 py-2 text-sm font-bold md:block md:bg-transparent md:p-0 ${
                           profitPositive ? "text-success" : "text-danger"
                         }`}
                       >
-                        <span className="text-xs font-bold uppercase tracking-wide text-muted md:hidden">
+                        <span className="text-xs font-bold uppercase tracking-widest text-muted md:hidden">
                           Lucro
                         </span>
                         <span>{formatCurrency(financials.profit)}</span>

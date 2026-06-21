@@ -113,12 +113,10 @@ export default async function DashboardPage() {
   return (
     <>
       <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">
+        <h1 className="page-title">
           {getGreeting(now)}, {getDisplayName(profile?.full_name, user?.email)}.
         </h1>
-        <p className="mt-3 text-lg font-medium text-muted">
-          {formatDashboardDate(now)}
-        </p>
+        <p className="page-subtitle mt-3 text-base">{formatDashboardDate(now)}</p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
