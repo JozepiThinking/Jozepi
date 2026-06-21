@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -650,7 +650,9 @@ function TripleBanknotesIcon({ className }: { className?: string }) {
   );
 }
 
-function PeriodFilterButton({
+const INLINE_FILTER_EXIT_MS = 300;
+
+function InlineFilterButton({
   value,
   customStart,
   customEnd,
@@ -667,6 +669,7 @@ function PeriodFilterButton({
   onCategoryChange,
   onSupplierChange,
   onClear,
+  ariaLabel = "Filtros",
 }: {
   value: PeriodFilter;
   customStart: string;
@@ -684,124 +687,175 @@ function PeriodFilterButton({
   onCategoryChange: (value: string) => void;
   onSupplierChange?: (value: string) => void;
   onClear: () => void;
+  ariaLabel?: string;
 }) {
+  const showSupplier = Boolean(supplierOptions && onSupplierChange);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [closing, setClosing] = useState(false);
+  const [panelReady, setPanelReady] = useState(false);
+  const showPanel = open || closing;
+  const panelVisible = panelReady && open && !closing;
+
+  const requestClose = useCallback(() => {
+    if (!open || closing) return;
+
+    setClosing(true);
+    window.setTimeout(() => {
+      setClosing(false);
+      onClose();
+    }, INLINE_FILTER_EXIT_MS);
+  }, [closing, onClose, open]);
+
+  useEffect(() => {
+    if (open) setClosing(false);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!showPanel) {
+      setPanelReady(false);
+      return;
+    }
+
+    setPanelReady(false);
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => setPanelReady(true));
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [showPanel]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") requestClose();
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        requestClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [open, requestClose]);
+
+  function handleToggle() {
+    if (open) {
+      requestClose();
+      return;
+    }
+
+    onToggle();
+  }
+
+  function handleClear() {
+    onClear();
+  }
+
   return (
-    <>
+    <div ref={containerRef} className="relative inline-flex">
       <button
         type="button"
-        onClick={onToggle}
-        className={`flex h-9 w-9 items-center justify-center rounded-lg border border-border/80 text-foreground/70 transition-colors hover:bg-background hover:text-foreground ${
-          open ? "bg-background text-foreground" : "bg-transparent"
+        onClick={handleToggle}
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors ${
+          open
+            ? "border-premium/40 bg-premium/10 text-premium"
+            : "border-border/80 bg-card text-foreground/70 hover:bg-background hover:text-foreground"
         }`}
         aria-label="Abrir filtros"
+        aria-expanded={open}
         title="Abrir filtros"
       >
         <Filter className="h-4 w-4" />
       </button>
-      {open && (
+
+      {showPanel && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 px-4"
-          onClick={onClose}
+          role="dialog"
+          aria-modal="false"
+          aria-label={ariaLabel}
+          className={`finance-inline-filter-card absolute right-0 top-full z-50 mt-2 w-max max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card px-6 py-4 shadow-card transition-all duration-300 ease-out ${
+            showSupplier ? "md:min-w-[42rem]" : "md:min-w-[32rem]"
+          } ${
+            panelVisible
+              ? "translate-y-0 opacity-100"
+              : "pointer-events-none -translate-y-2 opacity-0"
+          }`}
+          style={{
+            boxShadow:
+              "-6px 8px 24px rgba(15, 23, 42, 0.1), 0 4px 12px rgba(15, 23, 42, 0.06)",
+          }}
         >
-          <div
-            className="w-full max-w-md rounded-lg border border-border bg-card shadow-card p-5 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="mb-4">
-              <h3 className="text-lg font-semibold text-foreground">Filtros</h3>
-              <p className="mt-1 text-sm text-muted">
-                Escolha o período, datas e categoria da lista.
-              </p>
-            </div>
-            <div className="space-y-4">
-              <PeriodControls
-                value={value}
-                customStart={customStart}
-                customEnd={customEnd}
-                onChange={onChange}
-                onCustomStartChange={onCustomStartChange}
-                onCustomEndChange={onCustomEndChange}
-              />
+          <div className="flex flex-wrap items-end gap-6">
+            <Dropdown
+              label="Período"
+              value={value}
+              options={periodOptions}
+              onChange={(period) => onChange(period as PeriodFilter)}
+              className="min-w-[11rem] flex-1 space-y-2"
+            />
+            <Dropdown
+              label="Categoria"
+              value={category}
+              options={categoryOptions}
+              onChange={onCategoryChange}
+              className="min-w-[14rem] flex-[1.2] space-y-2"
+            />
+            {showSupplier && (
               <Dropdown
-                label="Categoria"
-                value={category}
-                options={categoryOptions}
-                onChange={onCategoryChange}
+                label="Fornecedor"
+                value={supplier ?? categoryFilterAll}
+                options={supplierOptions!}
+                onChange={onSupplierChange!}
+                className="min-w-[14rem] flex-[1.2] space-y-2"
               />
-              {supplierOptions && onSupplierChange && (
-                <Dropdown
-                  label="Fornecedor"
-                  value={supplier ?? categoryFilterAll}
-                  options={supplierOptions}
-                  onChange={onSupplierChange}
-                />
-              )}
-            </div>
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            )}
+            <div className="flex shrink-0 flex-col gap-2 border-l border-border pl-5">
               <Button
                 type="button"
                 variant="secondary"
-                onClick={onClear}
-                className="w-full sm:w-auto"
+                onClick={handleClear}
+                className="min-w-[5.5rem]"
               >
-                Limpar filtros
+                Limpar
               </Button>
-              <Button type="button" onClick={onClose} className="w-full sm:w-auto">
+              <Button
+                type="button"
+                onClick={requestClose}
+                className="min-w-[5.5rem]"
+              >
                 Aplicar
               </Button>
             </div>
           </div>
-        </div>
-      )}
-    </>
-  );
-}
 
-function PeriodControls({
-  value,
-  customStart,
-  customEnd,
-  onChange,
-  onCustomStartChange,
-  onCustomEndChange,
-}: {
-  value: PeriodFilter;
-  customStart: string;
-  customEnd: string;
-  onChange: (value: PeriodFilter) => void;
-  onCustomStartChange: (value: string) => void;
-  onCustomEndChange: (value: string) => void;
-}) {
-  return (
-    <div className="grid grid-cols-1 gap-3">
-      <Dropdown
-        label="Período"
-        value={value}
-        options={periodOptions}
-        onChange={(period) => onChange(period as PeriodFilter)}
-      />
-      {value === "custom" ? (
-        <>
-          <Input
-            label="Início"
-            type="date"
-            value={customStart}
-            onChange={(event) => onCustomStartChange(event.target.value)}
-          />
-          <Input
-            label="Fim"
-            type="date"
-            value={customEnd}
-            onChange={(event) => onCustomEndChange(event.target.value)}
-          />
-        </>
-      ) : value === "all" ? (
-        <div className="rounded-lg bg-background px-4 py-3 text-sm font-semibold text-muted">
-          Mostrando todos os lançamentos.
-        </div>
-      ) : (
-        <div className="rounded-lg bg-background px-4 py-3 text-sm font-semibold text-muted">
-          Mostrando lançamentos de {periodOptions.find((option) => option.value === value)?.label.toLowerCase()}.
+          {value === "custom" && (
+            <div className="mt-4 flex flex-wrap gap-4 border-t border-border pt-4">
+              <Input
+                label="Início"
+                type="date"
+                value={customStart}
+                onChange={(event) => onCustomStartChange(event.target.value)}
+                className="w-40"
+              />
+              <Input
+                label="Fim"
+                type="date"
+                value={customEnd}
+                onChange={(event) => onCustomEndChange(event.target.value)}
+                className="w-40"
+              />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2219,14 +2273,14 @@ export function FinancePage() {
                 entries={filteredRevenueEntries}
                 emptyMessage="Nenhuma receita encontrada para este período."
                 filter={
-                  <PeriodFilterButton
+                  <InlineFilterButton
                     value={revenuePeriod}
                     customStart={revenueCustomStart}
                     customEnd={revenueCustomEnd}
                     category={revenueCategoryFilter}
                     categoryOptions={revenueCategoryFilterOptions}
                     open={showRevenueFilter}
-                    onToggle={() => setShowRevenueFilter((open) => !open)}
+                    onToggle={() => setShowRevenueFilter(true)}
                     onClose={() => setShowRevenueFilter(false)}
                     onChange={setRevenuePeriod}
                     onCustomStartChange={setRevenueCustomStart}
@@ -2238,6 +2292,7 @@ export function FinancePage() {
                       setRevenueCustomEnd(dateKey(today));
                       setRevenueCategoryFilter(categoryFilterAll);
                     }}
+                    ariaLabel="Filtros de receitas"
                   />
                 }
                 onDeleteTransaction={handleDeleteTransaction}
@@ -2295,7 +2350,7 @@ export function FinancePage() {
                 emptyDescription="Use o botão + Nova despesa para adicionar um lançamento manual."
                 accent="expense"
                 filter={
-                  <PeriodFilterButton
+                  <InlineFilterButton
                     value={expensePeriod}
                     customStart={expenseCustomStart}
                     customEnd={expenseCustomEnd}
@@ -2304,7 +2359,7 @@ export function FinancePage() {
                     supplier={expenseSupplierFilter}
                     supplierOptions={expenseSupplierFilterOptions}
                     open={showExpenseFilter}
-                    onToggle={() => setShowExpenseFilter((open) => !open)}
+                    onToggle={() => setShowExpenseFilter(true)}
                     onClose={() => setShowExpenseFilter(false)}
                     onChange={setExpensePeriod}
                     onCustomStartChange={setExpenseCustomStart}
@@ -2318,6 +2373,7 @@ export function FinancePage() {
                       setExpenseCategoryFilter(categoryFilterAll);
                       setExpenseSupplierFilter(categoryFilterAll);
                     }}
+                    ariaLabel="Filtros de despesas"
                   />
                 }
                 onEditTransaction={handleEditExpense}
@@ -2825,6 +2881,12 @@ export function FinancePage() {
           to {
             opacity: 1;
             transform: translateY(0) scale(1);
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .finance-inline-filter-card {
+            transition: none !important;
           }
         }
       `}</style>

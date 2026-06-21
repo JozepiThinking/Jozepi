@@ -4,15 +4,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
-  Plus,
-  Pencil,
-  Trash2,
-  Search,
-  Users,
+  CalendarPlus,
   Car,
-  ClipboardList,
+  MagnifyingGlass,
+  PencilSimple,
+  Plus,
+  Trash,
+  UsersThree,
+  WhatsappLogo,
   X,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { createClient } from "@/lib/supabase/client";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -35,18 +36,7 @@ import {
   type VehicleFormItem,
 } from "@/types/client";
 
-function WhatsAppIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M20.52 3.48A11.78 11.78 0 0 0 12.1 0C5.57 0 .25 5.3.25 11.82c0 2.08.55 4.12 1.59 5.91L.15 24l6.43-1.68a11.9 11.9 0 0 0 5.52 1.4h.01c6.53 0 11.85-5.3 11.85-11.82 0-3.16-1.22-6.13-3.44-8.42Zm-8.41 18.24h-.01a9.85 9.85 0 0 1-5.02-1.37l-.36-.22-3.82 1 1.02-3.72-.24-.38a9.8 9.8 0 0 1-1.5-5.21C2.18 6.4 6.63 2 12.12 2a9.77 9.77 0 0 1 6.99 2.9 9.84 9.84 0 0 1 2.9 7c0 5.42-4.45 9.82-9.9 9.82Zm5.43-7.36c-.3-.15-1.76-.87-2.03-.96-.27-.1-.47-.15-.67.15-.2.3-.77.96-.94 1.16-.17.2-.35.22-.65.07-.3-.15-1.25-.46-2.39-1.47-.88-.79-1.48-1.76-1.65-2.06-.17-.3-.02-.46.13-.61.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.03-.52-.07-.15-.67-1.61-.92-2.2-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.48s1.07 2.87 1.22 3.07c.15.2 2.1 3.2 5.08 4.49.71.31 1.26.49 1.69.62.71.23 1.36.2 1.87.12.57-.08 1.76-.72 2.01-1.41.25-.69.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35Z" />
-    </svg>
-  );
-}
+const CLIENT_ICON_WEIGHT = "light" as const;
 
 const clientInfoCardClass =
   "inline-flex h-10 min-w-[10rem] items-center gap-2 rounded-lg border border-border bg-input px-3 text-sm font-medium shadow-card";
@@ -209,7 +199,7 @@ function VehicleFormModal({
             className="flex min-h-11 min-w-11 items-center justify-center rounded-full bg-background text-muted transition-colors hover:text-foreground"
             aria-label="Fechar"
           >
-            <X className="h-5 w-5" />
+            <X size={20} weight={CLIENT_ICON_WEIGHT} aria-hidden />
           </button>
         </div>
 
@@ -337,7 +327,7 @@ function ClientVehiclesPanel({
             className="rounded-lg p-2 text-muted transition-colors hover:bg-background hover:text-foreground"
             aria-label="Fechar veículos"
           >
-            <X className="h-5 w-5" />
+            <X size={20} weight={CLIENT_ICON_WEIGHT} aria-hidden />
           </button>
         </div>
 
@@ -356,7 +346,7 @@ function ClientVehiclesPanel({
               </span>
             </span>
             <span className="flex h-9 w-9 items-center justify-center rounded-full bg-success text-white">
-              <Plus className="h-4 w-4" />
+              <Plus size={16} weight={CLIENT_ICON_WEIGHT} aria-hidden />
             </span>
           </button>
         </div>
@@ -365,7 +355,7 @@ function ClientVehiclesPanel({
           {vehicles.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border bg-background p-8 text-center">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <Car className="h-6 w-6" />
+                <Car size={24} weight={CLIENT_ICON_WEIGHT} aria-hidden />
               </div>
               <p className="text-sm font-semibold text-foreground">
                 Nenhum veículo cadastrado
@@ -407,7 +397,7 @@ function ClientVehiclesPanel({
                       onClick={() => onEditVehicle(client, vehicle)}
                       className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-success/10 px-3 py-2 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white"
                     >
-                      <Pencil className="h-4 w-4" />
+                      <PencilSimple size={16} weight={CLIENT_ICON_WEIGHT} aria-hidden />
                       Editar
                     </button>
                     <button
@@ -416,7 +406,7 @@ function ClientVehiclesPanel({
                       onClick={() => onDeleteVehicle(client, vehicle)}
                       className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash size={16} weight={CLIENT_ICON_WEIGHT} aria-hidden />
                       {deletingVehicleId === vehicle.id ? "Excluindo..." : "Excluir"}
                     </button>
                   </div>
@@ -444,7 +434,12 @@ function ClientVehiclesPanel({
                           className="flex h-36 items-center justify-center rounded-lg border border-dashed border-border bg-card text-muted"
                         >
                           <div className="text-center">
-                            <Car className="mx-auto h-6 w-6" />
+                            <Car
+                              size={24}
+                              weight={CLIENT_ICON_WEIGHT}
+                              className="mx-auto"
+                              aria-hidden
+                            />
                             <p className="mt-2 text-xs font-medium">
                               Sem foto
                             </p>
@@ -800,7 +795,7 @@ export function ClientsPage() {
         description="Gerencie o cadastro de clientes"
         actions={
           <Button variant="success" onClick={openCreateModal}>
-            <Plus className="h-4 w-4" />
+            <Plus size={16} weight={CLIENT_ICON_WEIGHT} aria-hidden />
             Adicionar novo cliente
           </Button>
         }
@@ -808,7 +803,12 @@ export function ClientsPage() {
 
       <div className="mb-6">
         <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+          <MagnifyingGlass
+            size={16}
+            weight={CLIENT_ICON_WEIGHT}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+            aria-hidden
+          />
           <input
             type="text"
             placeholder="Buscar por nome, telefone ou placa..."
@@ -826,7 +826,7 @@ export function ClientsPage() {
       ) : filteredClients.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card shadow-card py-16 text-center shadow-card">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-            <Users className="h-7 w-7 text-primary" />
+            <UsersThree size={28} weight={CLIENT_ICON_WEIGHT} className="text-primary" aria-hidden />
           </div>
           <p className="font-medium text-foreground">
             {search ? "Nenhum cliente encontrado" : "Nenhum cliente cadastrado"}
@@ -837,7 +837,7 @@ export function ClientsPage() {
               className="mt-4"
               onClick={openCreateModal}
             >
-              <Plus className="h-4 w-4" />
+              <Plus size={16} weight={CLIENT_ICON_WEIGHT} aria-hidden />
               Adicionar novo cliente
             </Button>
           )}
@@ -859,7 +859,7 @@ export function ClientsPage() {
                     className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
                     title="Editar cliente"
                   >
-                    <Pencil className="h-4 w-4" />
+                    <PencilSimple size={16} weight={CLIENT_ICON_WEIGHT} aria-hidden />
                   </button>
                   <button
                     type="button"
@@ -868,7 +868,7 @@ export function ClientsPage() {
                     className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-50"
                     title="Excluir cliente"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash size={16} weight={CLIENT_ICON_WEIGHT} aria-hidden />
                   </button>
                 </div>
 
@@ -881,10 +881,15 @@ export function ClientsPage() {
                       href={getWhatsAppUrl(client.phone)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className={`${clientInfoCardClass} text-[#128C7E] transition-all hover:-translate-y-0.5 hover:border-[#25D366] hover:bg-[#25D366] hover:text-white hover:shadow-card-hover`}
+                      className={`group ${clientInfoCardClass} text-[#008000] transition-all hover:-translate-y-0.5 hover:border-[#008000] hover:bg-[#008000] hover:text-white hover:shadow-card-hover`}
                       title="Abrir conversa no WhatsApp"
                     >
-                      <WhatsAppIcon className="h-5 w-5" />
+                      <WhatsappLogo
+                        size={16}
+                        weight={CLIENT_ICON_WEIGHT}
+                        className="shrink-0 text-[#008000] transition-colors group-hover:text-white"
+                        aria-hidden
+                      />
                       <span>{formatPhone(client.phone)}</span>
                     </a>
                     <button
@@ -893,7 +898,7 @@ export function ClientsPage() {
                       className={`${clientInfoCardClass} text-primary transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-primary hover:text-white hover:shadow-card-hover`}
                       title="Ver veículos cadastrados"
                     >
-                      <Car className="h-4 w-4" />
+                      <Car size={16} weight={CLIENT_ICON_WEIGHT} aria-hidden />
                       {vehicleCount} veículo{vehicleCount !== 1 ? "s" : ""}
                     </button>
                   </div>
@@ -903,7 +908,7 @@ export function ClientsPage() {
                   href={`/agenda?clientId=${client.id}`}
                   className="mt-3 inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white shadow-card transition-all hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-card-hover"
                 >
-                  <ClipboardList className="h-4 w-4" />
+                  <CalendarPlus size={16} weight={CLIENT_ICON_WEIGHT} aria-hidden />
                   Agendar com cliente
                 </Link>
                 {client.notes && (

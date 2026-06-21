@@ -2,14 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Plus, Trash2, Car, Pencil } from "lucide-react";
+import {
+  Car,
+  IdentificationCard,
+  PencilSimple,
+  Plus,
+  Trash,
+  X,
+} from "@phosphor-icons/react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dropdown } from "@/components/ui/dropdown";
 import { BrandAutocomplete } from "@/components/clients/brand-autocomplete";
 import { ModelAutocomplete } from "@/components/clients/model-autocomplete";
 import { VehiclePhotoUpload } from "@/components/clients/vehicle-photo-upload";
-import { PlateIcon } from "@/components/ui/plate-icon";
 import {
   type Client,
   type ClientFormData,
@@ -33,6 +39,7 @@ const vehicleYearOptions = Array.from(
 ).map((year) => ({ value: year, label: year }));
 
 const VEHICLE_FORM_EXIT_MS = 180;
+const CLIENT_MODAL_ICON_WEIGHT = "light" as const;
 
 function mapVehicleFromClient(v: NonNullable<Client["vehicles"]>[0]): VehicleFormItem {
   return {
@@ -183,7 +190,7 @@ function VehicleEditorModal({
             className="flex min-h-11 min-w-11 items-center justify-center rounded-full bg-background text-muted transition-colors hover:text-foreground"
             aria-label="Fechar"
           >
-            <X className="h-5 w-5" />
+            <X size={20} weight={CLIENT_MODAL_ICON_WEIGHT} aria-hidden />
           </button>
         </div>
 
@@ -404,7 +411,7 @@ export function ClientFormModal({
             onClick={onClose}
             className="rounded-lg p-1.5 text-muted transition-colors hover:bg-background hover:text-foreground"
           >
-            <X className="h-5 w-5" />
+            <X size={20} weight={CLIENT_MODAL_ICON_WEIGHT} aria-hidden />
           </button>
         </div>
 
@@ -434,7 +441,7 @@ export function ClientFormModal({
           <div className="space-y-3">
             <div className="space-y-3">
               <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <Car className="h-4 w-4 text-muted" />
+                <Car size={16} weight={CLIENT_MODAL_ICON_WEIGHT} className="text-muted" aria-hidden />
                 Veículos
               </label>
               <button
@@ -451,7 +458,7 @@ export function ClientFormModal({
                   </span>
                 </span>
                 <span className="flex h-10 w-10 items-center justify-center rounded-full bg-success text-white transition-transform duration-200 group-hover:scale-110">
-                  <Plus className="h-5 w-5" />
+                  <Plus size={20} weight={CLIENT_MODAL_ICON_WEIGHT} aria-hidden />
                 </span>
               </button>
             </div>
@@ -484,7 +491,12 @@ export function ClientFormModal({
                             {vehicle.brand || "Marca"} {vehicle.model || "Modelo"}
                           </p>
                           <p className="mt-0.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-primary">
-                            <PlateIcon className="h-3.5 w-3.5 shrink-0" />
+                            <IdentificationCard
+                              size={14}
+                              weight={CLIENT_MODAL_ICON_WEIGHT}
+                              className="shrink-0"
+                              aria-hidden
+                            />
                             <span className="truncate">
                               {vehicle.plate || "Placa não informada"}
                               {vehicle.year ? ` • ${vehicle.year}` : ""}
@@ -497,7 +509,7 @@ export function ClientFormModal({
                             onClick={() => openVehicleModal(index)}
                             className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-success/10 px-3 py-2 text-xs font-semibold text-success transition-all duration-200 hover:-translate-y-0.5 hover:bg-success hover:text-white hover:shadow-card-hover"
                           >
-                            <Pencil className="h-4 w-4" />
+                            <PencilSimple size={16} weight={CLIENT_MODAL_ICON_WEIGHT} aria-hidden />
                             Editar
                           </button>
                           <button
@@ -505,7 +517,7 @@ export function ClientFormModal({
                             onClick={() => removeVehicle(index)}
                             className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-danger/10 px-3 py-2 text-xs font-semibold text-danger transition-all duration-200 hover:-translate-y-0.5 hover:bg-danger hover:text-white hover:shadow-card-hover"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash size={16} weight={CLIENT_MODAL_ICON_WEIGHT} aria-hidden />
                             Excluir
                           </button>
                         </div>

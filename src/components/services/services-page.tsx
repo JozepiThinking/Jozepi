@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Clock,
-  Pencil,
+  Funnel,
+  PencilSimple,
   Plus,
   Power,
-  Trash2,
+  Trash,
   Wrench,
   X,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
@@ -68,6 +69,8 @@ const emptyForm: ServiceForm = {
   durationMinutes: "60",
   productUsages: [],
 };
+
+const SERVICE_ICON_WEIGHT = "light" as const;
 
 const durationOptions = Array.from({ length: 16 }, (_, index) => {
   const minutes = 30 + index * 30;
@@ -166,6 +169,7 @@ export function ServicesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<ServiceStatusFilter>("all");
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -787,7 +791,7 @@ export function ServicesPage() {
     <>
       <div className="mb-5 flex justify-stretch sm:mb-6 sm:justify-end">
         <Button variant="success" onClick={openCreateForm} className="w-full sm:w-auto">
-          <Plus className="h-4 w-4" />
+          <Plus size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
           Novo serviço
         </Button>
       </div>
@@ -822,7 +826,7 @@ export function ServicesPage() {
               className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-muted transition-colors hover:bg-background hover:text-foreground sm:min-h-0 sm:min-w-0 sm:p-2"
               aria-label="Fechar formulário"
             >
-              <X className="h-5 w-5" />
+              <X size={20} weight={SERVICE_ICON_WEIGHT} aria-hidden />
             </button>
           </div>
 
@@ -906,7 +910,7 @@ export function ServicesPage() {
                   disabled={availableProducts.length === 0}
                   className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:justify-center sm:py-1.5 sm:text-xs"
                 >
-                  <Plus className="h-3.5 w-3.5" />
+                  <Plus size={14} weight={SERVICE_ICON_WEIGHT} aria-hidden />
                   Adicionar produto
                 </button>
 
@@ -920,7 +924,7 @@ export function ServicesPage() {
                   }}
                   className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all hover:bg-success hover:text-white sm:min-h-0 sm:justify-center sm:py-1.5 sm:text-xs"
                 >
-                  <Plus className="h-3.5 w-3.5" />
+                  <Plus size={14} weight={SERVICE_ICON_WEIGHT} aria-hidden />
                   Cadastrar novo produto
                 </button>
               </div>
@@ -967,7 +971,7 @@ export function ServicesPage() {
                     className="rounded-lg p-1.5 text-muted transition-colors hover:bg-background hover:text-foreground"
                     aria-label="Fechar produto rápido"
                   >
-                    <X className="h-4 w-4" />
+                    <X size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
                   </button>
                 </div>
 
@@ -1092,7 +1096,7 @@ export function ServicesPage() {
                           className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:min-w-0"
                           aria-label={`Remover ${product.name}`}
                         >
-                          <X className="h-4 w-4" />
+                          <X size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
                         </button>
                       </div>
 
@@ -1157,33 +1161,70 @@ export function ServicesPage() {
         </form>
       )}
 
-      <div className="mb-5 rounded-lg border border-border bg-card shadow-card p-4 shadow-card">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,1fr)_190px_150px_160px] md:items-end">
-          <Input
-            label="Buscar serviço"
-            value={searchTerm}
-            autoComplete="off"
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Digite o nome do serviço"
-          />
-          <Dropdown
-            label="Categoria"
-            value={categoryFilter}
-            options={categoryFilterOptions}
-            onChange={setCategoryFilter}
-          />
-          <Dropdown
-            label="Status"
-            value={statusFilter}
-            options={statusFilterOptions}
-            onChange={(status) => setStatusFilter(status as ServiceStatusFilter)}
-          />
-          <div className="rounded-lg bg-background px-4 py-3 text-base font-semibold text-foreground sm:text-sm">
+      <div className="mb-5 rounded-lg border border-border bg-card p-3 shadow-card">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="min-w-0 flex-1">
+            <Input
+              label="Buscar serviço"
+              value={searchTerm}
+              autoComplete="off"
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Digite o nome do serviço"
+            />
+          </div>
+          <div className="flex shrink-0 items-center gap-2 self-end sm:pb-0.5">
+            <span className="hidden text-xs font-medium text-muted sm:inline">
+              {filteredServices.length} serviço
+              {filteredServices.length !== 1 ? "s" : ""}
+            </span>
+            <button
+              type="button"
+              onClick={() => setFiltersExpanded((open) => !open)}
+              aria-expanded={filtersExpanded}
+              className={`inline-flex min-h-11 items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold transition-colors sm:min-h-0 ${
+                filtersExpanded || categoryFilter !== "all" || statusFilter !== "all"
+                  ? "border-premium/40 bg-premium/10 text-premium"
+                  : "border-border bg-input text-foreground hover:bg-background"
+              }`}
+            >
+              <Funnel size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+              Filtros
+              {(categoryFilter !== "all" || statusFilter !== "all") && (
+                <span className="flex h-2 w-2 rounded-full bg-premium" aria-hidden />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {!filtersExpanded && (
+          <p className="mt-2 text-xs font-medium text-muted sm:hidden">
             {filteredServices.length} serviço
             {filteredServices.length !== 1 ? "s" : ""} encontrado
             {filteredServices.length !== 1 ? "s" : ""}
+          </p>
+        )}
+
+        {filtersExpanded && (
+          <div className="mt-3 grid grid-cols-1 gap-3 border-t border-border pt-3 sm:grid-cols-2">
+            <Dropdown
+              label="Categoria"
+              value={categoryFilter}
+              options={categoryFilterOptions}
+              onChange={setCategoryFilter}
+            />
+            <Dropdown
+              label="Status"
+              value={statusFilter}
+              options={statusFilterOptions}
+              onChange={(status) => setStatusFilter(status as ServiceStatusFilter)}
+            />
+            <p className="text-xs font-medium text-muted sm:col-span-2">
+              {filteredServices.length} serviço
+              {filteredServices.length !== 1 ? "s" : ""} encontrado
+              {filteredServices.length !== 1 ? "s" : ""}
+            </p>
           </div>
-        </div>
+        )}
       </div>
 
       {loading ? (
@@ -1193,7 +1234,7 @@ export function ServicesPage() {
       ) : services.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card shadow-card py-16 text-center shadow-card">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-success/10">
-            <Wrench className="h-7 w-7 text-success" />
+            <Wrench size={28} weight={SERVICE_ICON_WEIGHT} className="text-success" aria-hidden />
           </div>
           <p className="font-medium text-foreground">
             Nenhum serviço cadastrado
@@ -1206,7 +1247,7 @@ export function ServicesPage() {
             className="mt-4 w-full sm:w-auto"
             onClick={openCreateForm}
           >
-            <Plus className="h-4 w-4" />
+            <Plus size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
             Novo serviço
           </Button>
         </div>
@@ -1290,7 +1331,7 @@ export function ServicesPage() {
                           Duração
                         </span>
                         <span className="inline-flex items-center gap-1.5 font-medium text-muted">
-                          <Clock className="h-4 w-4" />
+                          <Clock size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
                           {formatDuration(service.duration_minutes)}
                         </span>
                       </div>
@@ -1329,7 +1370,11 @@ export function ServicesPage() {
                           title="Editar serviço"
                           aria-label="Editar serviço"
                         >
-                          <Pencil className="h-5 w-5 md:h-4 md:w-4" />
+                          <PencilSimple
+                            weight={SERVICE_ICON_WEIGHT}
+                            className="h-5 w-5 md:h-4 md:w-4"
+                            aria-hidden
+                          />
                         </button>
                         <button
                           type="button"
@@ -1342,7 +1387,11 @@ export function ServicesPage() {
                           title={service.active ? "Desativar" : "Ativar"}
                           aria-label={service.active ? "Desativar serviço" : "Ativar serviço"}
                         >
-                          <Power className="h-5 w-5 md:h-4 md:w-4" />
+                          <Power
+                            weight={SERVICE_ICON_WEIGHT}
+                            className="h-5 w-5 md:h-4 md:w-4"
+                            aria-hidden
+                          />
                         </button>
                         <button
                           type="button"
@@ -1351,7 +1400,11 @@ export function ServicesPage() {
                           title="Excluir serviço"
                           aria-label="Excluir serviço"
                         >
-                          <Trash2 className="h-5 w-5 md:h-4 md:w-4" />
+                          <Trash
+                            weight={SERVICE_ICON_WEIGHT}
+                            className="h-5 w-5 md:h-4 md:w-4"
+                            aria-hidden
+                          />
                         </button>
                       </div>
                     </article>

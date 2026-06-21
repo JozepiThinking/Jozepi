@@ -3,17 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  CalendarDays,
+  CalendarBlank,
+  CalendarX,
   Car,
+  CaretDown,
+  CaretLeft,
+  CaretRight,
   Check,
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
-  Pencil,
+  CheckCircle,
+  PencilSimple,
   Plus,
-  Trash2,
+  Trash,
   X,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClientFormModal } from "@/components/clients/client-form-modal";
@@ -175,6 +177,32 @@ type AgendaSelectId = "client" | "vehicle" | "service";
 
 function getStatusStyle(status: AppointmentStatus) {
   return statusStyles[status];
+}
+
+const AGENDA_ICON_WEIGHT = "light" as const;
+
+function AppointmentStatusLabel({
+  status,
+  iconSize = 14,
+}: {
+  status: AppointmentStatus;
+  iconSize?: number;
+}) {
+  if (status !== "Concluído") {
+    return status;
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <CheckCircle
+        size={iconSize}
+        weight={AGENDA_ICON_WEIGHT}
+        className="shrink-0"
+        aria-hidden
+      />
+      {status}
+    </span>
+  );
 }
 
 function formatAppointmentCount(count: number) {
@@ -568,8 +596,10 @@ function AgendaDropdown({
         <span className={selectedOption ? "font-medium" : "text-muted"}>
           {selectedOption?.label ?? placeholder}
         </span>
-        <ChevronDown
-          className="h-4 w-4 shrink-0 text-muted transition-transform duration-200"
+        <CaretDown
+          size={16}
+          weight={AGENDA_ICON_WEIGHT}
+          className="shrink-0 text-muted transition-transform duration-200"
         />
       </button>
 
@@ -601,7 +631,7 @@ function AgendaDropdown({
               className="mb-2 flex min-h-11 w-full items-center justify-between rounded-lg border border-danger/10 bg-danger/5 px-3 py-3 text-left text-base font-semibold text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:py-2.5 sm:text-sm"
             >
               {clearLabel}
-              <X className="h-4 w-4" />
+              <X size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
             </button>
           )}
           {filteredOptions.length > 0 ? (
@@ -1935,7 +1965,15 @@ export function AgendaCalendar() {
         <div className="rounded-lg border border-border bg-card p-4 shadow-card sm:p-6">
           <div className="flex items-start justify-between gap-4 sm:gap-5">
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-muted">{occupancyTitle}</p>
+              <p className="flex items-center gap-2 text-sm font-medium text-muted">
+                <CalendarBlank
+                  size={18}
+                  weight={AGENDA_ICON_WEIGHT}
+                  className="shrink-0"
+                  aria-hidden
+                />
+                {occupancyTitle}
+              </p>
               <div
                 className="timeline-track-loading relative mt-4 overflow-hidden rounded-lg bg-border shadow-inner"
                 style={{
@@ -1982,10 +2020,15 @@ export function AgendaCalendar() {
                           key={status}
                           className="inline-flex items-center gap-2 rounded-full bg-background px-3 py-1 text-xs font-semibold text-muted"
                         >
-                          <span
-                            className={`h-2.5 w-2.5 rounded-full ${style.timelineBlock}`}
-                          />
-                          {status}: {count}
+                          {status !== "Concluído" && (
+                            <span
+                              className={`h-2.5 w-2.5 rounded-full ${style.timelineBlock}`}
+                            />
+                          )}
+                          <span className="inline-flex items-center gap-1">
+                            <AppointmentStatusLabel status={status} iconSize={12} />
+                            <span>: {count}</span>
+                          </span>
                         </span>
                       );
                     })}
@@ -2022,7 +2065,7 @@ export function AgendaCalendar() {
                     ))}
                   </div>
                   <p className="mt-3 flex items-center gap-2 text-sm text-muted">
-                    <Car className="h-4 w-4 shrink-0" />
+                    <Car size={16} weight={AGENDA_ICON_WEIGHT} className="shrink-0" aria-hidden />
                     <span>{nextAppointment.vehicle}</span>
                   </p>
                   {nextAppointment.isMultiDay && (
@@ -2034,7 +2077,11 @@ export function AgendaCalendar() {
               ) : (
                 <div className="mt-4 flex flex-col items-center justify-center py-3 text-center">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted/10 text-muted/50">
-                    <CalendarDays className="h-5 w-5" strokeWidth={1.5} />
+                    <CalendarX
+                      size={20}
+                      weight={AGENDA_ICON_WEIGHT}
+                      aria-hidden
+                    />
                   </div>
                   <p className="mt-3 text-sm font-medium text-muted">
                     Nenhum agendamento pendente
@@ -2057,8 +2104,10 @@ export function AgendaCalendar() {
                     <span
                       className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${nextAppointmentStyle?.statusBadge}`}
                     >
-                      <span className="h-2 w-2 rounded-full bg-current" />
-                      {nextAppointment.status}
+                      {nextAppointment.status !== "Concluído" && (
+                        <span className="h-2 w-2 rounded-full bg-current" />
+                      )}
+                      <AppointmentStatusLabel status={nextAppointment.status} />
                     </span>
 
                     <div className="grid w-full grid-cols-2 gap-1.5 sm:w-auto">
@@ -2080,7 +2129,7 @@ export function AgendaCalendar() {
                                 : "border-transparent hover:-translate-y-0.5 hover:shadow-card"
                             } ${optionStyle.statusBadge}`}
                           >
-                            {status}
+                            <AppointmentStatusLabel status={status} iconSize={12} />
                           </button>
                         );
                       })}
@@ -2112,7 +2161,7 @@ export function AgendaCalendar() {
                 className="flex min-h-11 items-center justify-center rounded-lg border border-border bg-background p-2 text-muted transition-colors hover:text-foreground sm:min-h-0"
                 aria-label="Mês anterior"
               >
-                <ChevronLeft className="h-4 w-4" />
+                <CaretLeft size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
               </button>
               <button
                 type="button"
@@ -2130,7 +2179,7 @@ export function AgendaCalendar() {
                 className="flex min-h-11 items-center justify-center rounded-lg border border-border bg-background p-2 text-muted transition-colors hover:text-foreground sm:min-h-0"
                 aria-label="Próximo mês"
               >
-                <ChevronRight className="h-4 w-4" />
+                <CaretRight size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
               </button>
             </div>
           </div>
@@ -2258,7 +2307,7 @@ export function AgendaCalendar() {
               className="flex min-h-11 min-w-11 items-center justify-center rounded-full bg-background text-muted transition-colors hover:text-foreground md:hidden"
               aria-label="Fechar painel do dia"
             >
-              <X className="h-5 w-5" />
+              <X size={20} weight={AGENDA_ICON_WEIGHT} aria-hidden />
             </button>
           </div>
 
@@ -2268,7 +2317,7 @@ export function AgendaCalendar() {
               className="w-full"
               onClick={openCreateForm}
             >
-              <Plus className="h-4 w-4" />
+              <Plus size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
               Novo agendamento
             </Button>
 
@@ -2278,7 +2327,7 @@ export function AgendaCalendar() {
                 onClick={handleClearSelectedDay}
                 className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-base font-medium text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:py-2.5 sm:text-sm"
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
                 Remover agendamentos do dia
               </button>
             )}
@@ -2300,7 +2349,7 @@ export function AgendaCalendar() {
                     className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-muted transition-colors hover:bg-card hover:text-foreground sm:min-h-0 sm:min-w-0 sm:p-1"
                     aria-label="Fechar formulário"
                   >
-                    <X className="h-4 w-4" />
+                    <X size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
                   </button>
                 </div>
                 <Input
@@ -2504,7 +2553,7 @@ export function AgendaCalendar() {
                       }
                       className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all duration-200 hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-1.5 sm:text-xs"
                     >
-                      <Plus className="h-3.5 w-3.5" />
+                      <Plus size={14} weight={AGENDA_ICON_WEIGHT} aria-hidden />
                       Adicionar serviço
                     </button>
                   </div>
@@ -2524,7 +2573,7 @@ export function AgendaCalendar() {
                               className="rounded-full p-1 transition-colors hover:bg-success/20"
                               aria-label={`Remover ${service.name}`}
                             >
-                              <X className="h-3 w-3" />
+                              <X size={12} weight={AGENDA_ICON_WEIGHT} aria-hidden />
                             </button>
                           </span>
                         ))}
@@ -2706,7 +2755,7 @@ export function AgendaCalendar() {
                   disabled={savingAppointment}
                   className="w-full bg-gradient-to-r from-success to-emerald-500 text-white shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:from-success hover:to-emerald-600 hover:shadow-card-hover"
                 >
-                  <Check className="h-4 w-4" />
+                  <Check size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
                   {savingAppointment
                     ? "Salvando..."
                     : editingAppointmentId
@@ -2799,13 +2848,19 @@ export function AgendaCalendar() {
                             aria-haspopup="menu"
                             aria-expanded={openStatusMenuId === appointment.id}
                           >
-                            {appointment.status}
-                            <ChevronDown
-                              className={`h-3 w-3 transition-transform duration-200 ${
+                            <AppointmentStatusLabel
+                              status={appointment.status}
+                              iconSize={12}
+                            />
+                            <CaretDown
+                              size={12}
+                              weight={AGENDA_ICON_WEIGHT}
+                              className={`transition-transform duration-200 ${
                                 openStatusMenuId === appointment.id
                                   ? "rotate-180"
                                   : ""
                               }`}
+                              aria-hidden
                             />
                           </button>
 
@@ -2830,7 +2885,7 @@ export function AgendaCalendar() {
                                     }
                                     className={`mb-1 flex min-h-11 w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors last:mb-0 hover:bg-background sm:min-h-0 sm:text-xs ${optionStyle.statusBadge}`}
                                   >
-                                    {status}
+                                    <AppointmentStatusLabel status={status} iconSize={12} />
                                   </button>
                                 );
                               })}
@@ -2845,7 +2900,7 @@ export function AgendaCalendar() {
                             title="Editar agendamento"
                             aria-label="Editar agendamento"
                           >
-                            <Pencil className="h-4 w-4" />
+                            <PencilSimple size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
                           </button>
                           <button
                             type="button"
@@ -2854,7 +2909,7 @@ export function AgendaCalendar() {
                             title="Excluir agendamento"
                             aria-label="Excluir agendamento"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
                           </button>
                         </div>
                       </div>

@@ -1,22 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
+  ArrowCounterClockwise,
   Camera,
-  Droplets,
-  Mail,
-  Filter,
-  MessageCircle,
+  CaretUpDown,
+  ChatCircle,
+  Drop,
+  EnvelopeSimple,
+  Funnel,
+  MagnifyingGlassPlus,
   Package,
-  Pencil,
+  PencilSimple,
   Plus,
-  RotateCcw,
-  Trash2,
+  Trash,
+  Warning,
   Wrench,
   X,
-  ZoomIn,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
@@ -54,6 +55,7 @@ import {
 } from "@/lib/products/supabase-catalog";
 
 const PRODUCT_FORM_EXIT_MS = 180;
+const PRODUCT_ICON_WEIGHT = "light" as const;
 
 type ProductTypeFilter = "all" | "liquid" | "utensil";
 type ProductPageTab = "products" | "suppliers";
@@ -89,6 +91,156 @@ interface ReplenishForm {
   amount: string;
   paidAmount: string;
   purchaseDate: string;
+}
+
+const PRODUCT_FILTER_EXIT_MS = 300;
+
+function ProductInlineFilterButton({
+  value,
+  options,
+  open,
+  onToggle,
+  onClose,
+  onChange,
+  onClear,
+}: {
+  value: ProductTypeFilter;
+  options: { value: string; label: string }[];
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onChange: (value: ProductTypeFilter) => void;
+  onClear: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [closing, setClosing] = useState(false);
+  const [panelReady, setPanelReady] = useState(false);
+  const showPanel = open || closing;
+  const panelVisible = panelReady && open && !closing;
+
+  const requestClose = useCallback(() => {
+    if (!open || closing) return;
+
+    setClosing(true);
+    window.setTimeout(() => {
+      setClosing(false);
+      onClose();
+    }, PRODUCT_FILTER_EXIT_MS);
+  }, [closing, onClose, open]);
+
+  useEffect(() => {
+    if (open) setClosing(false);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!showPanel) {
+      setPanelReady(false);
+      return;
+    }
+
+    setPanelReady(false);
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => setPanelReady(true));
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [showPanel]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") requestClose();
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        requestClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [open, requestClose]);
+
+  function handleToggle() {
+    if (open) {
+      requestClose();
+      return;
+    }
+
+    onToggle();
+  }
+
+  return (
+    <div ref={containerRef} className="relative inline-flex">
+      <button
+        type="button"
+        onClick={handleToggle}
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors ${
+          open
+            ? "border-premium/40 bg-premium/10 text-premium"
+            : "border-border/80 bg-card text-foreground/70 hover:bg-background hover:text-foreground"
+        }`}
+        aria-label="Abrir filtros de produtos"
+        aria-expanded={open}
+        title="Abrir filtros"
+      >
+        <Funnel size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+      </button>
+
+      {showPanel && (
+        <div
+          role="dialog"
+          aria-modal="false"
+          aria-label="Filtros de produtos"
+          className={`product-inline-filter-card absolute left-0 top-full z-50 mt-2 w-max max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card px-6 py-4 shadow-card transition-all duration-300 ease-out md:min-w-[24rem] ${
+            panelVisible
+              ? "translate-y-0 opacity-100"
+              : "pointer-events-none -translate-y-2 opacity-0"
+          }`}
+          style={{
+            boxShadow:
+              "-6px 8px 24px rgba(15, 23, 42, 0.1), 0 4px 12px rgba(15, 23, 42, 0.06)",
+          }}
+        >
+          <div className="flex flex-wrap items-end gap-6">
+            <Dropdown
+              label="Tipo"
+              value={value}
+              options={options}
+              onChange={(nextValue) => onChange(nextValue as ProductTypeFilter)}
+              className="min-w-[14rem] flex-1 space-y-2"
+            />
+            <div className="flex shrink-0 flex-col gap-2 border-l border-border pl-5">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={onClear}
+                className="min-w-[5.5rem]"
+              >
+                Limpar
+              </Button>
+              <Button
+                type="button"
+                onClick={requestClose}
+                className="min-w-[5.5rem]"
+              >
+                Aplicar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const productTypeFilterOptions = [
@@ -1069,15 +1221,15 @@ export function ProductsPage() {
       {activeProductTab === "products" && (
         <div key="products-tab" className="product-tab-panel-enter">
       <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <button
-          type="button"
-          onClick={() => setShowProductFilter(true)}
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-border/80 text-foreground/70 transition-colors hover:bg-background hover:text-foreground"
-          aria-label="Abrir filtros de produtos"
-          title="Abrir filtros"
-        >
-          <Filter className="h-4 w-4" />
-        </button>
+        <ProductInlineFilterButton
+          value={typeFilter}
+          options={productTypeFilterOptions}
+          open={showProductFilter}
+          onToggle={() => setShowProductFilter(true)}
+          onClose={() => setShowProductFilter(false)}
+          onChange={setTypeFilter}
+          onClear={() => setTypeFilter("all")}
+        />
 
         {products.length > 0 && (
           <Button
@@ -1085,62 +1237,11 @@ export function ProductsPage() {
             onClick={openCreateForm}
             className="w-full sm:w-auto"
           >
-            <Plus className="h-4 w-4" />
+            <Plus size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
             Adicionar produto
           </Button>
         )}
       </div>
-
-      {showProductFilter && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-background/70 px-4 pt-28 backdrop-blur-[2px]"
-          onClick={() => setShowProductFilter(false)}
-        >
-          <div
-            className="product-filter-panel-enter w-full max-w-2xl rounded-3xl border border-border bg-card p-6 shadow-2xl ring-1 ring-slate-900/5"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="mb-4">
-              <h3 className="text-xl font-semibold text-foreground">
-                Filtros
-              </h3>
-              <p className="mt-1 text-sm text-muted">
-                Filtre o catálogo por tipo de produto.
-              </p>
-            </div>
-            <div className="space-y-4">
-              <Dropdown
-                label="Filtrar por tipo"
-                value={typeFilter}
-                options={productTypeFilterOptions}
-                onChange={(value) => setTypeFilter(value as ProductTypeFilter)}
-              />
-              <div className="rounded-lg bg-background px-4 py-3 text-sm font-semibold text-foreground">
-                {filteredProducts.length} produto
-                {filteredProducts.length !== 1 ? "s" : ""} encontrado
-                {filteredProducts.length !== 1 ? "s" : ""}
-              </div>
-            </div>
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setTypeFilter("all")}
-                className="w-full sm:w-auto"
-              >
-                Limpar filtros
-              </Button>
-              <Button
-                type="button"
-                onClick={() => setShowProductFilter(false)}
-                className="w-full sm:w-auto"
-              >
-                Aplicar
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {error && (
         <div className="mb-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
@@ -1153,7 +1254,7 @@ export function ProductsPage() {
           {products.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card shadow-card py-16 text-center shadow-card">
               <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-success/10">
-                <Package className="h-7 w-7 text-success" />
+                <Package size={28} weight={PRODUCT_ICON_WEIGHT} className="text-success" aria-hidden />
               </div>
               <p className="font-medium text-foreground">
                 Nenhum produto cadastrado
@@ -1162,7 +1263,7 @@ export function ProductsPage() {
                 Crie seu catálogo para usar nos serviços.
               </p>
               <Button variant="success" className="mt-4" onClick={openCreateForm}>
-                <Plus className="h-4 w-4" />
+                <Plus size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                 Adicionar produto
               </Button>
             </div>
@@ -1196,7 +1297,12 @@ export function ProductsPage() {
                               className="h-full w-full rounded-lg object-cover transition duration-300 group-hover/photo:scale-105 group-hover/photo:brightness-110"
                             />
                             <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-foreground/0 text-white opacity-0 transition-all duration-300 group-hover/photo:bg-foreground/25 group-hover/photo:opacity-100">
-                              <ZoomIn className="h-4 w-4 drop-shadow-card" />
+                              <MagnifyingGlassPlus
+                                size={16}
+                                weight={PRODUCT_ICON_WEIGHT}
+                                className="drop-shadow-card"
+                                aria-hidden
+                              />
                             </span>
                             <span className="pointer-events-none absolute left-0 top-12 z-[999] hidden h-44 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-card p-1 opacity-0 shadow-2xl ring-1 ring-slate-900/5 group-hover/photo:block product-photo-preview-popover">
                               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1210,9 +1316,9 @@ export function ProductsPage() {
                         ) : (
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
                             {isLiquid ? (
-                              <Droplets className="h-5 w-5" />
+                              <Drop size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                             ) : (
-                              <Wrench className="h-5 w-5" />
+                              <Wrench size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                             )}
                           </span>
                         )}
@@ -1236,7 +1342,7 @@ export function ProductsPage() {
                           className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
                           title="Editar produto"
                         >
-                          <Pencil className="h-4 w-4" />
+                          <PencilSimple size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                         </button>
                         <button
                           type="button"
@@ -1244,7 +1350,7 @@ export function ProductsPage() {
                           className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
                           title="Excluir produto"
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                         </button>
                       </div>
                     </div>
@@ -1297,7 +1403,7 @@ export function ProductsPage() {
                   className="rounded-lg p-2 text-muted transition-colors hover:bg-background hover:text-foreground"
                   aria-label="Fechar formulário"
                 >
-                  <X className="h-5 w-5" />
+                  <X size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                 </button>
               </div>
 
@@ -1312,7 +1418,9 @@ export function ProductsPage() {
                           : undefined
                       }
                     >
-                      {!form.photoUrl && <Camera className="h-6 w-6" />}
+                      {!form.photoUrl && (
+                        <Camera size={24} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-foreground">
@@ -1323,7 +1431,7 @@ export function ProductsPage() {
                       </p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-success/10 px-3 py-2 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white">
-                          <Camera className="h-3.5 w-3.5" />
+                          <Camera size={14} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                           {form.photoUrl ? "Trocar foto" : "Adicionar foto"}
                           <input
                             type="file"
@@ -1384,11 +1492,19 @@ export function ProductsPage() {
                     type="number"
                     min="0"
                     step="1"
+                    className="number-input-no-spinner"
                     value={form.volumeMl}
                     onChange={(event) =>
                       updateForm({ volumeMl: event.target.value })
                     }
                     placeholder="5000"
+                    suffix={
+                      <CaretUpDown
+                        size={16}
+                        weight={PRODUCT_ICON_WEIGHT}
+                        aria-hidden
+                      />
+                    }
                   />
                 ) : (
                   <Input
@@ -1436,7 +1552,7 @@ export function ProductsPage() {
                   </h2>
                 </div>
                 <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
-                  <Package className="h-5 w-5" />
+                  <Package size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                 </span>
               </div>
 
@@ -1507,14 +1623,14 @@ export function ProductsPage() {
                             onClick={() => openStockEdit(product)}
                             className="mt-2 inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-card px-2.5 py-1.5 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white"
                           >
-                            <Pencil className="h-3.5 w-3.5" />
+                            <PencilSimple size={14} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                             Editar estoque
                           </button>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           {criticalStock && (
                             <span className="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-1 text-[10px] font-bold text-danger">
-                              <AlertTriangle className="h-3 w-3" />
+                              <Warning size={12} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                               Repor estoque
                             </span>
                           )}
@@ -1523,7 +1639,11 @@ export function ProductsPage() {
                             onClick={() => openReplenish(product.id)}
                             className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-card px-2.5 py-1.5 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white"
                           >
-                            <RotateCcw className="h-3.5 w-3.5" />
+                            <ArrowCounterClockwise
+                              size={14}
+                              weight={PRODUCT_ICON_WEIGHT}
+                              aria-hidden
+                            />
                             Repor
                           </button>
                         </div>
@@ -1739,7 +1859,7 @@ export function ProductsPage() {
             onClick={openSupplierForm}
             className="w-full sm:w-auto"
           >
-            <Plus className="h-4 w-4" />
+            <Plus size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
             Adicionar fornecedor
           </Button>
         </div>
@@ -1768,7 +1888,7 @@ export function ProductsPage() {
                 placeholder="Distribuidora Auto Clean"
               />
               <Input
-                label="Nome do contato (opcional)"
+                label="Nome do contato"
                 value={supplierForm.contactName}
                 onChange={(event) =>
                   updateSupplierForm({ contactName: event.target.value })
@@ -1776,39 +1896,39 @@ export function ProductsPage() {
                 placeholder="Carlos Souza"
               />
               <Input
-                label="Telefone (opcional)"
+                label="Telefone"
                 value={supplierForm.phone}
                 onChange={(event) => updateSupplierForm({ phone: event.target.value })}
                 placeholder="(51) 99999-9999"
               />
               <Input
-                label="WhatsApp (opcional)"
+                label="WhatsApp"
                 value={supplierForm.whatsapp}
                 onChange={(event) => updateSupplierForm({ whatsapp: event.target.value })}
                 placeholder="(51) 99999-9999"
               />
               <Input
-                label="E-mail (opcional)"
+                label="E-mail"
                 type="email"
                 value={supplierForm.email}
                 onChange={(event) => updateSupplierForm({ email: event.target.value })}
                 placeholder="contato@fornecedor.com"
               />
               <Input
-                label="CNPJ (opcional)"
+                label="CNPJ"
                 value={supplierForm.document}
                 onChange={(event) => updateSupplierForm({ document: event.target.value })}
                 placeholder="00.000.000/0001-00"
               />
               <Input
-                label="Cidade/UF (opcional)"
+                label="Cidade/UF"
                 value={supplierForm.cityState}
                 onChange={(event) => updateSupplierForm({ cityState: event.target.value })}
                 placeholder="Caxias do Sul/RS"
               />
               <div className="space-y-1.5">
                 <label className="block text-sm font-semibold text-foreground">
-                  Observações <span className="text-muted">(opcional)</span>
+                  Observações
                 </label>
                 <textarea
                   value={supplierForm.notes}
@@ -1820,16 +1940,14 @@ export function ProductsPage() {
               </div>
             </div>
             <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              {editingSupplierId && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={resetSupplierForm}
-                  className="w-full sm:w-auto"
-                >
-                  Cancelar
-                </Button>
-              )}
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={resetSupplierForm}
+                className="w-full sm:w-auto"
+              >
+                Cancelar
+              </Button>
               <Button
                 type="submit"
                 variant="success"
@@ -1837,7 +1955,7 @@ export function ProductsPage() {
                 className="w-full sm:w-auto"
                 disabled={!suppliersLoaded}
               >
-                <Plus className="h-4 w-4" />
+                <Plus size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                 {editingSupplierId ? "Salvar alterações" : "Cadastrar fornecedor"}
               </Button>
             </div>
@@ -1893,7 +2011,7 @@ export function ProductsPage() {
                             aria-label={`Editar ${supplier.name}`}
                             title="Editar fornecedor"
                           >
-                            <Pencil className="h-4 w-4" />
+                            <PencilSimple size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                           </button>
                           <button
                             type="button"
@@ -1905,7 +2023,7 @@ export function ProductsPage() {
                             aria-label={`Excluir ${supplier.name}`}
                             title="Excluir fornecedor"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                           </button>
                         </div>
                       </article>
@@ -1932,7 +2050,7 @@ export function ProductsPage() {
                         aria-label={`Editar ${selectedSupplier.name}`}
                         title="Editar fornecedor"
                       >
-                        <Pencil className="h-4 w-4" />
+                        <PencilSimple size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
                       </button>
                     </div>
                     <div className="space-y-3 text-sm">
@@ -1953,7 +2071,13 @@ export function ProductsPage() {
                             : ""
                         }
                         href={getSupplierWhatsAppUrl(getSupplierExtra(selectedSupplier, "whatsapp"))}
-                        icon={<MessageCircle className="h-4 w-4" />}
+                        icon={
+                          <ChatCircle
+                            size={16}
+                            weight={PRODUCT_ICON_WEIGHT}
+                            aria-hidden
+                          />
+                        }
                       />
                       <SupplierDetail
                         label="E-mail"
@@ -1963,7 +2087,13 @@ export function ProductsPage() {
                             ? `mailto:${getSupplierExtra(selectedSupplier, "email")}`
                             : ""
                         }
-                        icon={<Mail className="h-4 w-4" />}
+                        icon={
+                          <EnvelopeSimple
+                            size={16}
+                            weight={PRODUCT_ICON_WEIGHT}
+                            aria-hidden
+                          />
+                        }
                       />
                       <SupplierDetail label="CNPJ" value={getSupplierExtra(selectedSupplier, "document")} />
                       <SupplierDetail label="Cidade/UF" value={getSupplierExtra(selectedSupplier, "cityState")} />
@@ -1995,10 +2125,6 @@ export function ProductsPage() {
 
           .product-tab-panel-enter {
             animation: product-tab-panel-enter 180ms ease-out both;
-          }
-
-          .product-filter-panel-enter {
-            animation: product-filter-panel-enter 180ms ease-out both;
           }
         }
 
@@ -2087,14 +2213,9 @@ export function ProductsPage() {
           }
         }
 
-        @keyframes product-filter-panel-enter {
-          from {
-            opacity: 0;
-            transform: translateY(-8px) scale(0.98);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
+        @media (prefers-reduced-motion: reduce) {
+          .product-inline-filter-card {
+            transition: none !important;
           }
         }
 

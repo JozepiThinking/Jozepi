@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Plus } from "lucide-react";
+import { CaretDown, Plus } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils/cn";
 
 export interface DropdownOption {
@@ -27,6 +27,7 @@ interface DropdownProps {
 }
 
 const DROPDOWN_EXIT_MS = 160;
+const DROPDOWN_ICON_WEIGHT = "light" as const;
 
 export function Dropdown({
   label,
@@ -146,13 +147,21 @@ export function Dropdown({
         onClick={toggleDropdown}
         className="flex min-h-11 w-full items-center justify-between gap-3 rounded-md border border-border bg-input px-4 py-3 text-left text-base text-foreground transition-colors duration-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-2.5 sm:text-sm"
       >
-        <span className={selectedOption ? "font-medium" : "text-muted/70"}>
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate",
+            selectedOption ? "font-medium" : "text-muted/70"
+          )}
+        >
           {selectedOption?.label ?? placeholder}
         </span>
-        <ChevronDown
+        <CaretDown
+          size={16}
+          weight={DROPDOWN_ICON_WEIGHT}
           className={cn(
-            "h-4 w-4 shrink-0 text-muted transition-transform duration-200"
+            "shrink-0 text-muted transition-transform duration-200"
           )}
+          aria-hidden
         />
       </button>
 
@@ -263,7 +272,7 @@ export function Dropdown({
               }}
               className="mt-2 flex min-h-11 w-full items-center gap-2 rounded-lg border border-dashed border-success/30 px-3 py-3 text-left text-base font-semibold tracking-wide text-success transition-colors duration-300 hover:bg-success/10 sm:min-h-0 sm:py-2.5 sm:text-sm"
             >
-              <Plus className="h-4 w-4" />
+              <Plus size={16} weight={DROPDOWN_ICON_WEIGHT} aria-hidden />
               {actionLabel}
             </button>
           )}

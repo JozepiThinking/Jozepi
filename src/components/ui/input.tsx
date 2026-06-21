@@ -1,16 +1,17 @@
 "use client";
 
 import { cn } from "@/lib/utils/cn";
-import { forwardRef, type InputHTMLAttributes } from "react";
+import { forwardRef, type InputHTMLAttributes, type ReactNode } from "react";
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
   error?: string;
   prefix?: string;
+  suffix?: ReactNode;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, className, id, prefix, ...props }, ref) => {
+  ({ label, error, className, id, prefix, suffix, ...props }, ref) => {
     const inputId = id ?? label.toLowerCase().replace(/\s/g, "-");
 
     return (
@@ -30,6 +31,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             className={cn(
               "w-full rounded-md border border-border bg-input px-4 py-3 text-base text-foreground sm:py-2.5 sm:text-sm",
               prefix && "pl-11",
+              suffix && "pr-11",
               "placeholder:text-muted/60 transition-colors duration-300",
               "focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20",
               "disabled:cursor-not-allowed disabled:opacity-50",
@@ -38,6 +40,11 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             )}
             {...props}
           />
+          {suffix && (
+            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-muted">
+              {suffix}
+            </span>
+          )}
         </div>
         {error && <p className="text-xs text-danger">{error}</p>}
       </div>

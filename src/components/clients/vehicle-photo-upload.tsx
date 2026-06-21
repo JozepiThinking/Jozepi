@@ -2,9 +2,11 @@
 
 import { useRef } from "react";
 import Image from "next/image";
-import { Camera, X } from "lucide-react";
+import { Camera, X } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils/cn";
 import { validatePhotoFile } from "@/lib/supabase/vehicle-photos";
+
+const PHOTO_ICON_WEIGHT = "light" as const;
 
 interface PhotoSlotProps {
   label: string;
@@ -60,7 +62,7 @@ function PhotoSlot({
             onClick={onRemove}
             className="absolute right-1 top-1 rounded-full bg-foreground/70 p-1 text-white hover:bg-foreground"
           >
-            <X className="h-3.5 w-3.5" />
+            <X size={14} weight={PHOTO_ICON_WEIGHT} aria-hidden />
           </button>
         </div>
       ) : (
@@ -72,7 +74,7 @@ function PhotoSlot({
             compact ? "h-32 sm:h-36" : "h-64"
           )}
         >
-          <Camera className="h-5 w-5" />
+          <Camera size={20} weight={PHOTO_ICON_WEIGHT} aria-hidden />
           <span className="text-xs">Tirar ou carregar foto</span>
           <span className="text-[11px] text-muted/70">
             Câmera ou galeria
