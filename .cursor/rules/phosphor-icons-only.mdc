@@ -1,0 +1,37 @@
+---
+description: Usar somente Phosphor Icons em ícones de UI
+globs: src/**/*.{tsx,ts}
+alwaysApply: false
+---
+
+# Ícones — Phosphor Icons only
+
+Em código novo ou alterado, use **somente** `@phosphor-icons/react`.
+
+- Não importe de `lucide-react`, `react-icons`, Heroicons ou SVGs soltos para ícones de interface.
+- Prefira `weight="light"` e tamanhos já usados no app (`size={16}` a `size={22}`).
+- Mantenha `aria-hidden` em ícones decorativos; use `aria-label` no botão pai.
+
+```tsx
+// ❌ Evitar
+import { Trash2, Check } from "lucide-react";
+
+// ✅ Preferir
+import { Trash, Check } from "@phosphor-icons/react";
+
+<Trash size={16} weight="light" aria-hidden />
+```
+
+## Equivalências comuns (Lucide → Phosphor)
+
+| Lucide | Phosphor |
+|--------|----------|
+| `Trash2` | `Trash` |
+| `Pencil` | `PencilSimple` |
+| `Settings` | `GearSix` |
+| `CheckCircle2` | `CheckCircle` |
+| `UserRound` | `User` |
+| `Building2` | `Buildings` |
+| `AlertTriangle` | `Warning` |
+
+Se não houver equivalente óbvio, escolha o ícone Phosphor mais próximo visualmente — não volte ao Lucide.

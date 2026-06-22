@@ -5,7 +5,6 @@ import {
   ArrowCounterClockwise,
   Camera,
   CaretUpDown,
-  ChatCircle,
   Drop,
   EnvelopeSimple,
   Funnel,
@@ -19,6 +18,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
@@ -59,13 +59,18 @@ const PRODUCT_ICON_WEIGHT = "light" as const;
 
 type ProductTypeFilter = "all" | "liquid" | "utensil";
 type ProductPageTab = "products" | "suppliers";
+
+type ProductDeleteConfirm =
+  | { type: "product"; product: ProductItem }
+  | { type: "supplier"; supplier: Supplier }
+  | null;
+
 interface Supplier {
   id: string;
   workshop_id: string;
   name: string;
   contactName?: string | null;
   phone: string | null;
-  whatsapp?: string | null;
   email?: string | null;
   document?: string | null;
   cityState?: string | null;
@@ -79,7 +84,6 @@ interface SupplierForm {
   name: string;
   contactName: string;
   phone: string;
-  whatsapp: string;
   email: string;
   document: string;
   cityState: string;
@@ -256,7 +260,6 @@ const emptySupplierForm: SupplierForm = {
   name: "",
   contactName: "",
   phone: "",
-  whatsapp: "",
   email: "",
   document: "",
   cityState: "",
@@ -279,12 +282,6 @@ function mergeSuppliers(current: Supplier[], incoming: Supplier[]) {
 function getSupplierExtra(supplier: Supplier, key: string) {
   const value = (supplier as unknown as Record<string, unknown>)[key];
   return typeof value === "string" ? value : "";
-}
-
-function getSupplierWhatsAppUrl(value: string) {
-  const digits = value.replace(/\D/g, "");
-  if (!digits) return "";
-  return `https://wa.me/${digits.startsWith("55") ? digits : `55${digits}`}`;
 }
 
 const PRODUCT_PHOTO_MAX_SIZE = 480;
@@ -434,6 +431,8 @@ export function ProductsPage() {
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null);
   const [form, setForm] = useState<ProductForm>(emptyProductForm);
   const [error, setError] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<ProductDeleteConfirm>(null);
+  const [deletingItem, setDeletingItem] = useState(false);
   const [replenishingProductId, setReplenishingProductId] = useState<string | null>(
     null
   );
@@ -449,7 +448,8 @@ export function ProductsPage() {
   );
   const [stockEditValue, setStockEditValue] = useState("");
   const closeFormTimeoutRef = useRef<number | null>(null);
-  const catalogSyncStartedRef = useRef(false);
+  const isCatalogLoading =
+    !catalogSyncReady && !error && (!suppliersLoaded || Boolean(workshopId));
 
   function clearCloseFormTimeout() {
     if (closeFormTimeoutRef.current) {
@@ -459,52 +459,32 @@ export function ProductsPage() {
   }
 
   useEffect(() => {
-    async function loadSuppliers() {
+    let cancelled = false;
+
+    async function loadPageData() {
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("workshop_id")
         .single();
 
+      if (cancelled) return;
+
       if (profileError || !profile?.workshop_id) {
         setSupplierError(profileError?.message ?? "Oficina não encontrada.");
         setSuppliersLoaded(true);
+        setCatalogSyncReady(true);
         return;
       }
 
-      setWorkshopId(profile.workshop_id);
+      const resolvedWorkshopId = profile.workshop_id;
+      setWorkshopId(resolvedWorkshopId);
 
-      const { data, error: suppliersError } = await supabase
-        .from("suppliers")
-        .select("id, workshop_id, name, phone, category, notes, created_at, updated_at")
-        .eq("workshop_id", profile.workshop_id)
-        .order("name", { ascending: true });
-
-      if (suppliersError) {
-        setSupplierError(suppliersError.message);
-      } else {
-        setSuppliers(sortSuppliers((data as Supplier[] | null) ?? []));
-      }
-
-      setSuppliersLoaded(true);
-    }
-
-    void loadSuppliers();
-  }, [supabase]);
-
-  useEffect(() => {
-    if (!workshopId || catalogSyncStartedRef.current) {
-      return;
-    }
-
-    catalogSyncStartedRef.current = true;
-
-    void Promise.resolve().then(async () => {
       try {
         const localCatalog = readLocalCatalogFromStorage();
         if (localCatalog.hasData) {
           await importLocalCatalogToSupabase(
             supabase,
-            workshopId,
+            resolvedWorkshopId,
             localCatalog.products,
             localCatalog.typeOptions,
             localCatalog.serviceProductUsages
@@ -512,23 +492,57 @@ export function ProductsPage() {
           clearLocalCatalogStorage();
         }
 
-        const catalog = await loadSupabaseCatalog(supabase, workshopId);
-        setProducts(
-          await Promise.all(catalog.products.map(compactProductPhoto))
-        );
+        const [suppliersResult, catalog] = await Promise.all([
+          supabase
+            .from("suppliers")
+            .select(
+              "id, workshop_id, name, phone, category, notes, created_at, updated_at"
+            )
+            .eq("workshop_id", resolvedWorkshopId)
+            .order("name", { ascending: true }),
+          loadSupabaseCatalog(supabase, resolvedWorkshopId),
+        ]);
+
+        if (cancelled) return;
+
+        if (suppliersResult.error) {
+          setSupplierError(suppliersResult.error.message);
+        } else {
+          setSuppliers(sortSuppliers((suppliersResult.data as Supplier[] | null) ?? []));
+        }
+
+        setProducts(catalog.products);
         setTypeOptions(catalog.typeOptions);
         setServiceProductUsages(catalog.serviceProductUsages);
         setCatalogSyncReady(true);
+        setSuppliersLoaded(true);
+
+        void Promise.all(catalog.products.map(compactProductPhoto)).then(
+          (compactProducts) => {
+            if (!cancelled) {
+              setProducts(compactProducts);
+            }
+          }
+        );
       } catch (err) {
-        setCatalogSyncReady(false);
+        if (cancelled) return;
+
+        setCatalogSyncReady(true);
+        setSuppliersLoaded(true);
         setError(
           err instanceof Error
             ? `Persistência de produtos no Supabase indisponível: ${err.message}`
             : "Persistência de produtos no Supabase indisponível."
         );
       }
-    });
-  }, [supabase, workshopId]);
+    }
+
+    void loadPageData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
 
   useEffect(() => {
     if (!catalogSyncReady || !workshopId) return;
@@ -656,12 +670,10 @@ export function ProductsPage() {
 
   function startEditingSupplier(supplier: Supplier) {
     setEditingSupplierId(supplier.id);
-    const whatsapp = getSupplierExtra(supplier, "whatsapp");
     setSupplierForm({
       name: supplier.name,
       contactName: getSupplierExtra(supplier, "contactName"),
       phone: supplier.phone ? formatPhone(supplier.phone) : "",
-      whatsapp: whatsapp ? formatPhone(whatsapp) : "",
       email: getSupplierExtra(supplier, "email"),
       document: getSupplierExtra(supplier, "document"),
       cityState: getSupplierExtra(supplier, "cityState"),
@@ -695,11 +707,9 @@ export function ProductsPage() {
     setSupplierError(null);
 
     let normalizedPhone: string | null = null;
-    let normalizedWhatsapp: string | null = null;
 
     try {
       normalizedPhone = normalizeOptionalPhone(supplierForm.phone);
-      normalizedWhatsapp = normalizeOptionalPhone(supplierForm.whatsapp);
     } catch (err) {
       setSavingSupplier(false);
       setSupplierError(
@@ -745,7 +755,6 @@ export function ProductsPage() {
     const supplier: Supplier = {
       ...(result.data as Supplier),
       contactName: supplierForm.contactName.trim() || null,
-      whatsapp: normalizedWhatsapp,
       email: supplierForm.email.trim() || null,
       document: supplierForm.document.trim() || null,
       cityState: supplierForm.cityState.trim() || null,
@@ -763,25 +772,33 @@ export function ProductsPage() {
     resetSupplierForm();
   }
 
-  async function handleDeleteSupplier(supplier: Supplier) {
+  function requestDeleteSupplier(supplier: Supplier) {
     if (products.some((product) => product.supplierId === supplier.id)) {
       setSupplierError("Não é possível excluir um fornecedor vinculado a produtos.");
       return;
     }
 
-    const confirmed = window.confirm(`Deseja excluir ${supplier.name}?`);
-    if (!confirmed) return;
+    setDeleteConfirm({ type: "supplier", supplier });
+  }
 
-    if (supplier.workshop_id !== "local") {
-      await supabase.from("suppliers").delete().eq("id", supplier.id);
-    }
+  async function executeDeleteSupplier(supplier: Supplier) {
+    setDeletingItem(true);
 
-    setSuppliers((prev) => prev.filter((item) => item.id !== supplier.id));
-    if (selectedSupplierId === supplier.id) {
-      setSelectedSupplierId(null);
-    }
-    if (editingSupplierId === supplier.id) {
-      resetSupplierForm();
+    try {
+      if (supplier.workshop_id !== "local") {
+        await supabase.from("suppliers").delete().eq("id", supplier.id);
+      }
+
+      setSuppliers((prev) => prev.filter((item) => item.id !== supplier.id));
+      if (selectedSupplierId === supplier.id) {
+        setSelectedSupplierId(null);
+      }
+      if (editingSupplierId === supplier.id) {
+        resetSupplierForm();
+      }
+      setDeleteConfirm(null);
+    } finally {
+      setDeletingItem(false);
     }
   }
 
@@ -956,25 +973,31 @@ export function ProductsPage() {
     closeForm();
   }
 
-  async function handleDeleteProduct(product: ProductItem) {
-    const confirmed = window.confirm(`Deseja excluir ${product.name}?`);
-    if (!confirmed) return;
+  function requestDeleteProduct(product: ProductItem) {
+    setDeleteConfirm({ type: "product", product });
+  }
+
+  async function executeDeleteProduct(product: ProductItem) {
+    setDeletingItem(true);
+    setError(null);
 
     try {
       await deleteSupabaseProduct(supabase, product.id);
+      setProducts((prev) => prev.filter((item) => item.id !== product.id));
+
+      if (editingProduct?.id === product.id) {
+        closeForm();
+      }
+
+      setDeleteConfirm(null);
     } catch (err) {
       setError(
         err instanceof Error
           ? `Não foi possível excluir no Supabase: ${err.message}`
           : "Não foi possível excluir no Supabase."
       );
-      return;
-    }
-
-    setProducts((prev) => prev.filter((item) => item.id !== product.id));
-
-    if (editingProduct?.id === product.id) {
-      closeForm();
+    } finally {
+      setDeletingItem(false);
     }
   }
 
@@ -1251,7 +1274,11 @@ export function ProductsPage() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] xl:items-start">
         <section className="order-2 xl:order-1">
-          {products.length === 0 ? (
+          {isCatalogLoading ? (
+            <div className="rounded-lg border border-border bg-card shadow-card py-16 text-center text-sm text-muted shadow-card">
+              Carregando produtos...
+            </div>
+          ) : products.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card shadow-card py-16 text-center shadow-card">
               <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-success/10">
                 <Package size={28} weight={PRODUCT_ICON_WEIGHT} className="text-success" aria-hidden />
@@ -1346,7 +1373,7 @@ export function ProductsPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDeleteProduct(product)}
+                          onClick={() => requestDeleteProduct(product)}
                           className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
                           title="Excluir produto"
                         >
@@ -1540,6 +1567,10 @@ export function ProductsPage() {
                 </Button>
               </div>
             </form>
+          ) : isCatalogLoading ? (
+            <div className="flex h-[calc(100vh-2rem)] min-h-[28rem] flex-col items-center justify-center rounded-lg border border-border bg-card shadow-card p-5 text-sm text-muted shadow-card">
+              Carregando estoque...
+            </div>
           ) : products.length > 0 ? (
             <div className="flex h-[calc(100vh-2rem)] min-h-[28rem] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
               <div className="mb-5 flex items-start justify-between gap-3">
@@ -1902,12 +1933,6 @@ export function ProductsPage() {
                 placeholder="(51) 99999-9999"
               />
               <Input
-                label="WhatsApp"
-                value={supplierForm.whatsapp}
-                onChange={(event) => updateSupplierForm({ whatsapp: event.target.value })}
-                placeholder="(51) 99999-9999"
-              />
-              <Input
                 label="E-mail"
                 type="email"
                 value={supplierForm.email}
@@ -1963,7 +1988,11 @@ export function ProductsPage() {
           )}
 
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">
-              {suppliers.length === 0 ? (
+              {!suppliersLoaded ? (
+                <p className="rounded-lg border border-border bg-card px-3 py-10 text-center text-sm text-muted shadow-card">
+                  Carregando fornecedores...
+                </p>
+              ) : suppliers.length === 0 ? (
                 <p className="px-3 py-10 text-center text-sm font-semibold text-muted">
                   Nenhum fornecedor cadastrado
                 </p>
@@ -1972,7 +2001,7 @@ export function ProductsPage() {
                   <div className="min-w-[720px]">
                     <div className="grid grid-cols-[minmax(260px,1fr)_190px_96px] gap-4 border-b border-border px-3 py-3 text-xs font-semibold text-muted">
                       <span>Nome</span>
-                      <span>Telefone/WhatsApp</span>
+                      <span>Telefone</span>
                       <span className="text-right">Ações</span>
                     </div>
                     {suppliers.map((supplier) => (
@@ -1994,11 +2023,7 @@ export function ProductsPage() {
                           )}
                         </div>
                         <p className="text-sm font-medium text-foreground">
-                          {supplier.phone
-                            ? formatPhone(supplier.phone)
-                            : getSupplierExtra(supplier, "whatsapp")
-                              ? formatPhone(getSupplierExtra(supplier, "whatsapp"))
-                              : "-"}
+                          {supplier.phone ? formatPhone(supplier.phone) : "-"}
                         </p>
                         <div className="flex justify-end gap-2">
                           <button
@@ -2017,7 +2042,7 @@ export function ProductsPage() {
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              void handleDeleteSupplier(supplier);
+                              void requestDeleteSupplier(supplier);
                             }}
                             className="flex h-8 w-8 items-center justify-center rounded-lg text-danger transition-colors hover:bg-danger/10"
                             aria-label={`Excluir ${supplier.name}`}
@@ -2061,22 +2086,6 @@ export function ProductsPage() {
                           selectedSupplier.phone
                             ? formatPhone(selectedSupplier.phone)
                             : ""
-                        }
-                      />
-                      <SupplierDetail
-                        label="WhatsApp"
-                        value={
-                          getSupplierExtra(selectedSupplier, "whatsapp")
-                            ? formatPhone(getSupplierExtra(selectedSupplier, "whatsapp"))
-                            : ""
-                        }
-                        href={getSupplierWhatsAppUrl(getSupplierExtra(selectedSupplier, "whatsapp"))}
-                        icon={
-                          <ChatCircle
-                            size={16}
-                            weight={PRODUCT_ICON_WEIGHT}
-                            aria-hidden
-                          />
                         }
                       />
                       <SupplierDetail
@@ -2230,6 +2239,46 @@ export function ProductsPage() {
           }
         }
       `}</style>
+
+      <ConfirmDialog
+        open={deleteConfirm?.type === "product"}
+        title="Excluir produto"
+        description={
+          deleteConfirm?.type === "product"
+            ? `Deseja excluir ${deleteConfirm.product.name}?`
+            : ""
+        }
+        confirmLabel="Excluir produto"
+        loading={deletingItem}
+        onCancel={() => {
+          if (!deletingItem) setDeleteConfirm(null);
+        }}
+        onConfirm={() => {
+          if (deleteConfirm?.type === "product") {
+            void executeDeleteProduct(deleteConfirm.product);
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirm?.type === "supplier"}
+        title="Excluir fornecedor"
+        description={
+          deleteConfirm?.type === "supplier"
+            ? `Deseja excluir ${deleteConfirm.supplier.name}?`
+            : ""
+        }
+        confirmLabel="Excluir fornecedor"
+        loading={deletingItem}
+        onCancel={() => {
+          if (!deletingItem) setDeleteConfirm(null);
+        }}
+        onConfirm={() => {
+          if (deleteConfirm?.type === "supplier") {
+            void executeDeleteSupplier(deleteConfirm.supplier);
+          }
+        }}
+      />
     </>
   );
 }

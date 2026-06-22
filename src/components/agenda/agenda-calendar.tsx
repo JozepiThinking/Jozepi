@@ -11,16 +11,19 @@ import {
   CaretRight,
   Check,
   CheckCircle,
+  NotePencil,
   PencilSimple,
   Plus,
   Trash,
   X,
 } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { ClientFormModal } from "@/components/clients/client-form-modal";
 import { syncVehicles } from "@/lib/clients/sync-vehicles";
 import { createClient } from "@/lib/supabase/client";
+import { assertMutationRows } from "@/lib/supabase/mutations";
 import { formatCurrency, normalizePhone } from "@/lib/utils/format";
 import {
   getProductRemainingStock,
@@ -48,6 +51,7 @@ interface Appointment {
   totalAmount: number;
   vehicle: string;
   status: AppointmentStatus;
+  notes: string;
 }
 
 interface AppointmentForm {
@@ -60,6 +64,7 @@ interface AppointmentForm {
   vehicleId: string;
   serviceIds: string[];
   totalAmount: string;
+  notes: string;
 }
 
 interface AgendaService {
@@ -95,6 +100,7 @@ interface AppointmentOrderRow {
   vehicle_id: string;
   status: ServiceOrderStatus | string;
   total_amount: number | string;
+  notes: string | null;
   scheduled_date: string | null;
   scheduled_end_date: string | null;
   scheduled_start: string | null;
@@ -181,6 +187,18 @@ function getStatusStyle(status: AppointmentStatus) {
 
 const AGENDA_ICON_WEIGHT = "light" as const;
 
+type AgendaPageTab = "calendar" | "serviceList";
+
+type AgendaDeleteConfirm =
+  | { type: "appointment"; appointment: Appointment }
+  | { type: "clearDay" }
+  | null;
+
+const agendaPageTabs: { id: AgendaPageTab; label: string }[] = [
+  { id: "calendar", label: "Agenda" },
+  { id: "serviceList", label: "Lista de serviços" },
+];
+
 function AppointmentStatusLabel({
   status,
   iconSize = 14,
@@ -202,6 +220,194 @@ function AppointmentStatusLabel({
       />
       {status}
     </span>
+  );
+}
+
+function AppointmentNotesIndicator({
+  appointmentId,
+  notes,
+  onUpdateNotes,
+}: {
+  appointmentId: string;
+  notes: string;
+  onUpdateNotes: (
+    appointmentId: string,
+    notes: string | null
+  ) => Promise<void>;
+}) {
+  const trimmedNotes = notes.trim();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(trimmedNotes);
+  const [saving, setSaving] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setDraft(trimmedNotes);
+    setConfirmRemove(false);
+    setError(null);
+  }, [open, trimmedNotes]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handlePointerDown(event: MouseEvent) {
+      if (rootRef.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open]);
+
+  if (!trimmedNotes && !open) return null;
+
+  async function handleSave() {
+    const nextNotes = draft.trim();
+    if (!nextNotes) {
+      setError("Informe uma observação ou use Remover.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await onUpdateNotes(appointmentId, nextNotes);
+      setOpen(false);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Erro ao salvar observação."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRemove() {
+    setSaving(true);
+    setError(null);
+    try {
+      await onUpdateNotes(appointmentId, null);
+      setOpen(false);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Erro ao remover observação."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div ref={rootRef} className="group/notes absolute -right-3 top-0 z-10">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50 px-2.5 py-1 text-[11px] font-bold text-amber-900 shadow-card ring-1 ring-amber-200/70 transition-all duration-200 hover:border-amber-400 hover:shadow-card-hover hover:ring-amber-300/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+      >
+        <NotePencil
+          size={12}
+          weight="fill"
+          className="shrink-0 text-amber-600"
+          aria-hidden
+        />
+        Observação
+      </button>
+
+      {!open && trimmedNotes && (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute right-0 top-full z-30 mt-2 hidden w-72 max-w-[min(18rem,calc(100vw-2rem))] rounded-lg border border-amber-200 bg-card p-3 text-xs leading-relaxed text-foreground shadow-xl ring-1 ring-amber-100 group-hover/notes:block group-focus-within/notes:block"
+        >
+          <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-amber-700">
+            Observação
+          </p>
+          <p className="whitespace-pre-wrap break-words">{trimmedNotes}</p>
+          <p className="mt-2 text-[10px] font-medium text-muted">
+            Clique para editar ou remover
+          </p>
+        </div>
+      )}
+
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Editar observação"
+          className="agenda-notes-panel-enter absolute right-0 top-full z-30 mt-2 w-72 max-w-[min(18rem,calc(100vw-2rem))] rounded-lg border border-amber-200 bg-card p-3 shadow-xl ring-1 ring-amber-100"
+        >
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-amber-700">
+            Observação
+          </p>
+          <textarea
+            rows={4}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            disabled={saving}
+            placeholder="Escreva uma observação..."
+            className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-xs text-foreground outline-none transition-shadow placeholder:text-muted/60 focus:border-primary/40 focus:shadow-card disabled:opacity-60"
+          />
+          {error && (
+            <p className="mt-2 text-xs font-medium text-danger">{error}</p>
+          )}
+          {confirmRemove ? (
+            <div className="mt-3 space-y-2">
+              <p className="text-xs font-medium text-foreground">
+                Remover esta observação?
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => setConfirmRemove(false)}
+                  className="rounded-lg px-3 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-foreground disabled:opacity-60"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void handleRemove()}
+                  className="rounded-lg bg-danger px-3 py-1.5 text-xs font-semibold text-white shadow-card transition-all hover:bg-danger/90 disabled:opacity-60"
+                >
+                  {saving ? "Removendo..." : "Sim, remover"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setOpen(false)}
+                className="rounded-lg px-3 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-foreground disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setConfirmRemove(true)}
+                className="rounded-lg px-3 py-1.5 text-xs font-semibold text-danger transition-colors hover:text-danger/80 disabled:opacity-60"
+              >
+                Remover
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void handleSave()}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-card transition-all hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {saving ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -357,6 +563,87 @@ function getServicePrice(service: AgendaService) {
   return Number(service.price) || 0;
 }
 
+function parseAppointmentAmount(value: string) {
+  const normalized = value.trim().replace(/\./g, "").replace(",", ".");
+  const amount = Number(normalized);
+
+  if (!value.trim() || !Number.isFinite(amount) || amount < 0) {
+    throw new Error("Informe um valor válido para o total.");
+  }
+
+  return amount;
+}
+
+function calculateServicesTotal(
+  serviceIds: string[],
+  catalogServices: AgendaService[]
+) {
+  return serviceIds.reduce((total, serviceId) => {
+    const service = catalogServices.find((item) => item.id === serviceId);
+    return total + (service ? getServicePrice(service) : 0);
+  }, 0);
+}
+
+function isCustomAppointmentTotal(
+  appointment: Appointment,
+  catalogServices: AgendaService[]
+) {
+  if (appointment.totalAmount <= 0) return false;
+
+  const catalogTotal = calculateServicesTotal(
+    appointment.serviceIds,
+    catalogServices
+  );
+
+  return Math.abs(appointment.totalAmount - catalogTotal) > 0.009;
+}
+
+function buildServiceOrderItems(
+  selectedServices: AgendaService[],
+  appointmentTotal: number
+) {
+  const catalogTotal = selectedServices.reduce(
+    (total, service) => total + getServicePrice(service),
+    0
+  );
+
+  if (
+    selectedServices.length === 0 ||
+    catalogTotal <= 0 ||
+    Math.abs(appointmentTotal - catalogTotal) <= 0.009
+  ) {
+    return selectedServices.map((service) => ({
+      service_id: service.id,
+      quantity: 1,
+      unit_price: getServicePrice(service),
+    }));
+  }
+
+  let assignedTotal = 0;
+
+  return selectedServices.map((service, index) => {
+    if (index === selectedServices.length - 1) {
+      return {
+        service_id: service.id,
+        quantity: 1,
+        unit_price: Math.round((appointmentTotal - assignedTotal) * 100) / 100,
+      };
+    }
+
+    const share =
+      Math.round(
+        (getServicePrice(service) / catalogTotal) * appointmentTotal * 100
+      ) / 100;
+    assignedTotal += share;
+
+    return {
+      service_id: service.id,
+      quantity: 1,
+      unit_price: share,
+    };
+  });
+}
+
 function firstRelation<T>(value: T | T[] | null | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -494,6 +781,7 @@ function mapOrderToAppointment(order: AppointmentOrderRow): Appointment {
       ? `${vehicle.brand} ${vehicle.model} - ${vehicle.plate}`
       : "Veículo não encontrado",
     status: getAppointmentStatus(order.status),
+    notes: order.notes?.trim() ?? "",
   };
 }
 
@@ -723,8 +1011,14 @@ export function AgendaCalendar() {
     vehicleId: "",
     serviceIds: [],
     totalAmount: "",
+    notes: "",
   });
+  const [notesPanelOpen, setNotesPanelOpen] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [activeAgendaTab, setActiveAgendaTab] = useState<AgendaPageTab>("calendar");
+  const [deleteConfirm, setDeleteConfirm] = useState<AgendaDeleteConfirm>(null);
+  const [deletingAppointments, setDeletingAppointments] = useState(false);
 
   const syncFinanceRevenueForAppointment = useCallback(async (appointment: Appointment) => {
     if (!workshopId || appointment.totalAmount <= 0) return null;
@@ -863,6 +1157,7 @@ export function AgendaCalendar() {
         payment_status: "pendente",
         completed_at:
           appointment.status === "Concluído" ? new Date().toISOString() : null,
+        notes: (appointment.notes ?? "").trim() || null,
       };
 
       const { data: insertedOrder, error: insertError } = await supabase
@@ -988,6 +1283,7 @@ export function AgendaCalendar() {
         vehicle_id,
         status,
         total_amount,
+        notes,
         scheduled_date,
         scheduled_end_date,
         scheduled_start,
@@ -1017,6 +1313,7 @@ export function AgendaCalendar() {
             vehicle_id,
             status,
             total_amount,
+            notes,
             scheduled_date,
             scheduled_start,
             scheduled_end,
@@ -1176,6 +1473,15 @@ export function AgendaCalendar() {
         : appointment
     );
   }, [appointments, now]);
+  const serviceListAppointments = useMemo(() => {
+    return [...normalizedAppointments].sort((a, b) => {
+      const endDateA = getAppointmentEndDate(a);
+      const endDateB = getAppointmentEndDate(b);
+      const dateCompare = endDateB.localeCompare(endDateA);
+      if (dateCompare !== 0) return dateCompare;
+      return b.startTime.localeCompare(a.startTime);
+    });
+  }, [normalizedAppointments]);
   const appointmentsByDate = useMemo(() => {
     return normalizedAppointments.reduce<Record<string, AppointmentOccurrence[]>>(
       (acc, appointment) => {
@@ -1343,7 +1649,10 @@ export function AgendaCalendar() {
     (total, service) => total + getServicePrice(service),
     0
   );
-  const customTotalAmount = Number(form.totalAmount.replace(",", "."));
+  const customTotalAmount = (() => {
+    const normalized = form.totalAmount.trim().replace(/\./g, "").replace(",", ".");
+    return normalized ? Number(normalized) : NaN;
+  })();
   const hasCustomTotalAmount = form.totalAmount.trim() !== "";
   const displayTotalAmount =
     hasCustomTotalAmount && !Number.isNaN(customTotalAmount)
@@ -1366,17 +1675,16 @@ export function AgendaCalendar() {
   }
 
   function saveTotalAmount() {
-    const normalized = form.totalAmount.trim().replace(/\./g, "").replace(",", ".");
-    const amount = Number(normalized);
-
-    if (!form.totalAmount.trim() || !Number.isFinite(amount) || amount < 0) {
-      setError("Informe um valor válido para o total dos serviços.");
-      return;
+    try {
+      const amount = parseAppointmentAmount(form.totalAmount);
+      setForm((prev) => ({ ...prev, totalAmount: String(amount) }));
+      setEditingTotalAmount(false);
+      setError(null);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Informe um valor válido para o total."
+      );
     }
-
-    setForm((prev) => ({ ...prev, totalAmount: String(amount) }));
-    setEditingTotalAmount(false);
-    setError(null);
   }
 
   function resetTotalAmountToServicesSum() {
@@ -1412,11 +1720,14 @@ export function AgendaCalendar() {
       vehicleId: "",
       serviceIds: [],
       totalAmount: "",
+      notes: "",
     });
     setError(null);
     setAddingService(false);
     setEditingTotalAmount(false);
     setOpenSelectId(null);
+    setNotesPanelOpen(false);
+    setNotesDraft("");
   }
 
   function openCreateForm() {
@@ -1458,6 +1769,7 @@ export function AgendaCalendar() {
         vehicleId: linkedClient.vehicles?.[0]?.id ?? "",
         serviceIds: [],
         totalAmount: "",
+        notes: "",
       });
       setError(null);
       setAddingService(false);
@@ -1471,6 +1783,8 @@ export function AgendaCalendar() {
   function openEditForm(appointment: Appointment) {
     setOpenStatusMenuId(null);
     const appointmentEndDate = getAppointmentEndDate(appointment);
+    const useCustomTotal = isCustomAppointmentTotal(appointment, services);
+
     setForm({
       date: appointment.date,
       endDate: appointmentEndDate,
@@ -1481,7 +1795,10 @@ export function AgendaCalendar() {
       vehicleId: appointment.vehicleId,
       serviceIds: appointment.serviceIds,
       totalAmount:
-        appointment.totalAmount > 0 ? String(appointment.totalAmount) : "",
+        useCustomTotal && appointment.totalAmount > 0
+          ? String(appointment.totalAmount)
+          : "",
+      notes: appointment.notes,
     });
     setEditingAppointmentId(appointment.id);
     setError(null);
@@ -1560,6 +1877,8 @@ export function AgendaCalendar() {
 
   function closeForm() {
     setOpenSelectId(null);
+    setNotesPanelOpen(false);
+    setNotesDraft("");
     setFormClosing(true);
 
     window.setTimeout(() => {
@@ -1590,6 +1909,21 @@ export function AgendaCalendar() {
         endDate: prev.isMultiDay && prev.endDate >= key ? prev.endDate : key,
       }));
     }
+  }
+
+  function openNotesPanel() {
+    setNotesDraft(form.notes);
+    setNotesPanelOpen(true);
+  }
+
+  function saveNotesDraft() {
+    setForm((prev) => ({ ...prev, notes: notesDraft.trim() }));
+    setNotesPanelOpen(false);
+  }
+
+  function cancelNotesDraft() {
+    setNotesDraft(form.notes);
+    setNotesPanelOpen(false);
   }
 
   async function handleSaveAppointment(event: React.FormEvent<HTMLFormElement>) {
@@ -1658,8 +1992,21 @@ export function AgendaCalendar() {
 
     const vehicleLabel = `${appointmentVehicle.brand} ${appointmentVehicle.model} - ${appointmentVehicle.plate}`;
     const serviceLabel = selectedServices.map((service) => service.name).join(", ");
-    const appointmentTotal = hasCustomTotalAmount
-      ? customTotalAmount
+
+    let resolvedCustomTotal = customTotalAmount;
+    if (hasCustomTotalAmount || editingTotalAmount) {
+      try {
+        resolvedCustomTotal = parseAppointmentAmount(form.totalAmount);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Informe um valor válido para o total."
+        );
+        return;
+      }
+    }
+
+    const appointmentTotal = hasCustomTotalAmount || editingTotalAmount
+      ? resolvedCustomTotal
       : servicesTotal;
     const currentStatus =
       appointments.find((appointment) => appointment.id === editingAppointmentId)
@@ -1668,6 +2015,7 @@ export function AgendaCalendar() {
       client_id: appointmentClient.id,
       vehicle_id: appointmentVehicle.id,
       total_amount: appointmentTotal,
+      notes: form.notes.trim() || null,
       scheduled_date: form.date,
       scheduled_end_date: appointmentEndDate,
       scheduled_start: form.startTime,
@@ -1676,11 +2024,7 @@ export function AgendaCalendar() {
       completed_at:
         currentStatus === "Concluído" ? new Date().toISOString() : null,
     };
-    const serviceItems = selectedServices.map((service) => ({
-      service_id: service.id,
-      quantity: 1,
-      unit_price: getServicePrice(service),
-    }));
+    const serviceItems = buildServiceOrderItems(selectedServices, appointmentTotal);
 
     setSavingAppointment(true);
     setError(null);
@@ -1689,12 +2033,13 @@ export function AgendaCalendar() {
       let savedAppointmentId = editingAppointmentId;
 
       if (editingAppointmentId) {
-        const { error: updateError } = await supabase
+        const { data: updatedRows, error: updateError } = await supabase
           .from("service_orders")
           .update(payload)
-          .eq("id", editingAppointmentId);
+          .eq("id", editingAppointmentId)
+          .select("id");
 
-        if (updateError) throw updateError;
+        assertMutationRows(updatedRows, updateError, "atualizar o agendamento");
 
         const { error: deleteItemsError } = await supabase
           .from("service_order_items")
@@ -1721,16 +2066,21 @@ export function AgendaCalendar() {
         throw new Error("Erro ao salvar agendamento.");
       }
 
-      const { error: insertItemsError } = await supabase
+      const { data: insertedItems, error: insertItemsError } = await supabase
         .from("service_order_items")
         .insert(
           serviceItems.map((item) => ({
             ...item,
             service_order_id: savedAppointmentId,
           }))
-        );
+        )
+        .select("id");
 
-      if (insertItemsError) throw insertItemsError;
+      assertMutationRows(
+        insertedItems,
+        insertItemsError,
+        "salvar os serviços do agendamento"
+      );
 
       const savedAppointment: Appointment = {
         id: savedAppointmentId,
@@ -1746,6 +2096,7 @@ export function AgendaCalendar() {
         totalAmount: appointmentTotal,
         vehicle: vehicleLabel,
         status: currentStatus,
+        notes: form.notes.trim(),
       };
 
       setAppointments((prev) =>
@@ -1781,59 +2132,72 @@ export function AgendaCalendar() {
     }
   }
 
-  async function handleDeleteAppointment(appointment: Appointment) {
+  function requestDeleteAppointment(appointment: Appointment) {
     setOpenStatusMenuId(null);
-    const confirmed = window.confirm(
-      `Deseja excluir o horário de ${appointment.client}?`
-    );
+    setDeleteConfirm({ type: "appointment", appointment });
+  }
 
-    if (!confirmed) return;
+  async function executeDeleteAppointment(appointment: Appointment) {
+    setDeletingAppointments(true);
+    setError(null);
 
-    const { error: deleteError } = await supabase
-      .from("service_orders")
-      .delete()
-      .eq("id", appointment.id);
+    try {
+      const { data: deletedRows, error: deleteError } = await supabase
+        .from("service_orders")
+        .delete()
+        .eq("id", appointment.id)
+        .select("id");
 
-    if (deleteError) {
-      setError(deleteError.message);
-      return;
-    }
+      assertMutationRows(deletedRows, deleteError, "excluir o agendamento");
 
-    setAppointments((prev) =>
-      prev.filter((item) => item.id !== appointment.id)
-    );
+      setAppointments((prev) =>
+        prev.filter((item) => item.id !== appointment.id)
+      );
 
-    if (editingAppointmentId === appointment.id) {
-      closeForm();
+      if (editingAppointmentId === appointment.id) {
+        closeForm();
+      }
+
+      setDeleteConfirm(null);
+    } finally {
+      setDeletingAppointments(false);
     }
   }
 
-  async function handleClearSelectedDay() {
+  function requestClearSelectedDay() {
     setOpenStatusMenuId(null);
-    const confirmed = window.confirm(
-      "Deseja excluir todos os horários deste dia?"
-    );
+    setDeleteConfirm({ type: "clearDay" });
+  }
 
-    if (!confirmed) return;
+  async function executeClearSelectedDay() {
+    setDeletingAppointments(true);
+    setError(null);
 
-    const appointmentIds = selectedAppointments.map((appointment) => appointment.id);
+    try {
+      const appointmentIds = selectedAppointments.map((appointment) => appointment.id);
 
-    if (appointmentIds.length > 0) {
-      const { error: deleteError } = await supabase
-        .from("service_orders")
-        .delete()
-        .in("id", appointmentIds);
+      if (appointmentIds.length > 0) {
+        const { data: deletedRows, error: deleteError } = await supabase
+          .from("service_orders")
+          .delete()
+          .in("id", appointmentIds)
+          .select("id");
 
-      if (deleteError) {
-        setError(deleteError.message);
-        return;
+        assertMutationRows(
+          deletedRows,
+          deleteError,
+          "excluir os agendamentos do dia"
+        );
       }
-    }
 
-    setAppointments((prev) =>
-      prev.filter((appointment) => appointment.date !== selectedKey)
-    );
-    closeForm();
+      setAppointments((prev) =>
+        prev.filter((appointment) => appointment.date !== selectedKey)
+      );
+      closeForm();
+      setDeleteConfirm(null);
+    } finally {
+      setDeletingAppointments(false);
+    }
   }
 
   async function handleChangeStatus(
@@ -1848,16 +2212,23 @@ export function AgendaCalendar() {
     const shouldRemoveFinanceRevenue =
       status !== "Concluído" && currentAppointment?.status === "Concluído";
 
-    const { error: updateError } = await supabase
+    const { data: updatedRows, error: updateError } = await supabase
       .from("service_orders")
       .update({
         status: getServiceOrderStatus(status),
         completed_at: status === "Concluído" ? new Date().toISOString() : null,
       })
-      .eq("id", appointmentId);
+      .eq("id", appointmentId)
+      .select("id");
 
-    if (updateError) {
-      setError(updateError.message);
+    try {
+      assertMutationRows(updatedRows, updateError, "atualizar o status do agendamento");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Erro ao atualizar o status do agendamento."
+      );
       return;
     }
 
@@ -1915,6 +2286,29 @@ export function AgendaCalendar() {
     }, 180);
   }
 
+  const updateAppointmentNotes = useCallback(
+    async (appointmentId: string, notes: string | null) => {
+      const trimmedNotes = notes?.trim() ?? "";
+
+      const { data: updatedRows, error: updateError } = await supabase
+        .from("service_orders")
+        .update({ notes: trimmedNotes || null })
+        .eq("id", appointmentId)
+        .select("id");
+
+      assertMutationRows(updatedRows, updateError, "atualizar a observação");
+
+      setAppointments((prev) =>
+        prev.map((appointment) =>
+          appointment.id === appointmentId
+            ? { ...appointment, notes: trimmedNotes }
+            : appointment
+        )
+      );
+    },
+    [supabase]
+  );
+
   async function handleCreateClient(data: ClientFormData) {
     if (!workshopId) {
       throw new Error("Oficina não encontrada.");
@@ -1961,6 +2355,34 @@ export function AgendaCalendar() {
 
   return (
     <>
+      <div className="mb-6 border-b border-border">
+        <div className="flex items-center gap-6">
+          {agendaPageTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => {
+                setActiveAgendaTab(tab.id);
+                if (tab.id === "serviceList") {
+                  setDayDrawerOpen(false);
+                  closeForm();
+                  setOpenStatusMenuId(null);
+                }
+              }}
+              className={`border-b-2 px-0 pb-3 pt-1 text-sm transition-all duration-200 ease-out ${
+                activeAgendaTab === tab.id
+                  ? "border-primary font-bold text-primary"
+                  : "border-transparent font-semibold text-muted hover:text-foreground"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeAgendaTab === "calendar" ? (
+        <div key="agenda-calendar-panel" className="agenda-tab-panel-enter min-w-0">
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
         <div className="rounded-lg border border-border bg-card p-4 shadow-card sm:p-6">
           <div className="flex items-start justify-between gap-4 sm:gap-5">
@@ -2324,7 +2746,7 @@ export function AgendaCalendar() {
             {selectedAppointments.length > 0 && (
               <button
                 type="button"
-                onClick={handleClearSelectedDay}
+                onClick={requestClearSelectedDay}
                 className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-base font-medium text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:py-2.5 sm:text-sm"
               >
                 <Trash size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
@@ -2335,7 +2757,7 @@ export function AgendaCalendar() {
             {creating && (
               <form
                 onSubmit={handleSaveAppointment}
-                className={`space-y-4 rounded-lg border border-border bg-background shadow-card p-4 ${
+                className={`relative overflow-visible space-y-4 rounded-lg border border-border bg-background shadow-card p-4 ${
                   formClosing ? "agenda-form-exit" : "agenda-form-enter"
                 }`}
               >
@@ -2680,6 +3102,67 @@ export function AgendaCalendar() {
                       </div>
                     </div>
                   </div>
+
+                  <div className="relative flex justify-end">
+                    <button
+                      type="button"
+                      onClick={openNotesPanel}
+                      className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold shadow-card transition-all hover:shadow-card-hover sm:min-h-0 ${
+                        form.notes.trim()
+                          ? "border-primary/30 bg-primary/5 text-primary"
+                          : "border-border bg-card text-foreground hover:bg-background"
+                      }`}
+                    >
+                      <NotePencil size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
+                      Observação
+                      {form.notes.trim() && (
+                        <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+                          Salva
+                        </span>
+                      )}
+                    </button>
+
+                    {notesPanelOpen && (
+                      <div
+                        className="absolute right-full top-1/2 z-30 mr-3 w-72 max-w-[calc(100vw-2rem)] -translate-y-1/2"
+                        role="dialog"
+                        aria-label="Observação do agendamento"
+                      >
+                        <div className="agenda-notes-panel-enter rounded-lg border border-border bg-card p-4 shadow-card">
+                          <label
+                            htmlFor="appointment-notes"
+                            className="mb-2 block text-sm font-semibold text-foreground"
+                          >
+                            Observação
+                          </label>
+                          <textarea
+                            id="appointment-notes"
+                            rows={4}
+                            value={notesDraft}
+                            onChange={(event) => setNotesDraft(event.target.value)}
+                            placeholder="Escreva uma observação para este agendamento..."
+                            className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition-shadow placeholder:text-muted/60 focus:border-primary/40 focus:shadow-card"
+                          />
+                          <div className="mt-3 flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={cancelNotesDraft}
+                              className="rounded-lg px-3 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-foreground"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={saveNotesDraft}
+                              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-card transition-all hover:bg-emerald-700"
+                            >
+                              Salvar
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between">
@@ -2904,7 +3387,7 @@ export function AgendaCalendar() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDeleteAppointment(appointment)}
+                            onClick={() => requestDeleteAppointment(appointment)}
                             className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:min-w-0"
                             title="Excluir agendamento"
                             aria-label="Excluir agendamento"
@@ -2925,6 +3408,200 @@ export function AgendaCalendar() {
           </div>
         </aside>
       </div>
+        </div>
+      ) : (
+        <div key="agenda-service-list-panel" className="agenda-tab-panel-enter min-w-0">
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">
+                  Lista de serviços
+                </h2>
+                <p className="mt-1 text-sm text-muted">
+                  Todos os agendamentos: pendentes, confirmados, concluídos e cancelados.
+                </p>
+              </div>
+
+              {loadingAppointments ? (
+                <p className="py-16 text-center text-sm text-muted">
+                  Carregando serviços...
+                </p>
+              ) : serviceListAppointments.length === 0 ? (
+                <p className="py-16 text-center text-sm font-semibold text-muted">
+                  Nenhum serviço cadastrado
+                </p>
+              ) : (
+                <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
+                  <div className="space-y-3 p-3 md:hidden">
+                    {serviceListAppointments.map((appointment) => {
+                      const endDate = getAppointmentEndDate(appointment);
+                      const statusStyle = getStatusStyle(appointment.status);
+                      const isMultiDay = endDate !== appointment.date;
+                      const dateLabel = isMultiDay
+                        ? `${formatShortDate(appointment.date)} - ${formatShortDate(endDate)}`
+                        : formatShortDate(appointment.date);
+                      const timeLabel = appointment.endTime
+                        ? `${appointment.startTime} - ${appointment.endTime}`
+                        : appointment.startTime;
+                      const hasNotes = Boolean(appointment.notes.trim());
+
+                      return (
+                        <article
+                          key={appointment.id}
+                          className={`rounded-lg border p-4 shadow-card ${
+                            hasNotes
+                              ? "border-amber-200/90 bg-gradient-to-br from-amber-50/90 to-background/60 ring-1 ring-amber-100"
+                              : "border-border bg-background/50"
+                          }`}
+                        >
+                          <div className={`relative min-w-0 ${hasNotes ? "pr-28" : ""}`}>
+                            <p className="truncate text-sm font-semibold text-foreground">
+                              {appointment.client}
+                            </p>
+                            <p className="mt-0.5 truncate text-xs text-muted">
+                              {appointment.service}
+                            </p>
+                            <p className="mt-0.5 truncate text-xs text-muted">
+                              {appointment.vehicle}
+                            </p>
+                            {hasNotes && (
+                              <AppointmentNotesIndicator
+                                appointmentId={appointment.id}
+                                notes={appointment.notes}
+                                onUpdateNotes={updateAppointmentNotes}
+                              />
+                            )}
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <p className="text-[11px] font-bold uppercase tracking-widest text-muted">
+                                Data
+                              </p>
+                              <p className="mt-1 font-medium text-foreground">
+                                {dateLabel}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-bold uppercase tracking-widest text-muted">
+                                Horário
+                              </p>
+                              <p className="mt-1 font-medium text-foreground">
+                                {timeLabel}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="mt-3 flex items-center justify-between gap-3">
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusStyle.statusBadge}`}
+                            >
+                              <AppointmentStatusLabel
+                                status={appointment.status}
+                                iconSize={12}
+                              />
+                            </span>
+                            <span
+                              className={`text-sm font-bold ${
+                                appointment.status === "Concluído"
+                                  ? "text-success"
+                                  : appointment.status === "Cancelado"
+                                    ? "text-muted line-through"
+                                    : "text-foreground"
+                              }`}
+                            >
+                              {formatCurrency(appointment.totalAmount)}
+                            </span>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+
+                  <div className="hidden w-full overflow-x-auto md:block">
+                    <div className="min-w-[690px]">
+                      <div className="grid grid-cols-[minmax(220px,1fr)_110px_130px_130px_100px] gap-4 border-b border-border bg-background px-3 py-3 text-xs font-semibold text-muted">
+                        <span>Cliente / Serviço</span>
+                        <span>Data</span>
+                        <span>Horário</span>
+                        <span>Status</span>
+                        <span className="text-right">Valor</span>
+                      </div>
+                      <div className="divide-y divide-border/70">
+                        {serviceListAppointments.map((appointment) => {
+                          const endDate = getAppointmentEndDate(appointment);
+                          const statusStyle = getStatusStyle(appointment.status);
+                          const isMultiDay = endDate !== appointment.date;
+                          const dateLabel = isMultiDay
+                            ? `${formatShortDate(appointment.date)} - ${formatShortDate(endDate)}`
+                            : formatShortDate(appointment.date);
+                          const timeLabel = appointment.endTime
+                            ? `${appointment.startTime} - ${appointment.endTime}`
+                            : appointment.startTime;
+                          const hasNotes = Boolean(appointment.notes.trim());
+
+                          return (
+                            <article
+                              key={appointment.id}
+                              className={`grid grid-cols-[minmax(220px,1fr)_110px_130px_130px_100px] items-start gap-4 px-3 py-3 transition-colors ${
+                                hasNotes
+                                  ? "border-l-4 border-l-amber-400 bg-amber-50/40 hover:bg-amber-50/70"
+                                  : "hover:bg-background/70"
+                              }`}
+                            >
+                              <div className={`relative min-w-0 ${hasNotes ? "pr-28" : ""}`}>
+                                <p className="truncate text-sm font-semibold text-foreground">
+                                  {appointment.client}
+                                </p>
+                                <p className="mt-0.5 truncate text-xs text-muted">
+                                  {appointment.service}
+                                </p>
+                                <p className="mt-0.5 truncate text-xs text-muted">
+                                  {appointment.vehicle}
+                                </p>
+                                {hasNotes && (
+                                  <AppointmentNotesIndicator
+                                    appointmentId={appointment.id}
+                                    notes={appointment.notes}
+                                    onUpdateNotes={updateAppointmentNotes}
+                                  />
+                                )}
+                              </div>
+                              <div className="pt-0.5 text-sm font-medium text-foreground">
+                                {dateLabel}
+                              </div>
+                              <div className="pt-0.5 text-sm font-medium text-foreground">
+                                {timeLabel}
+                              </div>
+                              <div className="pt-0.5">
+                                <span
+                                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusStyle.statusBadge}`}
+                                >
+                                  <AppointmentStatusLabel
+                                    status={appointment.status}
+                                    iconSize={12}
+                                  />
+                                </span>
+                              </div>
+                              <div
+                                className={`pt-0.5 text-right text-sm font-bold ${
+                                  appointment.status === "Concluído"
+                                    ? "text-success"
+                                    : appointment.status === "Cancelado"
+                                      ? "text-muted line-through"
+                                      : "text-foreground"
+                                }`}
+                              >
+                                {formatCurrency(appointment.totalAmount)}
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+        </div>
+      )}
 
       <ClientFormModal
         open={clientModalOpen}
@@ -2933,12 +3610,20 @@ export function AgendaCalendar() {
       />
       <style>{`
         @media (prefers-reduced-motion: no-preference) {
+          .agenda-tab-panel-enter {
+            animation: agenda-tab-panel-enter 180ms ease-out both;
+          }
+
           .agenda-form-enter {
             animation: agenda-form-enter 220ms ease-out both;
           }
 
           .agenda-form-exit {
             animation: agenda-form-exit 180ms ease-in both;
+          }
+
+          .agenda-notes-panel-enter {
+            animation: agenda-notes-panel-enter 220ms ease-out both;
           }
 
           .timeline-track-loading::after {
@@ -3103,6 +3788,17 @@ export function AgendaCalendar() {
           border-left-color: #059669;
         }
 
+        @keyframes agenda-tab-panel-enter {
+          from {
+            opacity: 0;
+            transform: translateX(12px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+
         @keyframes agenda-form-enter {
           from {
             opacity: 0;
@@ -3122,6 +3818,17 @@ export function AgendaCalendar() {
           to {
             opacity: 0;
             transform: translateY(-8px) scale(0.98);
+          }
+        }
+
+        @keyframes agenda-notes-panel-enter {
+          from {
+            opacity: 0;
+            transform: translateX(16px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
           }
         }
 
@@ -3167,6 +3874,40 @@ export function AgendaCalendar() {
           }
         }
       `}</style>
+
+      <ConfirmDialog
+        open={deleteConfirm?.type === "appointment"}
+        title="Excluir agendamento"
+        description={
+          deleteConfirm?.type === "appointment"
+            ? `Deseja excluir o horário de ${deleteConfirm.appointment.client}?`
+            : ""
+        }
+        confirmLabel="Excluir agendamento"
+        loading={deletingAppointments}
+        onCancel={() => {
+          if (!deletingAppointments) setDeleteConfirm(null);
+        }}
+        onConfirm={() => {
+          if (deleteConfirm?.type === "appointment") {
+            void executeDeleteAppointment(deleteConfirm.appointment);
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirm?.type === "clearDay"}
+        title="Excluir agendamentos do dia"
+        description="Deseja excluir todos os horários deste dia?"
+        confirmLabel="Excluir todos"
+        loading={deletingAppointments}
+        onCancel={() => {
+          if (!deletingAppointments) setDeleteConfirm(null);
+        }}
+        onConfirm={() => {
+          void executeClearSelectedDay();
+        }}
+      />
     </>
   );
 }

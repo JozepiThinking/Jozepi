@@ -12,9 +12,11 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
+import { assertMutationRows } from "@/lib/supabase/mutations";
 import { formatCurrency } from "@/lib/utils/format";
 import {
   calculateProductUsageCost,
@@ -50,6 +52,7 @@ interface ServiceItem {
   price: number | string;
   duration_minutes: number | null;
   active: boolean;
+  category?: string | null;
 }
 
 interface ServiceForm {
@@ -89,7 +92,7 @@ const durationOptions = Array.from({ length: 16 }, (_, index) => {
 });
 
 const SERVICE_FORM_EXIT_MS = 180;
-const SERVICE_CATEGORIES_STORAGE_KEY = "auto-estetica-service-categories";
+const LEGACY_SERVICE_CATEGORIES_STORAGE_KEY = "auto-estetica-service-categories";
 const SERVICE_CATEGORY_OPTIONS_STORAGE_KEY =
   "auto-estetica-service-category-options";
 
@@ -147,6 +150,95 @@ function formatDuration(minutes: number | null) {
   return `${hours}h${String(remainingMinutes).padStart(2, "0")}`;
 }
 
+function getServiceCategory(service: Pick<ServiceItem, "category">) {
+  return service.category?.trim() || "Outros";
+}
+
+function mergeServiceCategoryOptions(
+  services: ServiceItem[],
+  customOptions: ServiceCategoryOption[]
+) {
+  const values = new Set<string>([
+    ...defaultServiceCategoryOptions.map((option) => option.value),
+    ...services.map((service) => getServiceCategory(service)),
+    ...customOptions.map((option) => option.value),
+  ]);
+
+  const options: ServiceCategoryOption[] = [];
+  defaultServiceCategoryOptions.forEach((option) => {
+    if (values.has(option.value)) {
+      options.push(option);
+      values.delete(option.value);
+    }
+  });
+  customOptions.forEach((option) => {
+    if (values.has(option.value)) {
+      options.push(option);
+      values.delete(option.value);
+    }
+  });
+  values.forEach((value) => {
+    options.push({ value, label: value, custom: true });
+  });
+
+  return options;
+}
+
+async function migrateLegacyServiceCategories(
+  supabase: ReturnType<typeof createClient>,
+  workshopId: string,
+  services: ServiceItem[]
+) {
+  if (typeof window === "undefined" || services.length === 0) {
+    return services;
+  }
+
+  const storedCategories = window.localStorage.getItem(
+    LEGACY_SERVICE_CATEGORIES_STORAGE_KEY
+  );
+  if (!storedCategories) {
+    return services;
+  }
+
+  let legacyCategories: Record<string, string>;
+  try {
+    legacyCategories = JSON.parse(storedCategories) as Record<string, string>;
+  } catch {
+    window.localStorage.removeItem(LEGACY_SERVICE_CATEGORIES_STORAGE_KEY);
+    return services;
+  }
+
+  const pendingUpdates = services.filter((service) => {
+    const legacyCategory = legacyCategories[service.id]?.trim();
+    return legacyCategory && legacyCategory !== getServiceCategory(service);
+  });
+
+  if (pendingUpdates.length > 0) {
+    await Promise.all(
+      pendingUpdates.map((service) =>
+        supabase
+          .from("services")
+          .update({ category: legacyCategories[service.id] })
+          .eq("id", service.id)
+          .eq("workshop_id", workshopId)
+      )
+    );
+
+    const { data } = await supabase
+      .from("services")
+      .select("*")
+      .eq("workshop_id", workshopId)
+      .order("active", { ascending: false })
+      .order("name", { ascending: true });
+
+    window.localStorage.removeItem(LEGACY_SERVICE_CATEGORIES_STORAGE_KEY);
+    return (data as ServiceItem[]) ?? services;
+  }
+
+  window.localStorage.removeItem(LEGACY_SERVICE_CATEGORIES_STORAGE_KEY);
+  return services;
+}
+
 export function ServicesPage() {
   const supabase = useMemo(() => createClient(), []);
   const [services, setServices] = useState<ServiceItem[]>([]);
@@ -156,10 +248,6 @@ export function ServicesPage() {
   const [serviceProductUsages, setServiceProductUsages] = useState<
     Record<string, ServiceProductUsage[]>
   >({});
-  const [serviceCategories, setServiceCategories] = useState<Record<string, string>>(
-    {}
-  );
-  const [serviceCategoriesLoaded, setServiceCategoriesLoaded] = useState(false);
   const [serviceCategoryOptions, setServiceCategoryOptions] = useState<
     ServiceCategoryOption[]
   >(defaultServiceCategoryOptions);
@@ -185,6 +273,8 @@ export function ServicesPage() {
   const [productTypeError, setProductTypeError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [productError, setProductError] = useState<string | null>(null);
+  const [serviceToDelete, setServiceToDelete] = useState<ServiceItem | null>(null);
+  const [deletingService, setDeletingService] = useState(false);
   const closeFormTimeoutRef = useRef<number | null>(null);
   const catalogSyncStartedRef = useRef(false);
 
@@ -220,7 +310,12 @@ export function ServicesPage() {
     if (servicesError) {
       setError(servicesError.message);
     } else {
-      setServices((data as ServiceItem[]) ?? []);
+      const loadedServices = await migrateLegacyServiceCategories(
+        supabase,
+        profile.workshop_id,
+        (data as ServiceItem[]) ?? []
+      );
+      setServices(loadedServices);
     }
 
     setLoading(false);
@@ -233,33 +328,21 @@ export function ServicesPage() {
 
   useEffect(() => {
     void Promise.resolve().then(() => {
-      const storedServiceCategories = window.localStorage.getItem(
-        SERVICE_CATEGORIES_STORAGE_KEY
-      );
       const storedServiceCategoryOptions = window.localStorage.getItem(
         SERVICE_CATEGORY_OPTIONS_STORAGE_KEY
       );
-
-      if (storedServiceCategories) {
-        try {
-          setServiceCategories(
-            JSON.parse(storedServiceCategories) as Record<string, string>
-          );
-        } catch {
-          window.localStorage.removeItem(SERVICE_CATEGORIES_STORAGE_KEY);
-        }
-      }
-      setServiceCategoriesLoaded(true);
 
       if (storedServiceCategoryOptions) {
         try {
           const customCategories = JSON.parse(
             storedServiceCategoryOptions
           ) as ServiceCategoryOption[];
-          setServiceCategoryOptions([
-            ...defaultServiceCategoryOptions,
-            ...customCategories,
-          ]);
+          setServiceCategoryOptions((prev) =>
+            mergeServiceCategoryOptions([], [
+              ...prev.filter((option) => option.custom),
+              ...customCategories,
+            ])
+          );
         } catch {
           window.localStorage.removeItem(SERVICE_CATEGORY_OPTIONS_STORAGE_KEY);
         }
@@ -304,15 +387,6 @@ export function ServicesPage() {
   }, [supabase, workshopId]);
 
   useEffect(() => {
-    if (!serviceCategoriesLoaded) return;
-
-    window.localStorage.setItem(
-      SERVICE_CATEGORIES_STORAGE_KEY,
-      JSON.stringify(serviceCategories)
-    );
-  }, [serviceCategories, serviceCategoriesLoaded]);
-
-  useEffect(() => {
     if (!serviceCategoryOptionsLoaded) return;
 
     const customCategories = serviceCategoryOptions.filter(
@@ -323,6 +397,20 @@ export function ServicesPage() {
       JSON.stringify(customCategories)
     );
   }, [serviceCategoryOptions, serviceCategoryOptionsLoaded]);
+
+  useEffect(() => {
+    if (!serviceCategoryOptionsLoaded) return;
+
+    setServiceCategoryOptions((prev) => {
+      const merged = mergeServiceCategoryOptions(
+        services,
+        prev.filter((option) => option.custom)
+      );
+      const prevValues = prev.map((option) => option.value).join("|");
+      const mergedValues = merged.map((option) => option.value).join("|");
+      return prevValues === mergedValues ? prev : merged;
+    });
+  }, [services, serviceCategoryOptionsLoaded]);
 
   useEffect(() => {
     return clearCloseFormTimeout;
@@ -349,7 +437,7 @@ export function ServicesPage() {
     setEditingService(service);
     setForm({
       name: service.name,
-      category: serviceCategories[service.id] ?? "Outros",
+      category: getServiceCategory(service),
       description: service.description ?? "",
       price: String(service.price ?? ""),
       durationMinutes: String(service.duration_minutes ?? 60),
@@ -407,16 +495,18 @@ export function ServicesPage() {
         description: form.description.trim() || null,
         price: parsePrice(form.price || "0"),
         duration_minutes: parseDuration(form.durationMinutes),
+        category: form.category,
       };
       let savedServiceId = editingService?.id;
 
       if (editingService) {
-        const { error: updateError } = await supabase
+        const { data: updatedRows, error: updateError } = await supabase
           .from("services")
           .update(payload)
-          .eq("id", editingService.id);
+          .eq("id", editingService.id)
+          .select("id");
 
-        if (updateError) throw updateError;
+        assertMutationRows(updatedRows, updateError, "atualizar o serviço");
       } else {
         const { data: insertedService, error: insertError } = await supabase
           .from("services")
@@ -442,10 +532,6 @@ export function ServicesPage() {
           ...prev,
           [savedServiceId]: productUsages,
         }));
-        setServiceCategories((prev) => ({
-          ...prev,
-          [savedServiceId]: form.category,
-        }));
       }
 
       await loadServices();
@@ -463,55 +549,74 @@ export function ServicesPage() {
     const nextActive = !service.active;
 
     setError(null);
+
+    const { data: updatedRows, error: updateError } = await supabase
+      .from("services")
+      .update({ active: nextActive })
+      .eq("id", service.id)
+      .select("id, active");
+
+    try {
+      assertMutationRows(
+        updatedRows,
+        updateError,
+        "alterar o status do serviço"
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Erro ao alterar o status do serviço."
+      );
+      return;
+    }
+
     setServices((prev) =>
       prev.map((item) =>
         item.id === service.id ? { ...item, active: nextActive } : item
       )
     );
-
-    const { error: updateError } = await supabase
-      .from("services")
-      .update({ active: nextActive })
-      .eq("id", service.id);
-
-    if (updateError) {
-      setServices((prev) =>
-        prev.map((item) =>
-          item.id === service.id ? { ...item, active: service.active } : item
-        )
-      );
-      setError(updateError.message);
-    }
   }
 
-  async function handleDeleteService(service: ServiceItem) {
-    const confirmed = window.confirm(
-      `Deseja excluir o serviço ${service.name}?`
-    );
+  function requestDeleteService(service: ServiceItem) {
+    setServiceToDelete(service);
+  }
 
-    if (!confirmed) return;
+  async function executeDeleteService(service: ServiceItem) {
+    setDeletingService(true);
+    setError(null);
 
-    const { error: deleteError } = await supabase
-      .from("services")
-      .delete()
-      .eq("id", service.id);
+    try {
+      const { data: deletedRows, error: deleteError } = await supabase
+        .from("services")
+        .delete()
+        .eq("id", service.id)
+        .select("id");
 
-    if (deleteError) {
-      setError(deleteError.message);
-      return;
+      if (deleteError) {
+        const message = deleteError.message.includes("foreign key")
+          ? "Este serviço está vinculado a agendamentos ou ordens de serviço e não pode ser excluído."
+          : deleteError.message;
+        setError(message);
+        return;
+      }
+
+      assertMutationRows(deletedRows, null, "excluir o serviço");
+
+      setServiceProductUsages((prev) => {
+        const next = { ...prev };
+        delete next[service.id];
+        return next;
+      });
+      setServiceToDelete(null);
+      await loadServices();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Erro ao excluir o serviço."
+      );
+    } finally {
+      setDeletingService(false);
     }
-
-    setServiceProductUsages((prev) => {
-      const next = { ...prev };
-      delete next[service.id];
-      return next;
-    });
-    setServiceCategories((prev) => {
-      const next = { ...prev };
-      delete next[service.id];
-      return next;
-    });
-    await loadServices();
   }
 
   function closeProductForm() {
@@ -557,7 +662,7 @@ export function ServicesPage() {
     if (!option?.custom) return;
 
     const categoryInUse =
-      Object.values(serviceCategories).includes(category) ||
+      services.some((item) => getServiceCategory(item) === category) ||
       form.category === category;
 
     if (categoryInUse) {
@@ -735,10 +840,6 @@ export function ServicesPage() {
     ...serviceCategoryOptions,
   ];
 
-  function getServiceCategory(serviceId: string) {
-    return serviceCategories[serviceId] ?? "Outros";
-  }
-
   function getServiceFinancials(serviceId: string, price: number | string) {
     const usages = serviceProductUsages[serviceId] ?? [];
     const cost = usages.reduce((total, usage) => {
@@ -759,7 +860,7 @@ export function ServicesPage() {
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
   const filteredServices = services.filter((service) => {
-    const category = getServiceCategory(service.id);
+    const category = getServiceCategory(service);
     const matchesSearch =
       !normalizedSearchTerm ||
       service.name.toLowerCase().includes(normalizedSearchTerm);
@@ -774,7 +875,7 @@ export function ServicesPage() {
   });
   const servicesByCategory = filteredServices.reduce<Record<string, ServiceItem[]>>(
     (acc, service) => {
-      const category = getServiceCategory(service.id);
+      const category = getServiceCategory(service);
       acc[category] = [...(acc[category] ?? []), service];
       return acc;
     },
@@ -1277,54 +1378,56 @@ export function ServicesPage() {
                 </span>
               </div>
 
-              <div className="hidden grid-cols-[minmax(180px,1fr)_88px_96px_96px_96px_120px] gap-3 border-b border-border px-5 py-3 text-xs font-bold uppercase tracking-widest text-muted md:grid">
-                <span>Serviço</span>
-                <span>Duração</span>
-                <span>Preço</span>
-                <span>Custo</span>
-                <span>Lucro</span>
-                <span className="text-right">Ações</span>
-              </div>
+              <div className="w-full overflow-x-auto">
+                <div className="min-w-[760px]">
+                  <div className="hidden grid-cols-[minmax(220px,1fr)_88px_96px_96px_96px_120px] gap-3 border-b border-border px-5 py-3 text-xs font-bold uppercase tracking-widest text-muted md:grid">
+                    <span>Serviço</span>
+                    <span>Duração</span>
+                    <span>Preço</span>
+                    <span>Custo</span>
+                    <span>Lucro</span>
+                    <span className="text-right">Ações</span>
+                  </div>
 
-              <div className="space-y-3 p-3 md:space-y-0 md:divide-y md:divide-border md:p-0">
-                {servicesByCategory[category].map((service) => {
-                  const financials = getServiceFinancials(
-                    service.id,
-                    service.price
-                  );
-                  const profitPositive = financials.profit >= 0;
+                  <div className="space-y-3 p-3 md:space-y-0 md:divide-y md:divide-border md:p-0">
+                    {servicesByCategory[category].map((service) => {
+                      const financials = getServiceFinancials(
+                        service.id,
+                        service.price
+                      );
+                      const profitPositive = financials.profit >= 0;
 
-                  return (
-                    <article
-                      key={service.id}
-                      className={`grid grid-cols-1 gap-4 rounded-lg border border-border bg-background/50 px-4 py-4 shadow-card transition-colors hover:bg-background/70 md:rounded-none md:border-0 md:bg-transparent md:px-5 md:shadow-none md:grid-cols-[minmax(180px,1fr)_88px_96px_96px_96px_120px] md:items-center md:gap-3 ${
-                        service.active ? "" : "opacity-70"
-                      }`}
-                    >
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-base font-semibold text-foreground md:text-sm">
-                            {service.name}
-                          </h3>
-                          <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent">
-                            {getServiceCategory(service.id)}
-                          </span>
-                          <span
-                            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                              service.active
-                                ? "bg-success/10 text-success"
-                                : "bg-muted/10 text-muted"
-                            }`}
-                          >
-                            {service.active ? "Ativo" : "Inativo"}
-                          </span>
-                        </div>
-                        {service.description && (
-                          <p className="mt-1 text-sm text-muted">
-                            {service.description}
-                          </p>
-                        )}
-                      </div>
+                      return (
+                        <article
+                          key={service.id}
+                          className={`grid grid-cols-1 gap-4 rounded-lg border border-border bg-background/50 px-4 py-4 shadow-card transition-colors hover:bg-background/70 md:rounded-none md:border-0 md:bg-transparent md:px-5 md:py-4 md:shadow-none md:grid-cols-[minmax(220px,1fr)_88px_96px_96px_96px_120px] md:items-start md:gap-3 ${
+                            service.active ? "" : "opacity-70"
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-base font-semibold text-foreground md:text-sm">
+                                {service.name}
+                              </h3>
+                              <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent md:hidden">
+                                {getServiceCategory(service)}
+                              </span>
+                              <span
+                                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                                  service.active
+                                    ? "bg-success/10 text-success"
+                                    : "bg-muted/10 text-muted"
+                                }`}
+                              >
+                                {service.active ? "Ativo" : "Inativo"}
+                              </span>
+                            </div>
+                            {service.description && (
+                              <p className="mt-1 text-sm text-muted md:line-clamp-2">
+                                {service.description}
+                              </p>
+                            )}
+                          </div>
 
                       <div className="flex items-center justify-between gap-3 rounded-lg bg-card px-3 py-2 text-sm font-semibold md:block md:bg-transparent md:p-0">
                         <span className="text-xs font-bold uppercase tracking-widest text-muted md:hidden">
@@ -1395,7 +1498,7 @@ export function ServicesPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDeleteService(service)}
+                          onClick={() => requestDeleteService(service)}
                           className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white md:min-h-0 md:min-w-0"
                           title="Excluir serviço"
                           aria-label="Excluir serviço"
@@ -1410,6 +1513,8 @@ export function ServicesPage() {
                     </article>
                   );
                 })}
+                  </div>
+                </div>
               </div>
             </section>
           ))}
@@ -1452,6 +1557,26 @@ export function ServicesPage() {
           }
         }
       `}</style>
+
+      <ConfirmDialog
+        open={Boolean(serviceToDelete)}
+        title="Excluir serviço"
+        description={
+          serviceToDelete
+            ? `Deseja excluir o serviço ${serviceToDelete.name}?`
+            : ""
+        }
+        confirmLabel="Excluir serviço"
+        loading={deletingService}
+        onCancel={() => {
+          if (!deletingService) setServiceToDelete(null);
+        }}
+        onConfirm={() => {
+          if (serviceToDelete) {
+            void executeDeleteService(serviceToDelete);
+          }
+        }}
+      />
     </>
   );
 }

@@ -2,22 +2,34 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDownRight,
-  ArrowUpRight,
-  BarChart3,
-  CalendarDays,
-  CircleDollarSign,
-  ClipboardList,
-  Filter,
-  Pencil,
+  ArrowUp,
+  CalendarBlank,
+  CalendarCheck,
+  CaretUpDown,
+  ChartBar,
+  ChartDonut,
+  ChartLineUp,
+  CheckCircle,
+  ClipboardText,
+  Funnel,
+  ListChecks,
+  PencilSimple,
   Plus,
-  Target,
-  Trash2,
-  TrendingDown,
-  TrendingUp,
+  Trash,
+  TrendDown,
+  TrendUp,
+  Trophy,
   Wallet,
+  XCircle,
+} from "@phosphor-icons/react";
+import {
+  ClipboardList,
+  Pencil,
+  Plus as LucidePlus,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import {
@@ -207,6 +219,12 @@ interface FinanceEntry {
   serviceOrderId?: string;
 }
 
+type FinanceDeleteConfirm =
+  | { type: "fixedCost"; cost: FixedCost }
+  | { type: "transaction"; entry: FinanceEntry }
+  | { type: "revertAppointment"; entry: FinanceEntry }
+  | null;
+
 interface TransactionForm {
   description: string;
   amount: string;
@@ -250,6 +268,7 @@ const expenseCategoryOptions = [
   { value: "Outros", label: "Outros" },
 ];
 const categoryFilterAll = "all";
+const FINANCE_ICON_WEIGHT = "light" as const;
 const revenueCategoryFilterOptions = [
   { value: categoryFilterAll, label: "Todas as categorias" },
   ...revenueCategoryOptions,
@@ -565,6 +584,7 @@ function SummaryCard({
   icon,
   tone,
   valueTone,
+  onClick,
 }: {
   title: string;
   value: string;
@@ -572,6 +592,7 @@ function SummaryCard({
   icon: React.ReactNode;
   tone: "primary" | "success" | "danger" | "muted";
   valueTone?: "success" | "danger";
+  onClick?: () => void;
 }) {
   const toneStyles = {
     primary: {
@@ -598,12 +619,11 @@ function SummaryCard({
         ? "text-danger"
         : "text-foreground";
 
-  return (
-    <div
-      style={{ borderLeftColor: toneStyles.borderLeftColor }}
-      className="group relative rounded-lg border border-l-4 border-border bg-card p-5 shadow-card transition-all hover:-translate-y-0.5 hover:shadow-card-hover"
-      aria-label={detail ? `${title}: ${detail}` : title}
-    >
+  const cardClassName =
+    "group relative w-full rounded-lg border border-l-4 border-border bg-card p-5 text-left shadow-card transition-all hover:-translate-y-0.5 hover:shadow-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40";
+  const ariaLabel = detail ? `${title}: ${detail}` : title;
+  const cardContent = (
+    <>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm font-medium text-muted">{title}</p>
@@ -625,28 +645,31 @@ function SummaryCard({
           {detail}
         </div>
       )}
-    </div>
+    </>
   );
-}
 
-function TripleBanknotesIcon({ className }: { className?: string }) {
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        style={{ borderLeftColor: toneStyles.borderLeftColor }}
+        className={`${cardClassName} cursor-pointer`}
+        aria-label={ariaLabel}
+      >
+        {cardContent}
+      </button>
+    );
+  }
+
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
+    <div
+      style={{ borderLeftColor: toneStyles.borderLeftColor }}
+      className={cardClassName}
+      aria-label={ariaLabel}
     >
-      <rect x="3" y="8" width="14" height="9" rx="2" />
-      <path d="M6 8V6a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-2" />
-      <path d="M4 11a2 2 0 0 0 2-2" />
-      <path d="M14 17a2 2 0 0 1 2-2" />
-      <circle cx="10" cy="12.5" r="1.5" />
-    </svg>
+      {cardContent}
+    </div>
   );
 }
 
@@ -775,7 +798,7 @@ function InlineFilterButton({
         aria-expanded={open}
         title="Abrir filtros"
       >
-        <Filter className="h-4 w-4" />
+        <Funnel size={16} weight={FINANCE_ICON_WEIGHT} aria-hidden />
       </button>
 
       {showPanel && (
@@ -943,13 +966,23 @@ function TransactionList({
                     {displayTitle}
                   </p>
                   <span
-                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
                       entry.kind === "automatic"
                         ? "bg-success/10 text-success"
                         : "bg-primary/10 text-primary"
                     }`}
                   >
-                    {entry.kind === "automatic" ? "Agenda" : "Manual"}
+                    {entry.kind === "automatic" ? (
+                      <>
+                        <CalendarBlank size={12} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+                        Agenda
+                      </>
+                    ) : (
+                      <>
+                        <PencilSimple size={12} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+                        Manual
+                      </>
+                    )}
                   </span>
                 </div>
                 {displaySubtitle && (
@@ -978,7 +1011,7 @@ function TransactionList({
                     aria-label={`Editar ${entry.description}`}
                     title="Editar lançamento"
                   >
-                    <Pencil className="h-4 w-4" />
+                    <PencilSimple size={16} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                   </button>
                 )}
                 {onDeleteTransaction ? (
@@ -989,7 +1022,7 @@ function TransactionList({
                     aria-label={`Apagar ${entry.description}`}
                     title="Apagar lançamento"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash size={16} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                   </button>
                 ) : (
                   <span className="text-xs font-semibold text-muted">-</span>
@@ -1087,7 +1120,7 @@ function TransactionFormCard({
           Cancelar
         </Button>
         <Button type="submit" variant="success" loading={loading} className="w-full sm:w-auto">
-          <Plus className="h-4 w-4" />
+          <LucidePlus className="h-4 w-4" />
           {buttonLabel}
         </Button>
       </div>
@@ -1164,10 +1197,13 @@ export function FinancePage() {
   const [fixedCosts, setFixedCosts] = useState<FixedCost[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<FinanceDeleteConfirm>(null);
+  const [deletingFinanceItem, setDeletingFinanceItem] = useState(false);
   const [revenueForm, setRevenueForm] = useState<TransactionForm>(initialRevenueForm);
   const [expenseForm, setExpenseForm] = useState<TransactionForm>(initialExpenseForm);
   const [showRevenueForm, setShowRevenueForm] = useState(false);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
+  const [editingRevenueId, setEditingRevenueId] = useState<string | null>(null);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [showRevenueFilter, setShowRevenueFilter] = useState(false);
   const [showExpenseFilter, setShowExpenseFilter] = useState(false);
@@ -1659,6 +1695,7 @@ export function FinancePage() {
   function resetForm(type: TransactionType) {
     if (type === "receita") {
       setRevenueForm({ ...initialRevenueForm, date: dateKey(today) });
+      setEditingRevenueId(null);
       return;
     }
 
@@ -1687,7 +1724,12 @@ export function FinancePage() {
     const form = type === "receita" ? revenueForm : expenseForm;
     const setFormError = type === "receita" ? setRevenueError : setExpenseError;
     const setSaving = type === "receita" ? setSavingRevenue : setSavingExpense;
-    const transactionId = type === "despesa" ? editingExpenseId : null;
+    const transactionId =
+      type === "despesa"
+        ? editingExpenseId
+        : type === "receita"
+          ? editingRevenueId
+          : null;
 
     if (!workshopId) {
       setFormError("Oficina não encontrada.");
@@ -1827,6 +1869,22 @@ export function FinancePage() {
     closeManualForm(type);
   }
 
+  function handleEditRevenue(entry: FinanceEntry) {
+    setRevenueForm({
+      description: entry.description,
+      amount: entry.amount.toLocaleString("pt-BR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+      date: entry.date,
+      category: entry.category,
+      supplierId: categoryFilterAll,
+    });
+    setRevenueError(null);
+    setEditingRevenueId(entry.id);
+    setShowRevenueForm(true);
+  }
+
   function handleEditExpense(entry: FinanceEntry) {
     setExpenseForm({
       description: entry.description,
@@ -1959,69 +2017,87 @@ export function FinancePage() {
       .eq("workshop_id", cost.workshop_id);
   }
 
-  async function handleDeleteFixedCost(cost: FixedCost) {
-    const confirmed = window.confirm(`Deseja excluir ${cost.name}?`);
-    if (!confirmed) return;
+  function requestDeleteFixedCost(cost: FixedCost) {
+    setDeleteConfirm({ type: "fixedCost", cost });
+  }
 
-    setFixedCosts((prev) => prev.filter((item) => item.id !== cost.id));
+  async function executeDeleteFixedCost(cost: FixedCost) {
+    setDeletingFinanceItem(true);
 
-    await supabase
-      .from("fixed_costs")
-      .delete()
-      .eq("id", cost.id)
-      .eq("workshop_id", cost.workshop_id);
+    try {
+      setFixedCosts((prev) => prev.filter((item) => item.id !== cost.id));
 
-    if (editingFixedCostId === cost.id) {
-      resetFixedCostForm();
+      await supabase
+        .from("fixed_costs")
+        .delete()
+        .eq("id", cost.id)
+        .eq("workshop_id", cost.workshop_id);
+
+      if (editingFixedCostId === cost.id) {
+        resetFixedCostForm();
+      }
+
+      setDeleteConfirm(null);
+    } finally {
+      setDeletingFinanceItem(false);
     }
   }
 
-  async function handleDeleteTransaction(entry: FinanceEntry) {
-    const confirmed = window.confirm(
-      entry.kind === "automatic"
-        ? "Deseja apagar esta receita gerada pela Agenda?"
-        : "Deseja apagar este lançamento?"
-    );
-    if (!confirmed) return;
+  function requestDeleteTransaction(entry: FinanceEntry) {
+    setDeleteConfirm({ type: "transaction", entry });
+  }
 
-    const shouldRevertAppointment =
-      entry.kind === "automatic" && entry.serviceOrderId
-        ? window.confirm(
-            "Deseja também reverter o status do agendamento para Pendente?"
-          )
-        : false;
+  async function executeDeleteTransaction(
+    entry: FinanceEntry,
+    revertAppointment: boolean
+  ) {
+    setDeletingFinanceItem(true);
+    setError(null);
 
-    const { error: deleteError } = await supabase
-      .from("financial_transactions")
-      .delete()
-      .eq("id", entry.id);
+    try {
+      const { error: deleteError } = await supabase
+        .from("financial_transactions")
+        .delete()
+        .eq("id", entry.id);
 
-    if (deleteError) {
-      setError(deleteError.message);
-      return;
-    }
-
-    if (shouldRevertAppointment && entry.serviceOrderId) {
-      const { error: orderError } = await supabase
-        .from("service_orders")
-        .update({
-          status: "aberta",
-          completed_at: null,
-        })
-        .eq("id", entry.serviceOrderId);
-
-      if (orderError) {
-        setError(orderError.message);
-      } else {
-        setOrders((prev) =>
-          prev.filter((order) => order.id !== entry.serviceOrderId)
-        );
+      if (deleteError) {
+        setError(deleteError.message);
+        return;
       }
-    }
 
-    setTransactions((prev) =>
-      prev.filter((transaction) => transaction.id !== entry.id)
-    );
+      if (revertAppointment && entry.serviceOrderId) {
+        const { error: orderError } = await supabase
+          .from("service_orders")
+          .update({
+            status: "aberta",
+            completed_at: null,
+          })
+          .eq("id", entry.serviceOrderId);
+
+        if (orderError) {
+          setError(orderError.message);
+        } else {
+          setOrders((prev) =>
+            prev.filter((order) => order.id !== entry.serviceOrderId)
+          );
+        }
+      }
+
+      setTransactions((prev) =>
+        prev.filter((transaction) => transaction.id !== entry.id)
+      );
+      setDeleteConfirm(null);
+    } finally {
+      setDeletingFinanceItem(false);
+    }
+  }
+
+  function handleDeleteFixedCost(cost: FixedCost) {
+    requestDeleteFixedCost(cost);
+  }
+
+  function handleDeleteTransaction(entry: FinanceEntry) {
+    requestDeleteTransaction(entry);
   }
 
   return (
@@ -2045,37 +2121,35 @@ export function FinancePage() {
           title="Receita do mês"
           value={formatCurrency(monthRevenueTotal)}
           detail="OS concluídas + lançamentos manuais"
-          icon={<ArrowDownRight className="h-6 w-6" />}
+          icon={<TrendUp size={24} weight={FINANCE_ICON_WEIGHT} aria-hidden />}
           tone="success"
+          onClick={() => setActiveTab("revenues")}
         />
         <SummaryCard
           title="Despesas do mês"
           value={formatCurrency(monthExpenseTotal)}
           detail="Gastos lançados"
-          icon={<ArrowUpRight className="h-6 w-6" />}
+          icon={<TrendDown size={24} weight={FINANCE_ICON_WEIGHT} aria-hidden />}
           tone="danger"
+          onClick={() => setActiveTab("expenses")}
         />
         <SummaryCard
           title="Lucro líquido"
           value={formatCurrency(monthProfit)}
           detail="Receita menos despesas"
-          icon={<TripleBanknotesIcon className="h-6 w-6" />}
+          icon={<Wallet size={24} weight={FINANCE_ICON_WEIGHT} aria-hidden />}
           tone="primary"
           valueTone={monthProfit >= 0 ? "success" : "danger"}
+          onClick={() => setActiveTab("overview")}
         />
         <SummaryCard
           title="Comparativo"
           value={formatPercent(monthGrowth)}
           detail="Vs. mês anterior"
-          icon={
-            growthPositive ? (
-              <TrendingUp className="h-6 w-6" />
-            ) : (
-              <TrendingDown className="h-6 w-6" />
-            )
-          }
+          icon={<ChartLineUp size={24} weight={FINANCE_ICON_WEIGHT} aria-hidden />}
           tone="muted"
           valueTone={growthPositive ? "success" : "danger"}
+          onClick={() => setActiveTab("reports")}
         />
       </div>
 
@@ -2110,7 +2184,7 @@ export function FinancePage() {
                 <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                   <div className="mb-5 flex items-center gap-3">
                     <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                      <CalendarDays className="h-5 w-5" />
+                      <CalendarCheck size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                     </span>
                     <div>
                       <h2 className="text-lg font-semibold text-foreground">
@@ -2124,7 +2198,7 @@ export function FinancePage() {
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <div className="rounded-lg bg-background px-4 py-3">
                       <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-muted">
-                        <ClipboardList className="h-3.5 w-3.5" />
+                        <ListChecks size={14} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                         Serviços
                       </p>
                       <p className="mt-1 currency-display text-foreground">
@@ -2133,7 +2207,7 @@ export function FinancePage() {
                     </div>
                     <div className="rounded-lg bg-background px-4 py-3">
                       <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-muted">
-                        <ArrowDownRight className="h-3.5 w-3.5" />
+                        <ArrowUp size={14} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                         Receita
                       </p>
                       <p className="mt-1 currency-display text-success">
@@ -2142,7 +2216,7 @@ export function FinancePage() {
                     </div>
                     <div className="rounded-lg bg-background px-4 py-3">
                       <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-muted">
-                        <Wallet className="h-3.5 w-3.5" />
+                        <Wallet size={14} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                         Lucro
                       </p>
                       <p className={`mt-1 currency-display ${todayProfit >= 0 ? "text-success" : "text-danger"}`}>
@@ -2155,7 +2229,7 @@ export function FinancePage() {
                 <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                   <div className="mb-5 flex items-center gap-3">
                     <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
-                      <BarChart3 className="h-5 w-5" />
+                      <ChartBar size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                     </span>
                     <div>
                       <h2 className="text-lg font-semibold text-foreground">
@@ -2172,7 +2246,12 @@ export function FinancePage() {
                 </section>
               </div>
 
-              <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
+              <button
+                type="button"
+                onClick={() => setActiveTab("revenues")}
+                className="w-full cursor-pointer rounded-lg border border-border bg-card p-5 text-left shadow-card transition-all hover:-translate-y-0.5 hover:shadow-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                aria-label="Ver todas as receitas"
+              >
                 <h2 className="text-lg font-semibold text-foreground">
                   Últimas receitas
                 </h2>
@@ -2192,7 +2271,7 @@ export function FinancePage() {
                       className="flex items-center justify-between gap-3 bg-card/70 px-4 py-3 transition-colors hover:bg-card"
                     >
                       <div className="flex min-w-0 items-center gap-3">
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#1a2744] text-sm font-bold text-white">
                           {getInitial(displayName)}
                         </span>
                         <div className="min-w-0">
@@ -2227,7 +2306,7 @@ export function FinancePage() {
                     </p>
                   )}
                 </div>
-              </section>
+              </button>
             </div>
           )}
 
@@ -2246,24 +2325,29 @@ export function FinancePage() {
                   type="button"
                   variant="success"
                   onClick={() => {
+                    resetForm("receita");
                     setShowRevenueForm(true);
                     setRevenueError(null);
                   }}
                   className="w-full sm:w-auto"
                 >
-                  <Plus className="h-4 w-4" />
+                  <Plus size={16} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                   Nova receita
                 </Button>
               </div>
               {showRevenueForm && (
                 <TransactionFormCard
-                  title="Lançar receita manual"
-                  description="Use para gorjetas, receitas avulsas ou ajustes."
+                  title={editingRevenueId ? "Editar receita" : "Lançar receita manual"}
+                  description={
+                    editingRevenueId
+                      ? "Atualize os dados do lançamento selecionado."
+                      : "Use para gorjetas, receitas avulsas ou ajustes."
+                  }
                   form={revenueForm}
                   categories={revenueCategoryOptions}
                   loading={savingRevenue}
                   error={revenueError}
-                  buttonLabel="Salvar receita"
+                  buttonLabel={editingRevenueId ? "Atualizar receita" : "Salvar receita"}
                   onChange={(patch) => setRevenueForm((prev) => ({ ...prev, ...patch }))}
                   onSubmit={(event) => handleSaveManualTransaction(event, "receita")}
                   onCancel={() => closeManualForm("receita")}
@@ -2272,6 +2356,7 @@ export function FinancePage() {
               <TransactionList
                 entries={filteredRevenueEntries}
                 emptyMessage="Nenhuma receita encontrada para este período."
+                onEditTransaction={handleEditRevenue}
                 filter={
                   <InlineFilterButton
                     value={revenuePeriod}
@@ -2321,7 +2406,7 @@ export function FinancePage() {
                   }}
                   className="w-full sm:w-auto"
                 >
-                  <Plus className="h-4 w-4" />
+                  <Plus size={16} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                   Nova despesa
                 </Button>
               </div>
@@ -2384,29 +2469,13 @@ export function FinancePage() {
 
           {activeTab === "fixedCosts" && (
             <div className="space-y-5">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-foreground">
-                    Custos Fixos
-                  </h2>
-                  <p className="mt-1 text-sm text-muted">
-                    Controle custos reais e médias estimadas que entram no custo por lavagem.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="success"
-                  onClick={() => {
-                    setEditingFixedCostId(null);
-                    setFixedCostForm(initialFixedCostForm);
-                    setFixedCostError(null);
-                    setShowFixedCostForm(true);
-                  }}
-                  className="w-full sm:w-auto"
-                >
-                  <Plus className="h-4 w-4" />
-                  Novo custo
-                </Button>
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">
+                  Custos Fixos
+                </h2>
+                <p className="mt-1 text-sm text-muted">
+                  Controle custos reais e médias estimadas que entram no custo por lavagem.
+                </p>
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
@@ -2456,6 +2525,23 @@ export function FinancePage() {
                     {monthlyWashCount} {monthlyWashCount === 1 ? "lavagem" : "lavagens"} no mês
                   </p>
                 </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="success"
+                  onClick={() => {
+                    setEditingFixedCostId(null);
+                    setFixedCostForm(initialFixedCostForm);
+                    setFixedCostError(null);
+                    setShowFixedCostForm(true);
+                  }}
+                  className="w-full sm:w-auto"
+                >
+                  <Plus size={16} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+                  Novo custo
+                </Button>
               </div>
 
               {showFixedCostForm && (
@@ -2550,7 +2636,7 @@ export function FinancePage() {
                       loading={savingFixedCost}
                       className="w-full sm:w-auto"
                     >
-                      <Plus className="h-4 w-4" />
+                      <LucidePlus className="h-4 w-4" />
                       {editingFixedCostId ? "Atualizar custo" : "Salvar custo"}
                     </Button>
                   </div>
@@ -2678,33 +2764,60 @@ export function FinancePage() {
                           <p className="text-sm font-bold text-foreground">
                             {formatCurrency(item.value)}
                           </p>
-                          <input
-                            type="number"
-                            min="1"
-                            value={item.durability}
-                            onChange={(event) =>
-                              handleUpdateUtensilDurability(
-                                item.product,
-                                event.target.value
-                              )
-                            }
-                            placeholder="Ex: 200"
-                            aria-label={`Durabilidade de ${item.product.name} em lavagens`}
-                            className="w-full rounded-lg border border-border bg-input px-4 py-2.5 text-sm text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
-                          />
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.durability}
+                              onChange={(event) =>
+                                handleUpdateUtensilDurability(
+                                  item.product,
+                                  event.target.value
+                                )
+                              }
+                              placeholder="Ex: 200"
+                              aria-label={`Durabilidade de ${item.product.name} em lavagens`}
+                              className="w-full rounded-lg border border-border bg-input px-4 py-2.5 pr-11 text-sm text-foreground placeholder:text-muted/60 transition-colors [appearance:textfield] focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                            />
+                            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-muted">
+                              <CaretUpDown
+                                size={16}
+                                weight={FINANCE_ICON_WEIGHT}
+                                aria-hidden
+                              />
+                            </span>
+                          </div>
                           <p className="text-sm font-bold text-success">
                             {formatCurrency(item.costPerWash)}
                           </p>
                           <button
                             type="button"
                             onClick={() => handleToggleUtensilWear(item.product)}
-                            className={`w-fit rounded-full px-3 py-1 text-xs font-bold transition-colors ${
+                            className={`inline-flex w-fit items-center gap-1 rounded-full px-3 py-1 text-xs font-bold transition-colors ${
                               item.included
                                 ? "bg-success/10 text-success hover:bg-success hover:text-white"
                                 : "bg-muted/10 text-muted hover:bg-background hover:text-foreground"
                             }`}
                           >
-                            {item.included ? "Incluído" : "Excluído"}
+                            {item.included ? (
+                              <>
+                                <CheckCircle
+                                  size={12}
+                                  weight={FINANCE_ICON_WEIGHT}
+                                  aria-hidden
+                                />
+                                Incluído
+                              </>
+                            ) : (
+                              <>
+                                <XCircle
+                                  size={12}
+                                  weight={FINANCE_ICON_WEIGHT}
+                                  aria-hidden
+                                />
+                                Excluído
+                              </>
+                            )}
                           </button>
                         </article>
                       ))
@@ -2720,7 +2833,7 @@ export function FinancePage() {
               <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                 <div className="mb-5 flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
-                    <BarChart3 className="h-5 w-5" />
+                    <ChartBar size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                   </span>
                   <div>
                     <h2 className="text-lg font-semibold text-foreground">
@@ -2735,7 +2848,7 @@ export function FinancePage() {
               <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                 <div className="mb-5 flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Target className="h-5 w-5" />
+                    <ChartDonut size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                   </span>
                   <div>
                     <h2 className="text-lg font-semibold text-foreground">
@@ -2793,7 +2906,7 @@ export function FinancePage() {
               <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                 <div className="mb-5 flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
-                    <CircleDollarSign className="h-5 w-5" />
+                    <Trophy size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                   </span>
                   <div>
                     <h2 className="text-lg font-semibold text-foreground">
@@ -2825,7 +2938,7 @@ export function FinancePage() {
               <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                 <div className="mb-5 flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10 text-warning">
-                    <ClipboardList className="h-5 w-5" />
+                    <ClipboardText size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                   </span>
                   <div>
                     <h2 className="text-lg font-semibold text-foreground">
@@ -2890,6 +3003,73 @@ export function FinancePage() {
           }
         }
       `}</style>
+
+      <ConfirmDialog
+        open={deleteConfirm?.type === "fixedCost"}
+        title="Excluir custo fixo"
+        description={
+          deleteConfirm?.type === "fixedCost"
+            ? `Deseja excluir ${deleteConfirm.cost.name}?`
+            : ""
+        }
+        confirmLabel="Excluir custo"
+        loading={deletingFinanceItem}
+        onCancel={() => {
+          if (!deletingFinanceItem) setDeleteConfirm(null);
+        }}
+        onConfirm={() => {
+          if (deleteConfirm?.type === "fixedCost") {
+            void executeDeleteFixedCost(deleteConfirm.cost);
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirm?.type === "transaction"}
+        title="Excluir lançamento"
+        description={
+          deleteConfirm?.type === "transaction"
+            ? deleteConfirm.entry.kind === "automatic"
+              ? "Deseja apagar esta receita gerada pela Agenda?"
+              : "Deseja apagar este lançamento?"
+            : ""
+        }
+        confirmLabel="Excluir lançamento"
+        loading={deletingFinanceItem}
+        onCancel={() => {
+          if (!deletingFinanceItem) setDeleteConfirm(null);
+        }}
+        onConfirm={() => {
+          if (deleteConfirm?.type !== "transaction") return;
+
+          const entry = deleteConfirm.entry;
+          if (entry.kind === "automatic" && entry.serviceOrderId) {
+            setDeleteConfirm({ type: "revertAppointment", entry });
+            return;
+          }
+
+          void executeDeleteTransaction(entry, false);
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirm?.type === "revertAppointment"}
+        title="Reverter agendamento"
+        description="Deseja também reverter o status do agendamento para Pendente?"
+        confirmLabel="Reverter agendamento"
+        cancelLabel="Não, só excluir"
+        loading={deletingFinanceItem}
+        onCancel={() => {
+          if (deleteConfirm?.type === "revertAppointment" && !deletingFinanceItem) {
+            void executeDeleteTransaction(deleteConfirm.entry, false);
+          }
+        }}
+        onConfirm={() => {
+          if (deleteConfirm?.type === "revertAppointment") {
+            void executeDeleteTransaction(deleteConfirm.entry, true);
+          }
+        }}
+      />
     </div>
   );
 }
