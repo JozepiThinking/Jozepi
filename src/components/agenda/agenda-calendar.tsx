@@ -22,183 +22,105 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { ClientFormModal } from "@/components/clients/client-form-modal";
-import { syncVehicles } from "@/lib/clients/sync-vehicles";
 import { createClient } from "@/lib/supabase/client";
 import { assertMutationRows } from "@/lib/supabase/mutations";
-import { formatCurrency, normalizePhone } from "@/lib/utils/format";
-import {
-  getProductRemainingStock,
-  parsePositiveNumber,
-} from "@/lib/products/catalog";
-import {
-  loadSupabaseCatalog,
-  saveSupabaseProduct,
-} from "@/lib/products/supabase-catalog";
+import { formatCurrency } from "@/lib/utils/format";
 import { type Client, type ClientFormData } from "@/types/client";
-
-type AppointmentStatus = "Confirmado" | "Pendente" | "Cancelado" | "Concluído";
-
-interface Appointment {
-  id: string;
-  date: string;
-  endDate: string;
-  startTime: string;
-  endTime: string;
-  clientId: string;
-  vehicleId: string;
-  serviceIds: string[];
-  client: string;
-  service: string;
-  totalAmount: number;
-  vehicle: string;
-  status: AppointmentStatus;
-  notes: string;
-}
-
-interface AppointmentForm {
-  date: string;
-  endDate: string;
-  isMultiDay: boolean;
-  startTime: string;
-  endTime: string;
-  clientId: string;
-  vehicleId: string;
-  serviceIds: string[];
-  totalAmount: string;
-  notes: string;
-}
-
-interface AgendaService {
-  id: string;
-  name: string;
-  price: number | string;
-  duration_minutes: number | null;
-  active: boolean;
-}
-
-type ServiceOrderStatus =
-  | "aberta"
-  | "em_andamento"
-  | "finalizada"
-  | "cancelada";
-
-interface AppointmentOrderService {
-  id: string;
-  name: string;
-  price: number | string;
-  duration_minutes: number | null;
-}
-
-interface AppointmentOrderItem {
-  service_id: string;
-  unit_price: number | string;
-  services: AppointmentOrderService | AppointmentOrderService[] | null;
-}
-
-interface AppointmentOrderRow {
-  id: string;
-  client_id: string;
-  vehicle_id: string;
-  status: ServiceOrderStatus | string;
-  total_amount: number | string;
-  notes: string | null;
-  scheduled_date: string | null;
-  scheduled_end_date: string | null;
-  scheduled_start: string | null;
-  scheduled_end: string | null;
-  clients: { name: string } | { name: string }[] | null;
-  vehicles:
-    | { brand: string; model: string; plate: string }
-    | { brand: string; model: string; plate: string }[]
-    | null;
-  service_order_items: AppointmentOrderItem[] | null;
-}
-
-interface SelectOption {
-  value: string;
-  label: string;
-  description?: string;
-}
-
-interface AppointmentOccurrence extends Appointment {
-  occurrenceDate: string;
-  isMultiDay: boolean;
-  isContinuation: boolean;
-  isFirstDay: boolean;
-  isLastDay: boolean;
-  durationDays: number;
-}
-
-const statusStyles: Record<
+import {
+  fetchWorkshopProfile,
+  fetchWorkshopCapacity,
+  fetchClients,
+  fetchServices,
+  fetchAppointments,
+  fetchAppointmentsLegacy,
+} from "@/lib/agenda/queries";
+import {
+  updateAppointmentOrder,
+  insertAppointmentOrder,
+  saveAppointmentItems,
+  deleteAppointmentItems,
+  deleteAppointment,
+  deleteAppointmentsForDay,
+  updateAppointmentStatus,
+  updateAppointmentStatusBulk,
+  updateAppointmentNotes as updateAppointmentNotesDb,
+  updateWorkshopCapacity,
+  syncFinanceRevenue,
+  deleteFinanceRevenue,
+  applyStockDiscount,
+  importLocalAppointments,
+  createClientWithVehicles,
+} from "@/lib/agenda/mutations";
+import type {
+  Appointment,
+  AppointmentForm,
+  AgendaService,
   AppointmentStatus,
-  {
-    calendarPill: string;
-    timelineBlock: string;
-    sideCard: string;
-    sideAccent: string;
-    statusBadge: string;
-    timeBadge: string;
-  }
-> = {
-  Confirmado: {
-    calendarPill: "status-pill-confirmed",
-    timelineBlock: "status-confirmed-solid",
-    sideCard: "status-confirmed-card",
-    sideAccent: "status-confirmed-side-accent",
-    statusBadge: "status-confirmed-soft",
-    timeBadge: "status-confirmed-soft",
-  },
-  Pendente: {
-    calendarPill: "status-pill-pending",
-    timelineBlock: "bg-warning",
-    sideCard: "border-warning/20 bg-warning/5",
-    sideAccent: "border-l-[var(--warning)]",
-    statusBadge: "bg-warning/10 text-warning",
-    timeBadge: "bg-warning/10 text-warning",
-  },
-  Cancelado: {
-    calendarPill: "status-pill-cancelled",
-    timelineBlock: "bg-danger",
-    sideCard: "border-danger/20 bg-danger/5",
-    sideAccent: "border-l-[var(--danger)]",
-    statusBadge: "bg-danger/10 text-danger",
-    timeBadge: "bg-danger/10 text-danger",
-  },
-  Concluído: {
-    calendarPill: "status-pill-completed",
-    timelineBlock: "status-completed-solid",
-    sideCard: "status-completed-card",
-    sideAccent: "status-completed-side-accent",
-    statusBadge: "status-completed-soft",
-    timeBadge: "status-completed-soft",
-  },
-};
-
-const appointmentStatuses: AppointmentStatus[] = [
-  "Pendente",
-  "Confirmado",
-  "Concluído",
-  "Cancelado",
-];
-type AgendaSelectId = "client" | "vehicle" | "service";
+  ServiceOrderStatus,
+  AppointmentOrderRow,
+  AppointmentOrderItem,
+  AppointmentOrderService,
+  SelectOption,
+  AppointmentOccurrence,
+  AgendaSelectId,
+  AgendaPageTab,
+  AgendaDeleteConfirm,
+} from "@/lib/agenda/types";
+import {
+  timeToMinutes,
+  isTimeBetween,
+  isTimeInRange,
+  rangesOverlap,
+  startOfMonth,
+  addMonths,
+  dateKey,
+  parseLocalDate,
+  addDays,
+  getDateRangeKeys,
+  getAppointmentEndDate,
+  getAppointmentDurationDays,
+  appointmentOccursOnDate,
+  formatShortDate,
+  formatAppointmentDuration,
+  isAppointmentPast,
+  formatLongDate,
+  formatMonthTitle,
+  getShortClientName,
+  getServicePrice,
+  parseAppointmentAmount,
+  calculateServicesTotal,
+  isCustomAppointmentTotal,
+  buildServiceOrderItems,
+  firstRelation,
+  normalizeDbTime,
+  getAppointmentStatus,
+  getServiceOrderStatus,
+  isMissingAgendaMigrationError,
+  isMissingAgendaCapacityError,
+  normalizeAgendaCapacity,
+  getLocalAgendaCapacityKey,
+  readLocalAgendaCapacityForImport,
+  clearLocalAgendaCapacity,
+  mapOrderToAppointment,
+  formatServiceDuration,
+  buildCalendarDays,
+  formatAppointmentCount,
+} from "@/lib/agenda/utils";
+import {
+  BUSINESS_START_TIME,
+  BUSINESS_END_TIME,
+  DEFAULT_AGENDA_CAPACITY,
+  AGENDA_ICON_WEIGHT,
+  agendaPageTabs,
+  appointmentStatuses,
+  statusStyles,
+  weekdays,
+  timeSlots,
+} from "@/lib/agenda/constants";
 
 function getStatusStyle(status: AppointmentStatus) {
   return statusStyles[status];
 }
-
-const AGENDA_ICON_WEIGHT = "light" as const;
-
-type AgendaPageTab = "calendar" | "serviceList";
-
-type AgendaDeleteConfirm =
-  | { type: "appointment"; appointment: Appointment }
-  | { type: "clearDay" }
-  | null;
-
-const agendaPageTabs: { id: AgendaPageTab; label: string }[] = [
-  { id: "calendar", label: "Agenda" },
-  { id: "serviceList", label: "Lista de serviços" },
-];
 
 function AppointmentStatusLabel({
   status,
@@ -563,409 +485,6 @@ function ServiceListActions({
   );
 }
 
-function formatAppointmentCount(count: number) {
-  return count === 1 ? "1 agendamento" : `${count} agendamentos`;
-}
-
-function timeToMinutes(time: string) {
-  const [hours, minutes] = time.split(":").map(Number);
-  return hours * 60 + minutes;
-}
-
-const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-const AGENDA_STORAGE_KEY = "auto-estetica-agenda-appointments";
-const BUSINESS_START_TIME = "07:00";
-const BUSINESS_END_TIME = "19:00";
-const SLOT_INTERVAL_MINUTES = 30;
-const DEFAULT_AGENDA_CAPACITY = 1;
-const AGENDA_CAPACITY_STORAGE_KEY = "auto-estetica-agenda-capacity";
-const timeSlots = Array.from(
-  {
-    length:
-      (timeToMinutes(BUSINESS_END_TIME) - timeToMinutes(BUSINESS_START_TIME)) /
-      SLOT_INTERVAL_MINUTES,
-  },
-  (_, index) => {
-    const totalMinutes =
-      timeToMinutes(BUSINESS_START_TIME) + index * SLOT_INTERVAL_MINUTES;
-    const hours = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-    const minutes = String(totalMinutes % 60).padStart(2, "0");
-
-    return `${hours}:${minutes}`;
-  }
-);
-
-function isTimeBetween(time: string, startTime: string, endTime: string) {
-  const current = timeToMinutes(time);
-  return current > timeToMinutes(startTime) && current < timeToMinutes(endTime);
-}
-
-function isTimeInRange(time: string, startTime: string, endTime: string) {
-  const current = timeToMinutes(time);
-  return current >= timeToMinutes(startTime) && current < timeToMinutes(endTime);
-}
-
-function rangesOverlap(
-  startA: string,
-  endA: string,
-  startB: string,
-  endB: string
-) {
-  return timeToMinutes(startA) < timeToMinutes(endB) &&
-    timeToMinutes(endA) > timeToMinutes(startB);
-}
-
-function startOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
-function addMonths(date: Date, amount: number) {
-  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
-}
-
-function dateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-function parseLocalDate(date: string) {
-  return new Date(`${date}T00:00:00`);
-}
-
-function addDays(date: Date, amount: number) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + amount);
-}
-
-function getDateRangeKeys(startDate: string, endDate: string) {
-  const start = parseLocalDate(startDate);
-  const end = parseLocalDate(endDate);
-
-  if (end < start) return [startDate];
-
-  const keys: string[] = [];
-  for (let day = start; day <= end; day = addDays(day, 1)) {
-    keys.push(dateKey(day));
-  }
-
-  return keys;
-}
-
-function getAppointmentEndDate(appointment: Pick<Appointment, "date" | "endDate">) {
-  return appointment.endDate || appointment.date;
-}
-
-function getAppointmentDurationDays(
-  appointment: Pick<Appointment, "date" | "endDate">
-) {
-  return getDateRangeKeys(appointment.date, getAppointmentEndDate(appointment)).length;
-}
-
-function appointmentOccursOnDate(
-  appointment: Pick<Appointment, "date" | "endDate">,
-  date: string
-) {
-  return appointment.date <= date && date <= getAppointmentEndDate(appointment);
-}
-
-function formatShortDate(date: string) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-  }).format(parseLocalDate(date));
-}
-
-function formatAppointmentDuration(appointment: Pick<Appointment, "date" | "endDate">) {
-  const durationDays = getAppointmentDurationDays(appointment);
-  const endDate = getAppointmentEndDate(appointment);
-
-  if (durationDays <= 1) return "1 dia";
-
-  return `${durationDays} dias • ${formatShortDate(appointment.date)} a ${formatShortDate(endDate)}`;
-}
-
-function isAppointmentPast(appointment: Appointment, now: Date) {
-  return new Date(`${getAppointmentEndDate(appointment)}T${appointment.endTime}:00`) <= now;
-}
-
-function formatLongDate(date: Date) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  }).format(date);
-}
-
-function formatMonthTitle(date: Date) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    month: "long",
-    year: "numeric",
-  }).format(date);
-}
-
-function getShortClientName(name: string) {
-  const [firstName, secondName] = name.trim().split(/\s+/);
-  return [firstName, secondName].filter(Boolean).join(" ");
-}
-
-function getServicePrice(service: AgendaService) {
-  return Number(service.price) || 0;
-}
-
-function parseAppointmentAmount(value: string) {
-  const normalized = value.trim().replace(/\./g, "").replace(",", ".");
-  const amount = Number(normalized);
-
-  if (!value.trim() || !Number.isFinite(amount) || amount < 0) {
-    throw new Error("Informe um valor válido para o total.");
-  }
-
-  return amount;
-}
-
-function calculateServicesTotal(
-  serviceIds: string[],
-  catalogServices: AgendaService[]
-) {
-  return serviceIds.reduce((total, serviceId) => {
-    const service = catalogServices.find((item) => item.id === serviceId);
-    return total + (service ? getServicePrice(service) : 0);
-  }, 0);
-}
-
-function isCustomAppointmentTotal(
-  appointment: Appointment,
-  catalogServices: AgendaService[]
-) {
-  if (appointment.totalAmount <= 0) return false;
-
-  const catalogTotal = calculateServicesTotal(
-    appointment.serviceIds,
-    catalogServices
-  );
-
-  return Math.abs(appointment.totalAmount - catalogTotal) > 0.009;
-}
-
-function buildServiceOrderItems(
-  selectedServices: AgendaService[],
-  appointmentTotal: number
-) {
-  const catalogTotal = selectedServices.reduce(
-    (total, service) => total + getServicePrice(service),
-    0
-  );
-
-  if (
-    selectedServices.length === 0 ||
-    catalogTotal <= 0 ||
-    Math.abs(appointmentTotal - catalogTotal) <= 0.009
-  ) {
-    return selectedServices.map((service) => ({
-      service_id: service.id,
-      quantity: 1,
-      unit_price: getServicePrice(service),
-    }));
-  }
-
-  let assignedTotal = 0;
-
-  return selectedServices.map((service, index) => {
-    if (index === selectedServices.length - 1) {
-      return {
-        service_id: service.id,
-        quantity: 1,
-        unit_price: Math.round((appointmentTotal - assignedTotal) * 100) / 100,
-      };
-    }
-
-    const share =
-      Math.round(
-        (getServicePrice(service) / catalogTotal) * appointmentTotal * 100
-      ) / 100;
-    assignedTotal += share;
-
-    return {
-      service_id: service.id,
-      quantity: 1,
-      unit_price: share,
-    };
-  });
-}
-
-function firstRelation<T>(value: T | T[] | null | undefined) {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-function normalizeDbTime(value: string | null) {
-  return value?.slice(0, 5) ?? "";
-}
-
-function getAppointmentStatus(status: ServiceOrderStatus | string): AppointmentStatus {
-  if (status === "em_andamento") return "Confirmado";
-  if (status === "finalizada") return "Concluído";
-  if (status === "cancelada") return "Cancelado";
-
-  return "Pendente";
-}
-
-function getServiceOrderStatus(status: AppointmentStatus): ServiceOrderStatus {
-  if (status === "Confirmado") return "em_andamento";
-  if (status === "Concluído") return "finalizada";
-  if (status === "Cancelado") return "cancelada";
-
-  return "aberta";
-}
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value
-  );
-}
-
-function isMissingAgendaMigrationError(err: unknown) {
-  const message =
-    err instanceof Error
-      ? err.message
-      : typeof err === "object" && err && "message" in err
-        ? String((err as { message?: unknown }).message)
-        : String(err);
-
-  return (
-    message.includes("scheduled_date") ||
-    message.includes("scheduled_end_date") ||
-    message.includes("scheduled_start") ||
-    message.includes("scheduled_end") ||
-    message.includes("schema cache")
-  );
-}
-
-function isMissingAgendaCapacityError(err: unknown) {
-  const message =
-    err instanceof Error
-      ? err.message
-      : typeof err === "object" && err && "message" in err
-        ? String((err as { message?: unknown }).message)
-        : String(err);
-
-  return (
-    message.includes("agenda_capacity") ||
-    message.includes("schema cache") ||
-    message.includes("Could not find")
-  );
-}
-
-function normalizeAgendaCapacity(value: number | string | null | undefined) {
-  const capacity =
-    typeof value === "number" ? value : Number(String(value ?? "").trim());
-
-  return Number.isFinite(capacity) && capacity > 0
-    ? Math.floor(capacity)
-    : DEFAULT_AGENDA_CAPACITY;
-}
-
-function getLocalAgendaCapacityKey(workshopId: string) {
-  return `${AGENDA_CAPACITY_STORAGE_KEY}-${workshopId}`;
-}
-
-function readLocalAgendaCapacityForImport(workshopId: string) {
-  if (typeof window === "undefined") return null;
-
-  try {
-    const stored = window.localStorage.getItem(getLocalAgendaCapacityKey(workshopId));
-    return stored ? normalizeAgendaCapacity(stored) : null;
-  } catch {
-    return null;
-  }
-}
-
-function clearLocalAgendaCapacity(workshopId: string) {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(getLocalAgendaCapacityKey(workshopId));
-}
-
-function readLocalAppointments() {
-  if (typeof window === "undefined") return [];
-
-  const storedAppointments = window.localStorage.getItem(AGENDA_STORAGE_KEY);
-  if (!storedAppointments) return [];
-
-  try {
-    return (JSON.parse(storedAppointments) as Appointment[]).map((appointment) => ({
-      ...appointment,
-      endDate: appointment.endDate || appointment.date,
-    }));
-  } catch {
-    window.localStorage.removeItem(AGENDA_STORAGE_KEY);
-    return [];
-  }
-}
-
-function clearLocalAppointments() {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(AGENDA_STORAGE_KEY);
-}
-
-function mapOrderToAppointment(order: AppointmentOrderRow): Appointment {
-  const client = firstRelation(order.clients);
-  const vehicle = firstRelation(order.vehicles);
-  const serviceItems = order.service_order_items ?? [];
-  const services = serviceItems
-    .map((item) => firstRelation(item.services))
-    .filter((service): service is AppointmentOrderService => Boolean(service));
-
-  return {
-    id: order.id,
-    date: order.scheduled_date ?? dateKey(new Date()),
-    endDate: order.scheduled_end_date ?? order.scheduled_date ?? dateKey(new Date()),
-    startTime: normalizeDbTime(order.scheduled_start),
-    endTime: normalizeDbTime(order.scheduled_end),
-    clientId: order.client_id,
-    vehicleId: order.vehicle_id,
-    serviceIds: serviceItems.map((item) => item.service_id),
-    client: client?.name ?? "Cliente não encontrado",
-    service: services.map((service) => service.name).join(", "),
-    totalAmount: Number(order.total_amount) || 0,
-    vehicle: vehicle
-      ? `${vehicle.brand} ${vehicle.model} - ${vehicle.plate}`
-      : "Veículo não encontrado",
-    status: getAppointmentStatus(order.status),
-    notes: order.notes?.trim() ?? "",
-  };
-}
-
-function formatServiceDuration(minutes: number | null) {
-  if (!minutes) return null;
-
-  if (minutes < 60) {
-    return `${minutes} min`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-
-  return remainingMinutes > 0
-    ? `${hours}h${String(remainingMinutes).padStart(2, "0")}`
-    : `${hours}h`;
-}
-
-function buildCalendarDays(currentMonth: Date) {
-  const firstDay = startOfMonth(currentMonth);
-  const lastDay = new Date(
-    currentMonth.getFullYear(),
-    currentMonth.getMonth() + 1,
-    0
-  );
-
-  return Array.from({ length: lastDay.getDate() }, (_, index) => {
-    const day = new Date(firstDay);
-    day.setDate(index + 1);
-    return day;
-  });
-}
 
 function AgendaDropdown({
   id,
@@ -1177,179 +696,26 @@ export function AgendaCalendar() {
   const [serviceListActionsAppointment, setServiceListActionsAppointment] =
     useState<Appointment | null>(null);
 
-  const syncFinanceRevenueForAppointment = useCallback(async (appointment: Appointment) => {
-    if (!workshopId || appointment.totalAmount <= 0) return null;
-
-    const description = `${appointment.client} - ${
-      appointment.service || "Serviço realizado"
-    }`;
-    const payload = {
-      workshop_id: workshopId,
-      type: "receita" as const,
-      description,
-      amount: appointment.totalAmount,
-      category: "Serviço",
-      service_order_id: appointment.id,
-      transaction_date: appointment.date,
-    };
-
-    const { data: existingTransactions, error: findError } = await supabase
-      .from("financial_transactions")
-      .select("id")
-      .eq("service_order_id", appointment.id)
-      .eq("type", "receita")
-      .limit(1);
-
-    if (findError) return findError.message;
-
-    const existingTransaction = existingTransactions?.[0];
-    if (existingTransaction) {
-      const { error: updateError } = await supabase
-        .from("financial_transactions")
-        .update(payload)
-        .eq("id", existingTransaction.id);
-
-      return updateError?.message ?? null;
-    }
-
-    const { error: insertError } = await supabase
-      .from("financial_transactions")
-      .insert(payload);
-
-    return insertError?.message ?? null;
-  }, [supabase, workshopId]);
-
-  const deleteFinanceRevenueForAppointment = useCallback(async (appointmentId: string) => {
-    const { error: deleteError } = await supabase
-      .from("financial_transactions")
-      .delete()
-      .eq("service_order_id", appointmentId)
-      .eq("type", "receita");
-
-    return deleteError?.message ?? null;
-  }, [supabase]);
-
-  const applySupabaseStockDiscountForAppointment = useCallback(
-    async (appointment: Appointment) => {
-      if (!workshopId) return;
-
-      const { data: existingDiscount, error: findDiscountError } = await supabase
-        .from("product_stock_discounts")
-        .select("service_order_id")
-        .eq("workshop_id", workshopId)
-        .eq("service_order_id", appointment.id)
-        .maybeSingle();
-
-      if (findDiscountError || existingDiscount) return;
-
-      const catalog = await loadSupabaseCatalog(supabase, workshopId);
-      const usageByProductId = new Map<string, number>();
-
-      appointment.serviceIds.forEach((serviceId) => {
-        (catalog.serviceProductUsages[serviceId] ?? []).forEach((usage) => {
-          try {
-            const amount = parsePositiveNumber(usage.amount);
-            usageByProductId.set(
-              usage.productId,
-              (usageByProductId.get(usage.productId) ?? 0) + amount
-            );
-          } catch {
-            // Ignore incomplete service usage rows.
-          }
-        });
-      });
-
-      if (usageByProductId.size === 0) return;
-
-      for (const product of catalog.products) {
-        const discountAmount = usageByProductId.get(product.id);
-        if (!discountAmount) continue;
-
-        await saveSupabaseProduct(supabase, workshopId, {
-          ...product,
-          stockRemaining: String(
-            Math.max(0, getProductRemainingStock(product) - discountAmount)
-          ),
-        });
-      }
-
-      await supabase.from("product_stock_discounts").insert({
-        workshop_id: workshopId,
-        service_order_id: appointment.id,
-      });
-    },
+  const syncFinanceRevenueForAppointment = useCallback(
+    (appointment: Appointment) => syncFinanceRevenue(supabase, workshopId ?? "", appointment),
     [supabase, workshopId]
   );
 
-  async function importLocalAppointmentsToSupabase(
-    workshopId: string,
+  const deleteFinanceRevenueForAppointment = useCallback(
+    (appointmentId: string) => deleteFinanceRevenue(supabase, appointmentId),
+    [supabase]
+  );
+
+  const applySupabaseStockDiscountForAppointment = useCallback(
+    (appointment: Appointment) => applyStockDiscount(supabase, workshopId ?? "", appointment),
+    [supabase, workshopId]
+  );
+
+  function importLocalAppointmentsToSupabase(
+    resolvedWorkshopId: string,
     remoteAppointments: Appointment[]
   ) {
-    const localAppointments = readLocalAppointments();
-    if (localAppointments.length === 0) return remoteAppointments;
-
-    const existingKeys = new Set(
-      remoteAppointments.map(
-        (appointment) =>
-          `${appointment.date}|${getAppointmentEndDate(appointment)}|${appointment.startTime}|${appointment.endTime}|${appointment.clientId}|${appointment.vehicleId}`
-      )
-    );
-    const importedAppointments: Appointment[] = [];
-
-    for (const appointment of localAppointments) {
-      const appointmentKey = `${appointment.date}|${getAppointmentEndDate(appointment)}|${appointment.startTime}|${appointment.endTime}|${appointment.clientId}|${appointment.vehicleId}`;
-      if (existingKeys.has(appointmentKey)) continue;
-
-      const payload = {
-        ...(isUuid(appointment.id) ? { id: appointment.id } : {}),
-        workshop_id: workshopId,
-        client_id: appointment.clientId,
-        vehicle_id: appointment.vehicleId,
-        total_amount: appointment.totalAmount,
-        scheduled_date: appointment.date,
-        scheduled_end_date: getAppointmentEndDate(appointment),
-        scheduled_start: appointment.startTime,
-        scheduled_end: appointment.endTime,
-        status: getServiceOrderStatus(appointment.status),
-        payment_status: "pendente",
-        completed_at:
-          appointment.status === "Concluído" ? new Date().toISOString() : null,
-        notes: (appointment.notes ?? "").trim() || null,
-      };
-
-      const { data: insertedOrder, error: insertError } = await supabase
-        .from("service_orders")
-        .insert(payload)
-        .select("id")
-        .single();
-
-      if (insertError) throw insertError;
-
-      const savedAppointmentId = insertedOrder.id as string;
-      if (appointment.serviceIds.length > 0) {
-        const { error: itemsError } = await supabase
-          .from("service_order_items")
-          .insert(
-            appointment.serviceIds.map((serviceId) => ({
-              service_order_id: savedAppointmentId,
-              service_id: serviceId,
-              quantity: 1,
-              unit_price: 0,
-            }))
-          );
-
-        if (itemsError) throw itemsError;
-      }
-
-      importedAppointments.push({ ...appointment, id: savedAppointmentId });
-      existingKeys.add(appointmentKey);
-    }
-
-    if (importedAppointments.length > 0) {
-      clearLocalAppointments();
-    }
-
-    return [...remoteAppointments, ...importedAppointments];
+    return importLocalAppointments(supabase, resolvedWorkshopId, remoteAppointments);
   }
 
   async function loadAgendaData() {
@@ -1357,10 +723,7 @@ export function AgendaCalendar() {
     setLoadingServices(true);
     setLoadingAppointments(true);
 
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("workshop_id")
-      .single();
+    const { data: profile } = await fetchWorkshopProfile(supabase);
 
     if (!profile?.workshop_id) {
       setLoadingClients(false);
@@ -1371,11 +734,10 @@ export function AgendaCalendar() {
 
     setWorkshopId(profile.workshop_id);
 
-    const { data: workshopData, error: workshopError } = await supabase
-      .from("workshops")
-      .select("agenda_capacity")
-      .eq("id", profile.workshop_id)
-      .single();
+    const { data: workshopData, error: workshopError } = await fetchWorkshopCapacity(
+      supabase,
+      profile.workshop_id
+    );
 
     if (workshopError) {
       if (isMissingAgendaCapacityError(workshopError)) {
@@ -1389,10 +751,11 @@ export function AgendaCalendar() {
     } else {
       const localCapacity = readLocalAgendaCapacityForImport(profile.workshop_id);
       if (localCapacity !== null && localCapacity !== normalizeAgendaCapacity(workshopData?.agenda_capacity)) {
-        const { error: capacityImportError } = await supabase
-          .from("workshops")
-          .update({ agenda_capacity: localCapacity })
-          .eq("id", profile.workshop_id);
+        const { error: capacityImportError } = await updateWorkshopCapacity(
+          supabase,
+          profile.workshop_id,
+          localCapacity
+        );
 
         if (!capacityImportError) {
           clearLocalAgendaCapacity(profile.workshop_id);
@@ -1408,85 +771,32 @@ export function AgendaCalendar() {
       }
     }
 
-    const { data: clientsData, error: clientsError } = await supabase
-      .from("clients")
-      .select(
-        "*, vehicles(id, client_id, brand, model, plate, year, photo_url_1, photo_url_2)"
-      )
-      .eq("workshop_id", profile.workshop_id)
-      .order("name", { ascending: true });
+    const { data: clientsData, error: clientsError } = await fetchClients(
+      supabase,
+      profile.workshop_id
+    );
 
     if (!clientsError) {
       setClients((clientsData as Client[]) ?? []);
     }
 
-    const { data: servicesData, error: servicesError } = await supabase
-      .from("services")
-      .select("id, name, price, duration_minutes, active")
-      .eq("workshop_id", profile.workshop_id)
-      .eq("active", true)
-      .order("name", { ascending: true });
+    const { data: servicesData, error: servicesError } = await fetchServices(
+      supabase,
+      profile.workshop_id
+    );
 
     if (!servicesError) {
       setServices((servicesData as AgendaService[]) ?? []);
     }
 
-    const { data: appointmentsData, error: appointmentsError } = await supabase
-      .from("service_orders")
-      .select(
-        `
-        id,
-        client_id,
-        vehicle_id,
-        status,
-        total_amount,
-        notes,
-        scheduled_date,
-        scheduled_end_date,
-        scheduled_start,
-        scheduled_end,
-        clients(name),
-        vehicles(brand, model, plate),
-        service_order_items(
-          service_id,
-          unit_price,
-          services(id, name, price, duration_minutes)
-        )
-      `
-      )
-      .eq("workshop_id", profile.workshop_id)
-      .not("scheduled_date", "is", null)
-      .order("scheduled_date", { ascending: true })
-      .order("scheduled_start", { ascending: true });
+    const { data: appointmentsData, error: appointmentsError } = await fetchAppointments(
+      supabase,
+      profile.workshop_id
+    );
 
     if (appointmentsError) {
       const { data: legacyAppointmentsData, error: legacyAppointmentsError } =
-        await supabase
-          .from("service_orders")
-          .select(
-            `
-            id,
-            client_id,
-            vehicle_id,
-            status,
-            total_amount,
-            notes,
-            scheduled_date,
-            scheduled_start,
-            scheduled_end,
-            clients(name),
-            vehicles(brand, model, plate),
-            service_order_items(
-              service_id,
-              unit_price,
-              services(id, name, price, duration_minutes)
-            )
-          `
-          )
-          .eq("workshop_id", profile.workshop_id)
-          .not("scheduled_date", "is", null)
-          .order("scheduled_date", { ascending: true })
-          .order("scheduled_start", { ascending: true });
+        await fetchAppointmentsLegacy(supabase, profile.workshop_id);
 
       if (!legacyAppointmentsError) {
         const remoteAppointments =
@@ -1584,13 +894,7 @@ export function AgendaCalendar() {
         });
 
         if (completedAppointmentIds.length > 0) {
-          void supabase
-            .from("service_orders")
-            .update({
-              status: "finalizada",
-              completed_at: nextNow.toISOString(),
-            })
-            .in("id", completedAppointmentIds)
+          void updateAppointmentStatusBulk(supabase, completedAppointmentIds, nextNow.toISOString())
             .then(async ({ error: updateError }) => {
               if (updateError) {
                 setError(updateError.message);
@@ -2239,48 +1543,40 @@ export function AgendaCalendar() {
       let savedAppointmentId = editingAppointmentId;
 
       if (editingAppointmentId) {
-        const { data: updatedRows, error: updateError } = await supabase
-          .from("service_orders")
-          .update(payload)
-          .eq("id", editingAppointmentId)
-          .select("id");
+        const { data: updatedRows, error: updateError } = await updateAppointmentOrder(
+          supabase,
+          editingAppointmentId,
+          payload
+        );
 
         assertMutationRows(updatedRows, updateError, "atualizar o agendamento");
 
-        const { error: deleteItemsError } = await supabase
-          .from("service_order_items")
-          .delete()
-          .eq("service_order_id", editingAppointmentId);
+        const { error: deleteItemsError } = await deleteAppointmentItems(
+          supabase,
+          editingAppointmentId
+        );
 
         if (deleteItemsError) throw deleteItemsError;
       } else {
-        const { data: insertedOrder, error: insertError } = await supabase
-          .from("service_orders")
-          .insert({
-            ...payload,
-            workshop_id: workshopId,
-            payment_status: "pendente",
-          })
-          .select("id")
-          .single();
+        const { data: insertedOrder, error: insertError } = await insertAppointmentOrder(
+          supabase,
+          workshopId,
+          payload
+        );
 
         if (insertError) throw insertError;
-        savedAppointmentId = insertedOrder.id;
+        savedAppointmentId = insertedOrder?.id ?? null;
       }
 
       if (!savedAppointmentId) {
         throw new Error("Erro ao salvar agendamento.");
       }
 
-      const { data: insertedItems, error: insertItemsError } = await supabase
-        .from("service_order_items")
-        .insert(
-          serviceItems.map((item) => ({
-            ...item,
-            service_order_id: savedAppointmentId,
-          }))
-        )
-        .select("id");
+      const { data: insertedItems, error: insertItemsError } = await saveAppointmentItems(
+        supabase,
+        savedAppointmentId,
+        serviceItems
+      );
 
       assertMutationRows(
         insertedItems,
@@ -2348,11 +1644,10 @@ export function AgendaCalendar() {
     setError(null);
 
     try {
-      const { data: deletedRows, error: deleteError } = await supabase
-        .from("service_orders")
-        .delete()
-        .eq("id", appointment.id)
-        .select("id");
+      const { data: deletedRows, error: deleteError } = await deleteAppointment(
+        supabase,
+        appointment.id
+      );
 
       assertMutationRows(deletedRows, deleteError, "excluir o agendamento");
 
@@ -2383,11 +1678,10 @@ export function AgendaCalendar() {
       const appointmentIds = selectedAppointments.map((appointment) => appointment.id);
 
       if (appointmentIds.length > 0) {
-        const { data: deletedRows, error: deleteError } = await supabase
-          .from("service_orders")
-          .delete()
-          .in("id", appointmentIds)
-          .select("id");
+        const { data: deletedRows, error: deleteError } = await deleteAppointmentsForDay(
+          supabase,
+          appointmentIds
+        );
 
         assertMutationRows(
           deletedRows,
@@ -2418,14 +1712,12 @@ export function AgendaCalendar() {
     const shouldRemoveFinanceRevenue =
       status !== "Concluído" && currentAppointment?.status === "Concluído";
 
-    const { data: updatedRows, error: updateError } = await supabase
-      .from("service_orders")
-      .update({
-        status: getServiceOrderStatus(status),
-        completed_at: status === "Concluído" ? new Date().toISOString() : null,
-      })
-      .eq("id", appointmentId)
-      .select("id");
+    const { data: updatedRows, error: updateError } = await updateAppointmentStatus(
+      supabase,
+      appointmentId,
+      status,
+      status === "Concluído" ? new Date().toISOString() : null
+    );
 
     try {
       assertMutationRows(updatedRows, updateError, "atualizar o status do agendamento");
@@ -2496,11 +1788,11 @@ export function AgendaCalendar() {
     async (appointmentId: string, notes: string | null) => {
       const trimmedNotes = notes?.trim() ?? "";
 
-      const { data: updatedRows, error: updateError } = await supabase
-        .from("service_orders")
-        .update({ notes: trimmedNotes || null })
-        .eq("id", appointmentId)
-        .select("id");
+      const { data: updatedRows, error: updateError } = await updateAppointmentNotesDb(
+        supabase,
+        appointmentId,
+        trimmedNotes || null
+      );
 
       assertMutationRows(updatedRows, updateError, "atualizar a observação");
 
@@ -2520,36 +1812,7 @@ export function AgendaCalendar() {
       throw new Error("Oficina não encontrada.");
     }
 
-    const { data: newClient, error: clientError } = await supabase
-      .from("clients")
-      .insert({
-        name: data.name.trim(),
-        phone: normalizePhone(data.phone),
-        notes: data.notes.trim() || null,
-        workshop_id: workshopId,
-      })
-      .select("id")
-      .single();
-
-    if (clientError) {
-      throw new Error(clientError.message);
-    }
-
-    await syncVehicles(supabase, workshopId, newClient.id, data.vehicles);
-
-    const { data: savedClient, error: savedClientError } = await supabase
-      .from("clients")
-      .select(
-        "*, vehicles(id, client_id, brand, model, plate, year, photo_url_1, photo_url_2)"
-      )
-      .eq("id", newClient.id)
-      .single();
-
-    if (savedClientError) {
-      throw new Error(savedClientError.message);
-    }
-
-    const client = savedClient as Client;
+    const client = await createClientWithVehicles(supabase, workshopId, data);
     setClients((prev) => [...prev, client].sort((a, b) => a.name.localeCompare(b.name)));
     setForm((prev) => ({
       ...prev,
