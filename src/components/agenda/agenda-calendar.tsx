@@ -11,10 +11,11 @@ import {
   CaretRight,
   Check,
   CheckCircle,
-  NotePencil,
+  Note,
   PencilSimple,
   Plus,
   Trash,
+  WhatsappLogo,
   X,
 } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
@@ -223,7 +224,7 @@ function AppointmentStatusLabel({
   );
 }
 
-function AppointmentNotesIndicator({
+function AppointmentNotesRow({
   appointmentId,
   notes,
   onUpdateNotes,
@@ -236,38 +237,25 @@ function AppointmentNotesIndicator({
   ) => Promise<void>;
 }) {
   const trimmedNotes = notes.trim();
-  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(trimmedNotes);
   const [saving, setSaving] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!editing) return;
     setDraft(trimmedNotes);
     setConfirmRemove(false);
     setError(null);
-  }, [open, trimmedNotes]);
+  }, [editing, trimmedNotes]);
 
-  useEffect(() => {
-    if (!open) return;
-
-    function handlePointerDown(event: MouseEvent) {
-      if (rootRef.current?.contains(event.target as Node)) return;
-      setOpen(false);
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [open]);
-
-  if (!trimmedNotes && !open) return null;
+  if (!trimmedNotes && !editing) return null;
 
   async function handleSave() {
     const nextNotes = draft.trim();
     if (!nextNotes) {
-      setError("Informe uma observação ou use Remover.");
+      setError("Informe uma observação ou use Excluir.");
       return;
     }
 
@@ -275,7 +263,7 @@ function AppointmentNotesIndicator({
     setError(null);
     try {
       await onUpdateNotes(appointmentId, nextNotes);
-      setOpen(false);
+      setEditing(false);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Erro ao salvar observação."
@@ -290,7 +278,8 @@ function AppointmentNotesIndicator({
     setError(null);
     try {
       await onUpdateNotes(appointmentId, null);
-      setOpen(false);
+      setEditing(false);
+      setConfirmRemove(false);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Erro ao remover observação."
@@ -301,112 +290,275 @@ function AppointmentNotesIndicator({
   }
 
   return (
-    <div ref={rootRef} className="group/notes absolute -right-3 top-0 z-10">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50 px-2.5 py-1 text-[11px] font-bold text-amber-900 shadow-card ring-1 ring-amber-200/70 transition-all duration-200 hover:border-amber-400 hover:shadow-card-hover hover:ring-amber-300/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
-        aria-expanded={open}
-        aria-haspopup="dialog"
-      >
-        <NotePencil
-          size={12}
-          weight="fill"
-          className="shrink-0 text-amber-600"
-          aria-hidden
-        />
-        Observação
-      </button>
-
-      {!open && trimmedNotes && (
-        <div
-          role="tooltip"
-          className="pointer-events-none absolute right-0 top-full z-30 mt-2 hidden w-72 max-w-[min(18rem,calc(100vw-2rem))] rounded-lg border border-amber-200 bg-card p-3 text-xs leading-relaxed text-foreground shadow-xl ring-1 ring-amber-100 group-hover/notes:block group-focus-within/notes:block"
-        >
-          <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-amber-700">
-            Observação
-          </p>
-          <p className="whitespace-pre-wrap break-words">{trimmedNotes}</p>
-          <p className="mt-2 text-[10px] font-medium text-muted">
-            Clique para editar ou remover
-          </p>
-        </div>
-      )}
-
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Editar observação"
-          className="agenda-notes-panel-enter absolute right-0 top-full z-30 mt-2 w-72 max-w-[min(18rem,calc(100vw-2rem))] rounded-lg border border-amber-200 bg-card p-3 shadow-xl ring-1 ring-amber-100"
-        >
-          <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-amber-700">
-            Observação
-          </p>
+    <div className="mt-1.5 border-t border-border/60 pt-1.5">
+      {editing ? (
+        <div className="space-y-2">
           <textarea
-            rows={4}
+            rows={3}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             disabled={saving}
             placeholder="Escreva uma observação..."
-            className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-xs text-foreground outline-none transition-shadow placeholder:text-muted/60 focus:border-primary/40 focus:shadow-card disabled:opacity-60"
+            className="w-full resize-none border-0 border-b border-border bg-transparent px-0 py-1 text-xs text-foreground outline-none placeholder:text-muted/60 focus:border-primary/40 disabled:opacity-60"
           />
           {error && (
-            <p className="mt-2 text-xs font-medium text-danger">{error}</p>
+            <p className="text-xs font-medium text-danger">{error}</p>
           )}
-          {confirmRemove ? (
-            <div className="mt-3 space-y-2">
-              <p className="text-xs font-medium text-foreground">
-                Remover esta observação?
-              </p>
-              <div className="flex items-center justify-end gap-2">
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => {
+                setDraft(trimmedNotes);
+                setEditing(false);
+                setError(null);
+              }}
+              className="text-[11px] font-semibold text-muted transition-colors hover:text-foreground disabled:opacity-60"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void handleSave()}
+              className="text-[11px] font-semibold text-success transition-colors hover:text-success/80 disabled:opacity-60"
+            >
+              {saving ? "Salvando..." : "Salvar"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-start justify-between gap-3">
+          <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted">
+            <span className="font-semibold text-foreground">Obs:</span>{" "}
+            <span className="whitespace-pre-wrap break-words">{trimmedNotes}</span>
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            {confirmRemove ? (
+              <>
                 <button
                   type="button"
                   disabled={saving}
                   onClick={() => setConfirmRemove(false)}
-                  className="rounded-lg px-3 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-foreground disabled:opacity-60"
+                  className="text-[11px] font-semibold text-muted transition-colors hover:text-foreground disabled:opacity-60"
+                >
+                  Não
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void handleRemove()}
+                  className="text-[11px] font-semibold text-danger transition-colors hover:text-danger/80 disabled:opacity-60"
+                >
+                  {saving ? "..." : "Confirmar"}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  className="text-[11px] font-semibold text-foreground transition-colors hover:text-success"
+                >
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmRemove(true)}
+                  className="text-[11px] font-semibold text-danger transition-colors hover:text-danger/80"
+                >
+                  Excluir
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ServiceListNotesIcon({
+  appointmentId,
+  notes,
+  onUpdateNotes,
+}: {
+  appointmentId: string;
+  notes: string;
+  onUpdateNotes: (id: string, notes: string | null) => Promise<void>;
+}) {
+  const trimmedNotes = notes.trim();
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(trimmedNotes);
+  const [saving, setSaving] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setEditing(false);
+        setDraft(trimmedNotes);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open, trimmedNotes]);
+
+  if (!trimmedNotes) return <span className="text-xs text-muted/40">—</span>;
+
+  async function handleSave() {
+    const next = draft.trim();
+    if (!next) return;
+    setSaving(true);
+    try {
+      await onUpdateNotes(appointmentId, next);
+      setEditing(false);
+      setOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRemove() {
+    setSaving(true);
+    try {
+      await onUpdateNotes(appointmentId, null);
+      setOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div ref={ref} className="relative flex items-center justify-center">
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((value) => !value);
+          setEditing(false);
+          setDraft(trimmedNotes);
+        }}
+        className="inline-flex items-center justify-center rounded-sm text-amber-600 transition-colors hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+        aria-label="Ver observação"
+      >
+        <Note size={16} weight="light" aria-hidden />
+      </button>
+
+      {open && (
+        <div className="absolute left-1/2 top-full z-30 mt-2 w-72 -translate-x-1/2 rounded-md border border-border bg-card p-3 shadow-lg">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted">
+            Observação
+          </p>
+
+          {editing ? (
+            <div className="space-y-2">
+              <textarea
+                rows={3}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                disabled={saving}
+                className="w-full resize-none border-0 border-b border-border bg-transparent px-0 py-1 text-xs text-foreground outline-none placeholder:text-muted/60 focus:border-primary/40 disabled:opacity-60"
+              />
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setEditing(false);
+                    setDraft(trimmedNotes);
+                  }}
+                  className="text-[11px] font-semibold text-muted hover:text-foreground disabled:opacity-60"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
                   disabled={saving}
-                  onClick={() => void handleRemove()}
-                  className="rounded-lg bg-danger px-3 py-1.5 text-xs font-semibold text-white shadow-card transition-all hover:bg-danger/90 disabled:opacity-60"
+                  onClick={() => void handleSave()}
+                  className="text-[11px] font-semibold text-success hover:text-success/80 disabled:opacity-60"
                 >
-                  {saving ? "Removendo..." : "Sim, remover"}
+                  {saving ? "Salvando..." : "Salvar"}
                 </button>
               </div>
             </div>
           ) : (
-            <div className="mt-3 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => setOpen(false)}
-                className="rounded-lg px-3 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-foreground disabled:opacity-60"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => setConfirmRemove(true)}
-                className="rounded-lg px-3 py-1.5 text-xs font-semibold text-danger transition-colors hover:text-danger/80 disabled:opacity-60"
-              >
-                Remover
-              </button>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => void handleSave()}
-                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-card transition-all hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {saving ? "Salvando..." : "Salvar"}
-              </button>
-            </div>
+            <>
+              <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground">
+                {trimmedNotes}
+              </p>
+              <div className="mt-3 flex justify-end gap-2 border-t border-border/60 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditing(true);
+                    setDraft(trimmedNotes);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-foreground transition-colors hover:text-success"
+                >
+                  <PencilSimple size={12} weight="light" aria-hidden />
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void handleRemove()}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-danger transition-colors hover:text-danger/80 disabled:opacity-60"
+                >
+                  <Trash size={12} weight="light" aria-hidden />
+                  {saving ? "..." : "Excluir"}
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function ServiceListActions({
+  appointment,
+  onEdit,
+  onDelete,
+  onContact,
+}: {
+  appointment: Appointment;
+  onEdit: (appointment: Appointment) => void;
+  onDelete: (appointment: Appointment) => void;
+  onContact: (appointment: Appointment) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => onContact(appointment)}
+        title="Contato via WhatsApp"
+        aria-label="Contato via WhatsApp"
+        className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-emerald-50 hover:text-emerald-600"
+      >
+        <WhatsappLogo size={14} weight="light" aria-hidden />
+      </button>
+      <button
+        type="button"
+        onClick={() => onEdit(appointment)}
+        title="Opções"
+        aria-label="Opções do agendamento"
+        className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-success/10 hover:text-success"
+      >
+        <PencilSimple size={14} weight="light" aria-hidden />
+      </button>
+      <button
+        type="button"
+        onClick={() => onDelete(appointment)}
+        title="Excluir"
+        aria-label="Excluir agendamento"
+        className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+      >
+        <Trash size={14} weight="light" aria-hidden />
+      </button>
     </div>
   );
 }
@@ -1019,6 +1171,11 @@ export function AgendaCalendar() {
   const [activeAgendaTab, setActiveAgendaTab] = useState<AgendaPageTab>("calendar");
   const [deleteConfirm, setDeleteConfirm] = useState<AgendaDeleteConfirm>(null);
   const [deletingAppointments, setDeletingAppointments] = useState(false);
+  const [contactAppointment, setContactAppointment] = useState<Appointment | null>(
+    null
+  );
+  const [serviceListActionsAppointment, setServiceListActionsAppointment] =
+    useState<Appointment | null>(null);
 
   const syncFinanceRevenueForAppointment = useCallback(async (appointment: Appointment) => {
     if (!workshopId || appointment.totalAmount <= 0) return null;
@@ -1809,6 +1966,49 @@ export function AgendaCalendar() {
     setOpenSelectId(null);
   }
 
+  function openEditFromServiceList(appointment: Appointment) {
+    setActiveAgendaTab("calendar");
+    syncSelectedDate(appointment.date);
+    setDayDrawerOpen(true);
+    openEditForm(appointment);
+  }
+
+  function openContactModal(appointment: Appointment) {
+    setContactAppointment(appointment);
+  }
+
+  function openServiceListActionsModal(appointment: Appointment) {
+    setServiceListActionsAppointment(appointment);
+  }
+
+  function openWhatsApp(appointment: Appointment, templateKey: string) {
+    const phone = clients
+      .find((client) => client.id === appointment.clientId)
+      ?.phone?.replace(/\D/g, "");
+
+    if (!phone) {
+      window.alert("Cliente sem telefone cadastrado");
+      return;
+    }
+
+    const firstName = appointment.client.split(" ")[0];
+    const date = formatShortDate(appointment.date);
+    const time = appointment.startTime;
+
+    const templates: Record<string, string> = {
+      concluido: `Olá ${firstName}! 😊 Seu veículo (${appointment.vehicle}) está pronto para retirada. Qualquer dúvida estamos à disposição!`,
+      confirmar: `Olá ${firstName}! Passando para confirmar seu agendamento no dia ${date} às ${time} para ${appointment.service}. Podemos confirmar?`,
+      orcamento: `Olá ${firstName}! Temos uma atualização sobre o orçamento do seu veículo (${appointment.vehicle}). Pode falar agora?`,
+      lembrete: `Olá ${firstName}! Lembrando que seu agendamento é amanhã, dia ${date} às ${time}. Qualquer dúvida é só chamar! 🙌`,
+      personalizada: "",
+    };
+
+    const message = templates[templateKey];
+    const url = `https://wa.me/55${phone}?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank");
+    setContactAppointment(null);
+  }
+
   function addServiceToForm(serviceId: string) {
     if (!serviceId) return;
 
@@ -1923,6 +2123,12 @@ export function AgendaCalendar() {
 
   function cancelNotesDraft() {
     setNotesDraft(form.notes);
+    setNotesPanelOpen(false);
+  }
+
+  function removeNotesFromForm() {
+    setForm((prev) => ({ ...prev, notes: "" }));
+    setNotesDraft("");
     setNotesPanelOpen(false);
   }
 
@@ -3103,65 +3309,92 @@ export function AgendaCalendar() {
                     </div>
                   </div>
 
-                  <div className="relative flex justify-end">
-                    <button
-                      type="button"
-                      onClick={openNotesPanel}
-                      className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold shadow-card transition-all hover:shadow-card-hover sm:min-h-0 ${
-                        form.notes.trim()
-                          ? "border-primary/30 bg-primary/5 text-primary"
-                          : "border-border bg-card text-foreground hover:bg-background"
-                      }`}
-                    >
-                      <NotePencil size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
-                      Observação
-                      {form.notes.trim() && (
-                        <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">
-                          Salva
-                        </span>
+                  <div className="border-t border-border pt-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-foreground">
+                        Observação
+                      </span>
+                      {!form.notes.trim() && !notesPanelOpen && (
+                        <button
+                          type="button"
+                          onClick={openNotesPanel}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-semibold text-muted transition-all hover:border-amber-400/60 hover:bg-amber-50/60 hover:text-amber-600"
+                        >
+                          <Note size={13} weight="light" aria-hidden />
+                          Adicionar observação
+                        </button>
                       )}
-                    </button>
+                    </div>
 
-                    {notesPanelOpen && (
-                      <div
-                        className="absolute right-full top-1/2 z-30 mr-3 w-72 max-w-[calc(100vw-2rem)] -translate-y-1/2"
-                        role="dialog"
-                        aria-label="Observação do agendamento"
-                      >
-                        <div className="agenda-notes-panel-enter rounded-lg border border-border bg-card p-4 shadow-card">
-                          <label
-                            htmlFor="appointment-notes"
-                            className="mb-2 block text-sm font-semibold text-foreground"
-                          >
-                            Observação
-                          </label>
-                          <textarea
-                            id="appointment-notes"
-                            rows={4}
-                            value={notesDraft}
-                            onChange={(event) => setNotesDraft(event.target.value)}
-                            placeholder="Escreva uma observação para este agendamento..."
-                            className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition-shadow placeholder:text-muted/60 focus:border-primary/40 focus:shadow-card"
+                    {form.notes.trim() && !notesPanelOpen ? (
+                      <div className="mt-2 flex items-start justify-between gap-3 rounded-lg border border-amber-300/60 bg-amber-50/40 px-3 py-2.5">
+                        <div className="flex min-w-0 items-start gap-1.5">
+                          <Note
+                            size={13}
+                            weight="light"
+                            className="mt-0.5 shrink-0 text-amber-600"
+                            aria-hidden
                           />
-                          <div className="mt-3 flex items-center justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={cancelNotesDraft}
-                              className="rounded-lg px-3 py-1.5 text-xs font-semibold text-muted transition-colors hover:text-foreground"
-                            >
-                              Cancelar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={saveNotesDraft}
-                              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-card transition-all hover:bg-emerald-700"
-                            >
-                              Salvar
-                            </button>
-                          </div>
+                          <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground">
+                            {form.notes}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={openNotesPanel}
+                            className="text-[11px] font-semibold text-foreground transition-colors hover:text-success"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={removeNotesFromForm}
+                            className="text-[11px] font-semibold text-danger transition-colors hover:text-danger/80"
+                          >
+                            Excluir
+                          </button>
                         </div>
                       </div>
-                    )}
+                    ) : notesPanelOpen ? (
+                      <div className="mt-2 space-y-2 rounded-lg border border-amber-300/60 bg-amber-50/40 p-3">
+                        <div className="mb-1 flex items-center gap-1.5">
+                          <Note
+                            size={13}
+                            weight="light"
+                            className="text-amber-600"
+                            aria-hidden
+                          />
+                          <span className="text-xs font-semibold text-amber-700">
+                            Observação
+                          </span>
+                        </div>
+                        <textarea
+                          id="appointment-notes"
+                          rows={3}
+                          value={notesDraft}
+                          onChange={(event) => setNotesDraft(event.target.value)}
+                          placeholder="Escreva uma observação para este agendamento..."
+                          className="w-full resize-none border-0 border-b border-border bg-transparent px-0 py-1 text-sm text-foreground outline-none placeholder:text-muted/60 focus:border-primary/40"
+                        />
+                        <div className="flex items-center justify-end gap-3">
+                          <button
+                            type="button"
+                            onClick={cancelNotesDraft}
+                            className="text-xs font-semibold text-muted transition-colors hover:text-foreground"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={saveNotesDraft}
+                            className="text-xs font-semibold text-success transition-colors hover:text-success/80"
+                          >
+                            Salvar
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <div className="space-y-2.5">
@@ -3430,8 +3663,8 @@ export function AgendaCalendar() {
                   Nenhum serviço cadastrado
                 </p>
               ) : (
-                <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
-                  <div className="space-y-3 p-3 md:hidden">
+                <div className="border-t border-border">
+                  <div className="space-y-2 md:hidden">
                     {serviceListAppointments.map((appointment) => {
                       const endDate = getAppointmentEndDate(appointment);
                       const statusStyle = getStatusStyle(appointment.status);
@@ -3447,13 +3680,9 @@ export function AgendaCalendar() {
                       return (
                         <article
                           key={appointment.id}
-                          className={`rounded-lg border p-4 shadow-card ${
-                            hasNotes
-                              ? "border-amber-200/90 bg-gradient-to-br from-amber-50/90 to-background/60 ring-1 ring-amber-100"
-                              : "border-border bg-background/50"
-                          }`}
+                          className="rounded-md bg-card/50 px-3 py-4 transition-colors hover:bg-background/70"
                         >
-                          <div className={`relative min-w-0 ${hasNotes ? "pr-28" : ""}`}>
+                          <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-foreground">
                               {appointment.client}
                             </p>
@@ -3464,34 +3693,18 @@ export function AgendaCalendar() {
                               {appointment.vehicle}
                             </p>
                             {hasNotes && (
-                              <AppointmentNotesIndicator
+                              <AppointmentNotesRow
                                 appointmentId={appointment.id}
                                 notes={appointment.notes}
                                 onUpdateNotes={updateAppointmentNotes}
                               />
                             )}
                           </div>
-                          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                            <div>
-                              <p className="text-[11px] font-bold uppercase tracking-widest text-muted">
-                                Data
-                              </p>
-                              <p className="mt-1 font-medium text-foreground">
-                                {dateLabel}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-[11px] font-bold uppercase tracking-widest text-muted">
-                                Horário
-                              </p>
-                              <p className="mt-1 font-medium text-foreground">
-                                {timeLabel}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="mt-3 flex items-center justify-between gap-3">
+                          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+                            <span>{dateLabel}</span>
+                            <span>{timeLabel}</span>
                             <span
-                              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusStyle.statusBadge}`}
+                              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusStyle.statusBadge}`}
                             >
                               <AppointmentStatusLabel
                                 status={appointment.status}
@@ -3499,7 +3712,7 @@ export function AgendaCalendar() {
                               />
                             </span>
                             <span
-                              className={`text-sm font-bold ${
+                              className={`font-bold ${
                                 appointment.status === "Concluído"
                                   ? "text-success"
                                   : appointment.status === "Cancelado"
@@ -3510,21 +3723,31 @@ export function AgendaCalendar() {
                               {formatCurrency(appointment.totalAmount)}
                             </span>
                           </div>
+                          <div className="mt-2 flex justify-end border-t border-border/60 pt-2">
+                            <ServiceListActions
+                              appointment={appointment}
+                              onEdit={openServiceListActionsModal}
+                              onDelete={requestDeleteAppointment}
+                              onContact={openContactModal}
+                            />
+                          </div>
                         </article>
                       );
                     })}
                   </div>
 
                   <div className="hidden w-full overflow-x-auto md:block">
-                    <div className="min-w-[690px]">
-                      <div className="grid grid-cols-[minmax(220px,1fr)_110px_130px_130px_100px] gap-4 border-b border-border bg-background px-3 py-3 text-xs font-semibold text-muted">
+                    <div className="min-w-[800px]">
+                      <div className="sticky top-0 z-10 grid grid-cols-[minmax(220px,1fr)_110px_130px_130px_36px_100px_96px] gap-4 border-b border-border bg-background px-3 py-3 text-xs font-semibold text-muted">
                         <span>Cliente / Serviço</span>
                         <span>Data</span>
                         <span>Horário</span>
                         <span>Status</span>
+                        <span className="text-center">Obs</span>
                         <span className="text-right">Valor</span>
+                        <span className="text-right">Ações</span>
                       </div>
-                      <div className="divide-y divide-border/70">
+                      <div className="divide-y divide-border">
                         {serviceListAppointments.map((appointment) => {
                           const endDate = getAppointmentEndDate(appointment);
                           const statusStyle = getStatusStyle(appointment.status);
@@ -3535,18 +3758,13 @@ export function AgendaCalendar() {
                           const timeLabel = appointment.endTime
                             ? `${appointment.startTime} - ${appointment.endTime}`
                             : appointment.startTime;
-                          const hasNotes = Boolean(appointment.notes.trim());
 
                           return (
                             <article
                               key={appointment.id}
-                              className={`grid grid-cols-[minmax(220px,1fr)_110px_130px_130px_100px] items-start gap-4 px-3 py-3 transition-colors ${
-                                hasNotes
-                                  ? "border-l-4 border-l-amber-400 bg-amber-50/40 hover:bg-amber-50/70"
-                                  : "hover:bg-background/70"
-                              }`}
+                              className="grid grid-cols-[minmax(220px,1fr)_110px_130px_130px_36px_100px_96px] items-center gap-4 px-3 py-3 transition-colors hover:bg-background/70"
                             >
-                              <div className={`relative min-w-0 ${hasNotes ? "pr-28" : ""}`}>
+                              <div className="min-w-0 self-center">
                                 <p className="truncate text-sm font-semibold text-foreground">
                                   {appointment.client}
                                 </p>
@@ -3556,21 +3774,14 @@ export function AgendaCalendar() {
                                 <p className="mt-0.5 truncate text-xs text-muted">
                                   {appointment.vehicle}
                                 </p>
-                                {hasNotes && (
-                                  <AppointmentNotesIndicator
-                                    appointmentId={appointment.id}
-                                    notes={appointment.notes}
-                                    onUpdateNotes={updateAppointmentNotes}
-                                  />
-                                )}
                               </div>
-                              <div className="pt-0.5 text-sm font-medium text-foreground">
+                              <div className="text-sm font-medium text-foreground">
                                 {dateLabel}
                               </div>
-                              <div className="pt-0.5 text-sm font-medium text-foreground">
+                              <div className="text-sm font-medium text-foreground">
                                 {timeLabel}
                               </div>
-                              <div className="pt-0.5">
+                              <div>
                                 <span
                                   className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusStyle.statusBadge}`}
                                 >
@@ -3580,8 +3791,15 @@ export function AgendaCalendar() {
                                   />
                                 </span>
                               </div>
+                              <div className="flex justify-center">
+                                <ServiceListNotesIcon
+                                  appointmentId={appointment.id}
+                                  notes={appointment.notes}
+                                  onUpdateNotes={updateAppointmentNotes}
+                                />
+                              </div>
                               <div
-                                className={`pt-0.5 text-right text-sm font-bold ${
+                                className={`text-right text-sm font-bold ${
                                   appointment.status === "Concluído"
                                     ? "text-success"
                                     : appointment.status === "Cancelado"
@@ -3590,6 +3808,14 @@ export function AgendaCalendar() {
                                 }`}
                               >
                                 {formatCurrency(appointment.totalAmount)}
+                              </div>
+                              <div className="flex justify-end">
+                                <ServiceListActions
+                                  appointment={appointment}
+                                  onEdit={openServiceListActionsModal}
+                                  onDelete={requestDeleteAppointment}
+                                  onContact={openContactModal}
+                                />
                               </div>
                             </article>
                           );
@@ -3874,6 +4100,225 @@ export function AgendaCalendar() {
           }
         }
       `}</style>
+
+      {serviceListActionsAppointment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-card shadow-2xl">
+            <div className="flex items-start justify-between border-b border-border px-5 py-4">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-widest text-muted">
+                  Agendamento
+                </p>
+                <h3 className="mt-0.5 truncate text-sm font-bold text-foreground">
+                  {serviceListActionsAppointment.client}
+                </h3>
+                <p className="mt-1 truncate text-xs text-muted">
+                  {serviceListActionsAppointment.service}
+                </p>
+                <p className="mt-0.5 truncate text-xs text-muted">
+                  {serviceListActionsAppointment.vehicle}
+                </p>
+                <p className="mt-2 text-xs font-medium text-foreground">
+                  {formatShortDate(serviceListActionsAppointment.date)}
+                  {serviceListActionsAppointment.endTime
+                    ? ` • ${serviceListActionsAppointment.startTime} - ${serviceListActionsAppointment.endTime}`
+                    : ` • ${serviceListActionsAppointment.startTime}`}
+                </p>
+                {serviceListActionsAppointment.notes.trim() && (
+                  <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-muted">
+                    <span className="font-semibold text-foreground">Obs:</span>{" "}
+                    {serviceListActionsAppointment.notes}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setServiceListActionsAppointment(null)}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-background hover:text-foreground"
+              >
+                <X size={16} weight="light" aria-hidden />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-4">
+              <div>
+                <p className="mb-2 text-xs font-semibold text-muted">Status</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {appointmentStatuses.map((status) => {
+                    const optionStyle = getStatusStyle(status);
+                    const isCurrent =
+                      serviceListActionsAppointment.status === status;
+
+                    return (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => {
+                          void handleChangeStatus(
+                            serviceListActionsAppointment.id,
+                            status
+                          );
+                          setServiceListActionsAppointment(null);
+                        }}
+                        className={`flex min-h-10 items-center justify-center rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                          isCurrent
+                            ? `${optionStyle.statusBadge} border-transparent ring-2 ring-primary/20`
+                            : `${optionStyle.statusBadge} border-transparent opacity-80 hover:opacity-100`
+                        }`}
+                      >
+                        <AppointmentStatusLabel status={status} iconSize={12} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted">Ações</p>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    openEditFromServiceList(serviceListActionsAppointment);
+                    setServiceListActionsAppointment(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg border border-border bg-background px-4 py-3 text-left transition-colors hover:border-success/40 hover:bg-success/5"
+                >
+                  <PencilSimple
+                    size={14}
+                    weight="light"
+                    className="shrink-0 text-success"
+                    aria-hidden
+                  />
+                  <div>
+                    <span className="text-sm font-semibold text-foreground">
+                      Editar horário e serviços
+                    </span>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Abrir formulário completo na agenda
+                    </p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    openContactModal(serviceListActionsAppointment);
+                    setServiceListActionsAppointment(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg border border-border bg-background px-4 py-3 text-left transition-colors hover:border-emerald-400/60 hover:bg-emerald-50/40"
+                >
+                  <WhatsappLogo
+                    size={14}
+                    weight="light"
+                    className="shrink-0 text-emerald-600"
+                    aria-hidden
+                  />
+                  <div>
+                    <span className="text-sm font-semibold text-foreground">
+                      Contato via WhatsApp
+                    </span>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Enviar mensagem com template pronto
+                    </p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    requestDeleteAppointment(serviceListActionsAppointment);
+                    setServiceListActionsAppointment(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-left transition-colors hover:border-danger/40 hover:bg-danger/10"
+                >
+                  <Trash
+                    size={14}
+                    weight="light"
+                    className="shrink-0 text-danger"
+                    aria-hidden
+                  />
+                  <div>
+                    <span className="text-sm font-semibold text-danger">
+                      Excluir agendamento
+                    </span>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Remover este horário permanentemente
+                    </p>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {contactAppointment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-card shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-muted">
+                  WhatsApp
+                </p>
+                <h3 className="mt-0.5 text-sm font-bold text-foreground">
+                  {contactAppointment.client}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setContactAppointment(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-background hover:text-foreground"
+              >
+                <X size={16} weight="light" aria-hidden />
+              </button>
+            </div>
+
+            <div className="space-y-2 p-4">
+              <p className="mb-3 text-xs font-semibold text-muted">
+                Escolha a mensagem:
+              </p>
+
+              {[
+                {
+                  key: "concluido",
+                  label: "✅ Serviço concluído",
+                  description: "Avisar que o veículo está pronto para retirada",
+                },
+                {
+                  key: "confirmar",
+                  label: "📅 Confirmar agendamento",
+                  description: "Pedir confirmação do horário marcado",
+                },
+                {
+                  key: "lembrete",
+                  label: "🔔 Lembrete de amanhã",
+                  description: "Lembrar o cliente do agendamento do dia seguinte",
+                },
+                {
+                  key: "orcamento",
+                  label: "💬 Atualização de orçamento",
+                  description: "Informar sobre orçamento ou detalhes do serviço",
+                },
+              ].map((template) => (
+                <button
+                  key={template.key}
+                  type="button"
+                  onClick={() => openWhatsApp(contactAppointment, template.key)}
+                  className="flex w-full flex-col items-start rounded-lg border border-border bg-background px-4 py-3 text-left transition-colors hover:border-emerald-400/60 hover:bg-emerald-50/40"
+                >
+                  <span className="text-sm font-semibold text-foreground">
+                    {template.label}
+                  </span>
+                  <span className="mt-0.5 text-xs text-muted">
+                    {template.description}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={deleteConfirm?.type === "appointment"}
