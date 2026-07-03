@@ -28,6 +28,7 @@ import {
   Plus as LucidePlus,
   Trash2,
 } from "lucide-react";
+import { RevenueExpenseChart } from "@/components/finance/revenue-expense-chart";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dropdown } from "@/components/ui/dropdown";
@@ -885,12 +886,23 @@ function InlineFilterButton({
   );
 }
 
+function getMonthYearLabel(dateStr: string): string {
+  const d = parseLocalDate(dateStr);
+  return d.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+}
+
+function monthKeyFromDateStr(dateStr: string): string {
+  // "YYYY-MM-DD" → "YYYY-MM"
+  return dateStr.slice(0, 7);
+}
+
 function TransactionList({
   entries,
   emptyMessage,
   emptyDescription,
   accent = "default",
   filter,
+  groupByMonth = false,
   onEditTransaction,
   onDeleteTransaction,
 }: {
@@ -899,6 +911,7 @@ function TransactionList({
   emptyDescription?: string;
   accent?: "default" | "expense";
   filter?: React.ReactNode;
+  groupByMonth?: boolean;
   onEditTransaction?: (entry: FinanceEntry) => void;
   onDeleteTransaction?: (entry: FinanceEntry) => void;
 }) {
@@ -945,7 +958,37 @@ function TransactionList({
           <span>Valor</span>
           <span className="text-right">Ações</span>
         </div>
-        {entries.map((entry) => {
+        {(() => {
+          // Build flat list with optional month-separator rows
+          type Row =
+            | { kind: "header"; key: string; label: string }
+            | { kind: "entry"; entry: FinanceEntry };
+          const rows: Row[] = [];
+          let lastMonthKey = "";
+          for (const entry of entries) {
+            if (groupByMonth) {
+              const key = monthKeyFromDateStr(entry.date);
+              if (key !== lastMonthKey) {
+                rows.push({ kind: "header", key, label: getMonthYearLabel(entry.date) });
+                lastMonthKey = key;
+              }
+            }
+            rows.push({ kind: "entry", entry });
+          }
+          return rows.map((row) => {
+            if (row.kind === "header") {
+              return (
+                <div
+                  key={`header-${row.key}`}
+                  className={`grid ${gridColumnsClass} gap-4 border-b border-border bg-background/60 px-3 py-2`}
+                >
+                  <span className="col-span-full text-[11px] font-bold uppercase tracking-wide text-muted capitalize">
+                    {row.label}
+                  </span>
+                </div>
+              );
+            }
+            const { entry } = row;
           const isRevenue = entry.type === "receita";
           const displayTitle =
             entry.kind === "automatic" && entry.clientName
@@ -1030,7 +1073,8 @@ function TransactionList({
               </div>
             </article>
           );
-        })}
+          }); // end rows.map
+        })()} {/* end IIFE */}
         </div>
       </div>
     </div>
@@ -1128,63 +1172,7 @@ function TransactionFormCard({
   );
 }
 
-function MonthlyBarChart({
-  data,
-  maxValue,
-  compact = false,
-}: {
-  data: { label: string; revenue: number; expense: number }[];
-  maxValue: number;
-  compact?: boolean;
-}) {
-  return (
-    <>
-      <div
-        className={`flex items-end gap-3 rounded-lg bg-background px-4 py-5 ${
-          compact ? "h-64" : "h-72"
-        }`}
-      >
-        {data.map((item) => (
-          <div key={item.label} className="flex min-w-0 flex-1 flex-col items-center gap-2">
-            <div
-              className={`flex w-full items-end justify-center gap-1 ${
-                compact ? "h-44" : "h-52"
-              }`}
-            >
-              <div
-                className="w-4 rounded-t-full bg-success transition-all"
-                style={{
-                  height: `${Math.max(4, (item.revenue / maxValue) * 100)}%`,
-                }}
-                title={`Receita: ${formatCurrency(item.revenue)}`}
-              />
-              <div
-                className="w-4 rounded-t-full bg-danger transition-all"
-                style={{
-                  height: `${Math.max(4, (item.expense / maxValue) * 100)}%`,
-                }}
-                title={`Despesa: ${formatCurrency(item.expense)}`}
-              />
-            </div>
-            <span className="text-xs font-semibold capitalize text-muted">
-              {item.label}
-            </span>
-          </div>
-        ))}
-      </div>
-      <div className="mt-3 flex gap-4 text-xs font-semibold text-muted">
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-success" />
-          Receita
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-danger" />
-          Despesa
-        </span>
-      </div>
-    </>
-  );
-}
+// MonthlyBarChart is now RevenueExpenseChart from revenue-expense-chart.tsx
 
 export function FinancePage() {
   const supabase = useMemo(() => createClient(), []);
@@ -1211,7 +1199,7 @@ export function FinancePage() {
   const [savingExpense, setSavingExpense] = useState(false);
   const [revenueError, setRevenueError] = useState<string | null>(null);
   const [expenseError, setExpenseError] = useState<string | null>(null);
-  const [revenuePeriod, setRevenuePeriod] = useState<PeriodFilter>("month");
+  const [revenuePeriod, setRevenuePeriod] = useState<PeriodFilter>("all");
   const [expensePeriod, setExpensePeriod] = useState<PeriodFilter>("all");
   const [revenueCustomStart, setRevenueCustomStart] = useState(dateKey(startOfMonth(today)));
   const [revenueCustomEnd, setRevenueCustomEnd] = useState(dateKey(today));
@@ -1547,7 +1535,7 @@ export function FinancePage() {
   ];
   const filteredRevenueEntries = revenueEntries.filter(
     (entry) =>
-      isDateInRange(entry.date, revenueRange) &&
+      (revenuePeriod === "all" || isDateInRange(entry.date, revenueRange)) &&
       (revenueCategoryFilter === categoryFilterAll ||
         entry.category === revenueCategoryFilter)
   );
@@ -2238,7 +2226,7 @@ export function FinancePage() {
                       <p className="text-sm text-muted">Últimos 6 meses.</p>
                     </div>
                   </div>
-                  <MonthlyBarChart
+                  <RevenueExpenseChart
                     data={monthlyReport}
                     maxValue={maxMonthlyValue}
                     compact
@@ -2355,7 +2343,8 @@ export function FinancePage() {
               )}
               <TransactionList
                 entries={filteredRevenueEntries}
-                emptyMessage="Nenhuma receita encontrada para este período."
+                emptyMessage="Nenhuma receita encontrada."
+                groupByMonth={revenuePeriod !== "all"}
                 onEditTransaction={handleEditRevenue}
                 filter={
                   <InlineFilterButton
@@ -2372,7 +2361,7 @@ export function FinancePage() {
                     onCustomEndChange={setRevenueCustomEnd}
                     onCategoryChange={setRevenueCategoryFilter}
                     onClear={() => {
-                      setRevenuePeriod("month");
+                      setRevenuePeriod("all");
                       setRevenueCustomStart(dateKey(startOfMonth(today)));
                       setRevenueCustomEnd(dateKey(today));
                       setRevenueCategoryFilter(categoryFilterAll);
@@ -2842,7 +2831,7 @@ export function FinancePage() {
                     <p className="text-sm text-muted">Últimos 6 meses.</p>
                   </div>
                 </div>
-                <MonthlyBarChart data={monthlyReport} maxValue={maxMonthlyValue} />
+                <RevenueExpenseChart data={monthlyReport} maxValue={maxMonthlyValue} />
               </section>
 
               <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">

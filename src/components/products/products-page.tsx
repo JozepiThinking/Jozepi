@@ -279,8 +279,28 @@ function mergeSuppliers(current: Supplier[], incoming: Supplier[]) {
   return sortSuppliers(Array.from(byId.values()));
 }
 
-function getSupplierExtra(supplier: Supplier, key: string) {
-  const value = (supplier as unknown as Record<string, unknown>)[key];
+const SUPPLIER_SELECT_FIELDS =
+  "id, workshop_id, name, contact_name, phone, email, document, city_state, category, notes, created_at, updated_at";
+
+function mapSupplierRow(row: Record<string, unknown>): Supplier {
+  return {
+    id: String(row.id),
+    workshop_id: String(row.workshop_id),
+    name: String(row.name),
+    contactName: typeof row.contact_name === "string" ? row.contact_name : null,
+    phone: typeof row.phone === "string" ? row.phone : null,
+    email: typeof row.email === "string" ? row.email : null,
+    document: typeof row.document === "string" ? row.document : null,
+    cityState: typeof row.city_state === "string" ? row.city_state : null,
+    category: String(row.category ?? "Outros"),
+    notes: typeof row.notes === "string" ? row.notes : null,
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  };
+}
+
+function getSupplierExtra(supplier: Supplier, key: keyof Supplier) {
+  const value = supplier[key];
   return typeof value === "string" ? value : "";
 }
 
@@ -495,9 +515,7 @@ export function ProductsPage() {
         const [suppliersResult, catalog] = await Promise.all([
           supabase
             .from("suppliers")
-            .select(
-              "id, workshop_id, name, phone, category, notes, created_at, updated_at"
-            )
+            .select(SUPPLIER_SELECT_FIELDS)
             .eq("workshop_id", resolvedWorkshopId)
             .order("name", { ascending: true }),
           loadSupabaseCatalog(supabase, resolvedWorkshopId),
@@ -508,7 +526,13 @@ export function ProductsPage() {
         if (suppliersResult.error) {
           setSupplierError(suppliersResult.error.message);
         } else {
-          setSuppliers(sortSuppliers((suppliersResult.data as Supplier[] | null) ?? []));
+          setSuppliers(
+            sortSuppliers(
+              ((suppliersResult.data as Record<string, unknown>[] | null) ?? []).map(
+                mapSupplierRow
+              )
+            )
+          );
         }
 
         setProducts(catalog.products);
@@ -723,7 +747,11 @@ export function ProductsPage() {
     const payload = {
       workshop_id: workshopId,
       name: supplierForm.name.trim(),
+      contact_name: supplierForm.contactName.trim() || null,
       phone: normalizedPhone,
+      email: supplierForm.email.trim() || null,
+      document: supplierForm.document.trim() || null,
+      city_state: supplierForm.cityState.trim() || null,
       category: existingSupplier?.category ?? "Outros",
       notes: supplierForm.notes.trim() || null,
       updated_at: now,
@@ -735,12 +763,12 @@ export function ProductsPage() {
           .update(payload)
           .eq("id", editingSupplierId)
           .eq("workshop_id", workshopId)
-          .select("id, workshop_id, name, phone, category, notes, created_at, updated_at")
+          .select(SUPPLIER_SELECT_FIELDS)
           .single()
       : await supabase
           .from("suppliers")
           .insert(payload)
-          .select("id, workshop_id, name, phone, category, notes, created_at, updated_at")
+          .select(SUPPLIER_SELECT_FIELDS)
           .single();
 
     setSavingSupplier(false);
@@ -752,13 +780,7 @@ export function ProductsPage() {
       return;
     }
 
-    const supplier: Supplier = {
-      ...(result.data as Supplier),
-      contactName: supplierForm.contactName.trim() || null,
-      email: supplierForm.email.trim() || null,
-      document: supplierForm.document.trim() || null,
-      cityState: supplierForm.cityState.trim() || null,
-    };
+    const supplier = mapSupplierRow(result.data as Record<string, unknown>);
 
     setSuppliers((prev) =>
       editingSupplierId

@@ -456,7 +456,7 @@ function ServiceListActions({
     <div className="flex items-center gap-1.5">
       <button
         type="button"
-        onClick={() => onContact(appointment)}
+        onClick={(e) => { e.stopPropagation(); onContact(appointment); }}
         title="Contato via WhatsApp"
         aria-label="Contato via WhatsApp"
         className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-emerald-50 hover:text-emerald-600"
@@ -465,7 +465,7 @@ function ServiceListActions({
       </button>
       <button
         type="button"
-        onClick={() => onEdit(appointment)}
+        onClick={(e) => { e.stopPropagation(); onEdit(appointment); }}
         title="Opções"
         aria-label="Opções do agendamento"
         className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-success/10 hover:text-success"
@@ -474,7 +474,7 @@ function ServiceListActions({
       </button>
       <button
         type="button"
-        onClick={() => onDelete(appointment)}
+        onClick={(e) => { e.stopPropagation(); onDelete(appointment); }}
         title="Excluir"
         aria-label="Excluir agendamento"
         className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-danger/10 hover:text-danger"
@@ -695,6 +695,15 @@ export function AgendaCalendar() {
   );
   const [serviceListActionsAppointment, setServiceListActionsAppointment] =
     useState<Appointment | null>(null);
+  const [formFromServiceList, setFormFromServiceList] = useState(false);
+  const [creatingServiceInline, setCreatingServiceInline] = useState(false);
+  const [inlineServiceForm, setInlineServiceForm] = useState({
+    name: "",
+    price: "",
+    durationMinutes: "60",
+  });
+  const [savingInlineService, setSavingInlineService] = useState(false);
+  const [inlineServiceError, setInlineServiceError] = useState<string | null>(null);
 
   const syncFinanceRevenueForAppointment = useCallback(
     (appointment: Appointment) => syncFinanceRevenue(supabase, workshopId ?? "", appointment),
@@ -1332,6 +1341,58 @@ export function AgendaCalendar() {
     }));
   }
 
+  async function handleCreateInlineService() {
+    if (!workshopId) {
+      setInlineServiceError("Oficina não encontrada.");
+      return;
+    }
+
+    const name = inlineServiceForm.name.trim();
+    if (!name) {
+      setInlineServiceError("Informe o nome do serviço.");
+      return;
+    }
+
+    const normalizedPrice = inlineServiceForm.price.replace(/\./g, "").replace(",", ".");
+    const price = Number(normalizedPrice || "0");
+    if (!Number.isFinite(price) || price < 0) {
+      setInlineServiceError("Informe um preço válido.");
+      return;
+    }
+
+    const duration = Number(inlineServiceForm.durationMinutes);
+    if (!Number.isInteger(duration) || duration <= 0) {
+      setInlineServiceError("Informe uma duração válida.");
+      return;
+    }
+
+    setSavingInlineService(true);
+    setInlineServiceError(null);
+
+    try {
+      const { data: inserted, error: insertError } = await supabase
+        .from("services")
+        .insert({ name, price, duration_minutes: duration, workshop_id: workshopId, active: true })
+        .select("id, name, price, duration_minutes, active")
+        .single();
+
+      if (insertError) throw insertError;
+
+      const newService = inserted as AgendaService;
+      setServices((prev) => [...prev, newService]);
+      setForm((prev) => ({ ...prev, serviceIds: [...prev.serviceIds, newService.id] }));
+      setCreatingServiceInline(false);
+      setInlineServiceForm({ name: "", price: "", durationMinutes: "60" });
+      setInlineServiceError(null);
+    } catch (err) {
+      setInlineServiceError(
+        err instanceof Error ? err.message : "Erro ao criar o serviço."
+      );
+    } finally {
+      setSavingInlineService(false);
+    }
+  }
+
   function hasAppointmentConflict(
     startDate: string,
     endDate: string,
@@ -1390,6 +1451,7 @@ export function AgendaCalendar() {
       setEditingAppointmentId(null);
       setCreating(false);
       setFormClosing(false);
+      setFormFromServiceList(false);
     }, 220);
   }
 
@@ -1616,7 +1678,9 @@ export function AgendaCalendar() {
           setError(financeError);
         }
       }
-      syncSelectedDate(form.date);
+      if (!formFromServiceList) {
+        syncSelectedDate(form.date);
+      }
       closeForm();
     } catch (err) {
       if (isMissingAgendaMigrationError(err)) {
@@ -2223,7 +2287,7 @@ export function AgendaCalendar() {
               </button>
             )}
 
-            {creating && (
+            {!formFromServiceList && creating && (
               <form
                 onSubmit={handleSaveAppointment}
                 className={`relative overflow-visible space-y-4 rounded-lg border border-border bg-background shadow-card p-4 ${
@@ -2431,22 +2495,39 @@ export function AgendaCalendar() {
                     <label className="block text-sm font-semibold text-foreground">
                       Serviços
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAddingService(true);
-                        setOpenSelectId("service");
-                      }}
-                      disabled={
-                        loadingServices ||
-                        services.length === 0 ||
-                        availableServices.length === 0
-                      }
-                      className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all duration-200 hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-1.5 sm:text-xs"
-                    >
-                      <Plus size={14} weight={AGENDA_ICON_WEIGHT} aria-hidden />
-                      Adicionar serviço
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCreatingServiceInline(true);
+                          setAddingService(false);
+                          setInlineServiceError(null);
+                          setInlineServiceForm({ name: "", price: "", durationMinutes: "60" });
+                        }}
+                        disabled={loadingServices}
+                        className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-background px-3 py-2 text-sm font-semibold text-muted transition-all duration-200 hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-1.5 sm:text-xs border border-border"
+                      >
+                        <Plus size={14} weight={AGENDA_ICON_WEIGHT} aria-hidden />
+                        Criar novo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAddingService(true);
+                          setOpenSelectId("service");
+                          setCreatingServiceInline(false);
+                        }}
+                        disabled={
+                          loadingServices ||
+                          services.length === 0 ||
+                          availableServices.length === 0
+                        }
+                        className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all duration-200 hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-1.5 sm:text-xs"
+                      >
+                        <Plus size={14} weight={AGENDA_ICON_WEIGHT} aria-hidden />
+                        Adicionar serviço
+                      </button>
+                    </div>
                   </div>
 
                   <div className="min-h-[2.75rem]">
@@ -2496,7 +2577,111 @@ export function AgendaCalendar() {
                     />
                   )}
 
-                  {!loadingServices && services.length === 0 && (
+                  {creatingServiceInline && (
+                    <div className="rounded-lg border border-border bg-card p-4 shadow-card">
+                      <div className="mb-3 flex items-center justify-between">
+                        <p className="text-sm font-semibold text-foreground">
+                          Novo serviço
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCreatingServiceInline(false);
+                            setInlineServiceError(null);
+                          }}
+                          className="rounded-lg p-1.5 text-muted transition-colors hover:bg-background hover:text-foreground"
+                          aria-label="Cancelar"
+                        >
+                          <X size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="sm:col-span-1">
+                          <Input
+                            label="Nome do serviço"
+                            value={inlineServiceForm.name}
+                            autoComplete="off"
+                            onChange={(e) =>
+                              setInlineServiceForm((prev) => ({
+                                ...prev,
+                                name: e.target.value,
+                              }))
+                            }
+                            placeholder="Ex: Cristalização"
+                          />
+                        </div>
+                        <Input
+                          label="Preço (R$)"
+                          value={inlineServiceForm.price}
+                          autoComplete="off"
+                          onChange={(e) =>
+                            setInlineServiceForm((prev) => ({
+                              ...prev,
+                              price: e.target.value,
+                            }))
+                          }
+                          placeholder="150,00"
+                        />
+                        <div>
+                          <label className="mb-1.5 block text-sm font-semibold text-foreground">
+                            Duração
+                          </label>
+                          <select
+                            value={inlineServiceForm.durationMinutes}
+                            onChange={(e) =>
+                              setInlineServiceForm((prev) => ({
+                                ...prev,
+                                durationMinutes: e.target.value,
+                              }))
+                            }
+                            className="h-11 w-full rounded-md border border-border bg-input px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-premium/40"
+                          >
+                            {Array.from({ length: 16 }, (_, i) => {
+                              const mins = 30 + i * 30;
+                              const h = Math.floor(mins / 60);
+                              const m = mins % 60;
+                              const label =
+                                h === 0 ? "30 min" : m === 0 ? `${h}h` : `${h}h30`;
+                              return (
+                                <option key={mins} value={String(mins)}>
+                                  {label}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                      </div>
+                      {inlineServiceError && (
+                        <p className="mt-2 text-xs font-medium text-danger">
+                          {inlineServiceError}
+                        </p>
+                      )}
+                      <div className="mt-3 flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => {
+                            setCreatingServiceInline(false);
+                            setInlineServiceError(null);
+                          }}
+                          className="text-xs"
+                        >
+                          Cancelar
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="success"
+                          loading={savingInlineService}
+                          onClick={() => void handleCreateInlineService()}
+                          className="text-xs"
+                        >
+                          Criar e adicionar
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!loadingServices && services.length === 0 && !creatingServiceInline && (
                     <p className="text-xs text-muted">
                       Cadastre serviços na aba Serviços para usar na agenda.
                     </p>
@@ -2908,13 +3093,26 @@ export function AgendaCalendar() {
       ) : (
         <div key="agenda-service-list-panel" className="agenda-tab-panel-enter min-w-0">
             <div className="space-y-5">
-              <div>
-                <h2 className="text-lg font-semibold text-foreground">
-                  Lista de serviços
-                </h2>
-                <p className="mt-1 text-sm text-muted">
-                  Todos os agendamentos: pendentes, confirmados, concluídos e cancelados.
-                </p>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">
+                    Lista de serviços
+                  </h2>
+                  <p className="mt-1 text-sm text-muted">
+                    Todos os agendamentos: pendentes, confirmados, concluídos e cancelados.
+                  </p>
+                </div>
+                <Button
+                  variant="success"
+                  className="shrink-0"
+                  onClick={() => {
+                    setFormFromServiceList(true);
+                    openCreateForm();
+                  }}
+                >
+                  <Plus size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
+                  Novo agendamento
+                </Button>
               </div>
 
               {loadingAppointments ? (
@@ -2943,7 +3141,11 @@ export function AgendaCalendar() {
                       return (
                         <article
                           key={appointment.id}
-                          className="rounded-md bg-card/50 px-3 py-4 transition-colors hover:bg-background/70"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => openServiceListActionsModal(appointment)}
+                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") openServiceListActionsModal(appointment); }}
+                          className="cursor-pointer rounded-md bg-card/50 px-3 py-4 transition-colors hover:bg-background/70"
                         >
                           <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-foreground">
@@ -3025,7 +3227,11 @@ export function AgendaCalendar() {
                           return (
                             <article
                               key={appointment.id}
-                              className="grid grid-cols-[minmax(220px,1fr)_110px_130px_130px_36px_100px_96px] items-center gap-4 px-3 py-3 transition-colors hover:bg-background/70"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => openServiceListActionsModal(appointment)}
+                              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") openServiceListActionsModal(appointment); }}
+                              className="grid cursor-pointer grid-cols-[minmax(220px,1fr)_110px_130px_130px_36px_100px_96px] items-center gap-4 px-3 py-3 transition-colors hover:bg-background/70"
                             >
                               <div className="min-w-0 self-center">
                                 <p className="truncate text-sm font-semibold text-foreground">
@@ -3089,6 +3295,288 @@ export function AgendaCalendar() {
                 </div>
               )}
             </div>
+        </div>
+      )}
+
+      {formFromServiceList && creating && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-foreground/40 p-4"
+          onClick={closeForm}
+        >
+          <div
+            className="w-full max-w-2xl rounded-xl border border-border bg-card shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <form onSubmit={handleSaveAppointment}>
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                <h3 className="text-sm font-semibold text-foreground">Novo horário</h3>
+                <button
+                  type="button"
+                  onClick={closeForm}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-background hover:text-foreground"
+                  aria-label="Fechar formulário"
+                >
+                  <X size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
+                </button>
+              </div>
+
+              {/* Two-column body */}
+              <div className="grid grid-cols-1 gap-0 sm:grid-cols-2">
+                {/* Left column — fields */}
+                <div className="space-y-4 border-b border-border p-5 sm:border-b-0 sm:border-r">
+                  {/* Date */}
+                  <Input
+                    label="Data"
+                    type="date"
+                    value={form.date}
+                    onChange={(event) => {
+                      const nextDate = event.target.value;
+                      setForm((prev) => ({
+                        ...prev,
+                        date: nextDate,
+                        endDate: prev.isMultiDay && prev.endDate >= nextDate ? prev.endDate : nextDate,
+                      }));
+                      if (nextDate) syncSelectedDate(nextDate);
+                    }}
+                  />
+
+                  {/* Multi-day toggle */}
+                  <div className="rounded-lg border border-border bg-background px-3 py-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setForm((prev) => ({ ...prev, isMultiDay: !prev.isMultiDay, endDate: !prev.isMultiDay ? prev.endDate || prev.date : prev.date }))}
+                      className="flex w-full items-center justify-between gap-3 text-left"
+                    >
+                      <span className="text-sm font-semibold text-foreground">Múltiplos dias</span>
+                      <span className={`flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 transition-colors ${form.isMultiDay ? "bg-success" : "bg-muted/20"}`}>
+                        <span className={`h-5 w-5 rounded-full bg-white shadow-card transition-transform ${form.isMultiDay ? "translate-x-4" : "translate-x-0"}`} />
+                      </span>
+                    </button>
+                    {form.isMultiDay && (
+                      <div className="mt-2.5">
+                        <Input label="Data de término" type="date" min={form.date} value={form.endDate} onChange={(e) => setForm((prev) => ({ ...prev, endDate: e.target.value }))} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Cliente */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <label htmlFor="modal-client" className="text-sm font-semibold text-foreground">Cliente</label>
+                      <button type="button" onClick={() => { setOpenSelectId(null); setClientModalOpen(true); }} className="text-xs font-semibold text-success transition-colors hover:text-success/80">
+                        Novo cliente
+                      </button>
+                    </div>
+                    <AgendaDropdown
+                      id="modal-client"
+                      value={form.clientId}
+                      placeholder={loadingClients ? "Carregando..." : "Selecione um cliente"}
+                      emptyMessage="Nenhum cliente cadastrado."
+                      options={clientOptions}
+                      disabled={loadingClients}
+                      open={openSelectId === "client"}
+                      searchable
+                      searchPlaceholder="Digite nome ou telefone"
+                      noResultsMessage="Nenhum cliente encontrado."
+                      onToggle={() => setOpenSelectId((c) => c === "client" ? null : "client")}
+                      onSelect={(value) => { setForm((prev) => ({ ...prev, clientId: value, vehicleId: "" })); setOpenSelectId(null); }}
+                      clearLabel="Limpar cliente"
+                      onClear={() => { setForm((prev) => ({ ...prev, clientId: "", vehicleId: "" })); setOpenSelectId(null); }}
+                    />
+                  </div>
+
+                  {/* Veículo */}
+                  <div className="space-y-2">
+                    <label htmlFor="modal-vehicle" className="text-sm font-semibold text-foreground">Veículo</label>
+                    <AgendaDropdown
+                      id="modal-vehicle"
+                      value={form.vehicleId}
+                      placeholder={!form.clientId ? "Selecione um cliente primeiro" : selectedClientVehicles.length === 0 ? "Sem veículo cadastrado" : "Selecione um veículo"}
+                      emptyMessage={!form.clientId ? "Selecione um cliente primeiro." : "Sem veículo cadastrado."}
+                      options={vehicleOptions}
+                      disabled={!form.clientId || selectedClientVehicles.length === 0}
+                      open={openSelectId === "vehicle"}
+                      onToggle={() => setOpenSelectId((c) => c === "vehicle" ? null : "vehicle")}
+                      onSelect={(value) => { setForm((prev) => ({ ...prev, vehicleId: value })); setOpenSelectId(null); }}
+                      clearLabel="Limpar veículo"
+                      onClear={() => { setForm((prev) => ({ ...prev, vehicleId: "" })); setOpenSelectId(null); }}
+                    />
+                  </div>
+
+                  {/* Serviços */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-sm font-semibold text-foreground">Serviços</label>
+                      <div className="flex items-center gap-1.5">
+                        <button type="button" onClick={() => { setCreatingServiceInline(true); setAddingService(false); setInlineServiceError(null); setInlineServiceForm({ name: "", price: "", durationMinutes: "60" }); }} disabled={loadingServices} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted transition-all hover:bg-card hover:text-foreground disabled:opacity-50">
+                          <Plus size={12} weight={AGENDA_ICON_WEIGHT} aria-hidden /> Criar
+                        </button>
+                        <button type="button" onClick={() => { setAddingService(true); setOpenSelectId("service"); setCreatingServiceInline(false); }} disabled={loadingServices || services.length === 0 || availableServices.length === 0} className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success transition-all hover:bg-success hover:text-white disabled:opacity-50">
+                          <Plus size={12} weight={AGENDA_ICON_WEIGHT} aria-hidden /> Adicionar
+                        </button>
+                      </div>
+                    </div>
+                    {selectedServices.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedServices.map((service) => (
+                          <span key={service.id} className="inline-flex items-center gap-1.5 rounded-full border border-success/20 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
+                            {service.name}
+                            <button type="button" onClick={() => removeServiceFromForm(service.id)} className="rounded-full p-0.5 transition-colors hover:bg-success/20" aria-label={`Remover ${service.name}`}>
+                              <X size={10} weight={AGENDA_ICON_WEIGHT} aria-hidden />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {addingService && (
+                      <AgendaDropdown id="modal-service" value="" placeholder={availableServices.length === 0 ? "Todos adicionados" : "Selecione um serviço"} emptyMessage="Todos adicionados." options={availableServiceOptions} disabled={loadingServices || availableServices.length === 0} open={openSelectId === "service"} onToggle={() => setOpenSelectId((c) => c === "service" ? null : "service")} onSelect={addServiceToForm} />
+                    )}
+                    {creatingServiceInline && (
+                      <div className="rounded-lg border border-border bg-background p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-xs font-semibold text-foreground">Novo serviço</p>
+                          <button type="button" onClick={() => { setCreatingServiceInline(false); setInlineServiceError(null); }} className="rounded p-1 text-muted hover:text-foreground" aria-label="Cancelar">
+                            <X size={14} weight={AGENDA_ICON_WEIGHT} aria-hidden />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <Input label="Nome" value={inlineServiceForm.name} autoComplete="off" onChange={(e) => setInlineServiceForm((prev) => ({ ...prev, name: e.target.value }))} placeholder="Cristalização" />
+                          <Input label="Preço (R$)" value={inlineServiceForm.price} autoComplete="off" onChange={(e) => setInlineServiceForm((prev) => ({ ...prev, price: e.target.value }))} placeholder="150,00" />
+                          <div>
+                            <label className="mb-1.5 block text-sm font-semibold text-foreground">Duração</label>
+                            <select value={inlineServiceForm.durationMinutes} onChange={(e) => setInlineServiceForm((prev) => ({ ...prev, durationMinutes: e.target.value }))} className="h-11 w-full rounded-md border border-border bg-input px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-premium/40">
+                              {Array.from({ length: 16 }, (_, i) => { const m = 30 + i * 30; const h = Math.floor(m / 60); const r = m % 60; const l = h === 0 ? "30min" : r === 0 ? `${h}h` : `${h}h30`; return <option key={m} value={String(m)}>{l}</option>; })}
+                            </select>
+                          </div>
+                        </div>
+                        {inlineServiceError && <p className="mt-1.5 text-xs text-danger">{inlineServiceError}</p>}
+                        <div className="mt-2 flex justify-end gap-2">
+                          <Button type="button" variant="secondary" onClick={() => { setCreatingServiceInline(false); setInlineServiceError(null); }} className="text-xs">Cancelar</Button>
+                          <Button type="button" variant="success" loading={savingInlineService} onClick={() => void handleCreateInlineService()} className="text-xs">Criar e adicionar</Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Total */}
+                  <div className="rounded-lg border border-border bg-background px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-muted">Total</span>
+                      <div className="text-right">
+                        {editingTotalAmount ? (
+                          <div className="flex items-center gap-1">
+                            <span className="text-sm font-bold text-foreground">R$</span>
+                            <input aria-label="Valor" type="text" inputMode="decimal" autoFocus value={form.totalAmount} onChange={(e) => setForm((prev) => ({ ...prev, totalAmount: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); saveTotalAmount(); } }} className="w-24 bg-transparent text-right text-sm font-bold text-foreground outline-none focus:underline focus:decoration-success focus:underline-offset-4" />
+                          </div>
+                        ) : (
+                          <span className="text-sm font-bold text-foreground">{formatCurrency(displayTotalAmount)}</span>
+                        )}
+                        <div className="mt-0.5 flex justify-end gap-2">
+                          {editingTotalAmount ? (
+                            <>
+                              <button type="button" onClick={saveTotalAmount} className="text-xs font-semibold text-success hover:text-success/80">Salvar</button>
+                              <button type="button" onClick={resetTotalAmountToServicesSum} className="text-xs font-semibold text-muted hover:text-foreground">Usar soma</button>
+                            </>
+                          ) : (
+                            <button type="button" onClick={startEditingTotalAmount} className="text-xs font-semibold text-muted hover:text-success">Editar</button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Observação */}
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-foreground">Observação</span>
+                      {!form.notes.trim() && !notesPanelOpen && (
+                        <button type="button" onClick={openNotesPanel} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted transition-all hover:border-amber-400/60 hover:bg-amber-50/60 hover:text-amber-600">
+                          <Note size={12} weight="light" aria-hidden /> Adicionar
+                        </button>
+                      )}
+                    </div>
+                    {form.notes.trim() && !notesPanelOpen ? (
+                      <div className="mt-1.5 flex items-start justify-between gap-2 rounded-lg border border-amber-300/60 bg-amber-50/40 px-3 py-2">
+                        <div className="flex min-w-0 items-start gap-1.5">
+                          <Note size={12} weight="light" className="mt-0.5 shrink-0 text-amber-600" aria-hidden />
+                          <p className="whitespace-pre-wrap break-words text-xs text-foreground">{form.notes}</p>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          <button type="button" onClick={openNotesPanel} className="text-[11px] font-semibold text-foreground hover:text-success">Editar</button>
+                          <button type="button" onClick={removeNotesFromForm} className="text-[11px] font-semibold text-danger hover:text-danger/80">Excluir</button>
+                        </div>
+                      </div>
+                    ) : notesPanelOpen ? (
+                      <div className="mt-1.5 space-y-2 rounded-lg border border-amber-300/60 bg-amber-50/40 p-3">
+                        <div className="flex items-center gap-1.5">
+                          <Note size={12} weight="light" className="text-amber-600" aria-hidden />
+                          <span className="text-xs font-semibold text-amber-700">Observação</span>
+                        </div>
+                        <textarea id="modal-appointment-notes" rows={2} value={notesDraft} onChange={(e) => setNotesDraft(e.target.value)} placeholder="Escreva uma observação..." className="w-full resize-none border-0 border-b border-border bg-transparent px-0 py-1 text-sm text-foreground outline-none placeholder:text-muted/60 focus:border-primary/40" />
+                        <div className="flex justify-end gap-3">
+                          <button type="button" onClick={cancelNotesDraft} className="text-xs font-semibold text-muted hover:text-foreground">Cancelar</button>
+                          <button type="button" onClick={saveNotesDraft} className="text-xs font-semibold text-success hover:text-success/80">Salvar</button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* Right column — horário + save */}
+                <div className="flex flex-col gap-3 p-5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-semibold text-foreground">Horário</label>
+                    {(form.startTime || form.endTime) && (
+                      <span className="text-xs font-medium text-success">{form.startTime || "--:--"} – {form.endTime || "--:--"}</span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5 rounded-lg border border-border bg-background p-2">
+                    {timeSlots.map((time) => {
+                      const isSelectedEndpoint = form.startTime === time || form.endTime === time;
+                      const isInSelectedRange = form.startTime && form.endTime && isTimeBetween(time, form.startTime, form.endTime);
+                      const occupiedCount = slotOccupancyForFormDate.get(time) ?? 0;
+                      const isFull = occupiedCount >= agendaCapacity;
+                      const isConflictingEndTime = !!form.startTime && !form.endTime && timeToMinutes(time) > timeToMinutes(form.startTime) && hasAppointmentConflict(form.date, form.isMultiDay ? form.endDate : form.date, form.startTime, time);
+                      const isUnavailable = isFull || isConflictingEndTime;
+                      return (
+                        <button
+                          type="button"
+                          key={time}
+                          disabled={isUnavailable}
+                          onClick={() => selectTimeSlot(time)}
+                          className={`flex flex-col items-center justify-center rounded-full py-1.5 text-xs font-semibold leading-tight transition-all duration-150 ${
+                            isSelectedEndpoint ? "bg-success text-white shadow-card"
+                              : isInSelectedRange ? "bg-success/20 text-success"
+                              : isUnavailable ? "cursor-not-allowed bg-muted/10 text-muted/40 line-through"
+                              : "bg-card text-foreground hover:bg-success/10 hover:text-success"
+                          }`}
+                        >
+                          {time}
+                          {(occupiedCount > 0 || isFull) && (
+                            <span className="text-[9px] font-bold opacity-70">{isFull ? "lotado" : `${occupiedCount}/${agendaCapacity}`}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted">Clique no início e depois no fim. Expediente das {BUSINESS_START_TIME} às {BUSINESS_END_TIME}.</p>
+                  <div className="mt-auto space-y-2 pt-2">
+                    {error && <p className="text-xs text-danger">{error}</p>}
+                    <Button
+                      type="submit"
+                      variant="success"
+                      disabled={savingAppointment}
+                      className="w-full bg-gradient-to-r from-success to-emerald-500 text-white shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:from-success hover:to-emerald-600 hover:shadow-card-hover"
+                    >
+                      <Check size={16} weight={AGENDA_ICON_WEIGHT} aria-hidden />
+                      {savingAppointment ? "Salvando..." : "Salvar na agenda"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -3365,33 +3853,90 @@ export function AgendaCalendar() {
       `}</style>
 
       {serviceListActionsAppointment && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4">
-          <div className="w-full max-w-sm rounded-xl border border-border bg-card shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4"
+          onClick={() => setServiceListActionsAppointment(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-border bg-card shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-start justify-between border-b border-border px-5 py-4">
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1 pr-3">
                 <p className="text-xs font-semibold uppercase tracking-widest text-muted">
                   Agendamento
                 </p>
-                <h3 className="mt-0.5 truncate text-sm font-bold text-foreground">
+                <h3 className="mt-1 text-base font-bold text-foreground">
                   {serviceListActionsAppointment.client}
                 </h3>
-                <p className="mt-1 truncate text-xs text-muted">
-                  {serviceListActionsAppointment.service}
-                </p>
-                <p className="mt-0.5 truncate text-xs text-muted">
-                  {serviceListActionsAppointment.vehicle}
-                </p>
-                <p className="mt-2 text-xs font-medium text-foreground">
-                  {formatShortDate(serviceListActionsAppointment.date)}
-                  {serviceListActionsAppointment.endTime
-                    ? ` • ${serviceListActionsAppointment.startTime} - ${serviceListActionsAppointment.endTime}`
-                    : ` • ${serviceListActionsAppointment.startTime}`}
-                </p>
+
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Serviço</p>
+                    <p className="mt-0.5 text-sm font-medium text-foreground">
+                      {serviceListActionsAppointment.service}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Veículo</p>
+                    <p className="mt-0.5 text-sm font-medium text-foreground">
+                      {serviceListActionsAppointment.vehicle}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Data</p>
+                    <p className="mt-0.5 text-sm font-medium text-foreground">
+                      {formatShortDate(serviceListActionsAppointment.date)}
+                      {(() => {
+                        const endDate = getAppointmentEndDate(serviceListActionsAppointment);
+                        return endDate !== serviceListActionsAppointment.date
+                          ? ` – ${formatShortDate(endDate)}`
+                          : "";
+                      })()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Horário</p>
+                    <p className="mt-0.5 text-sm font-medium text-foreground">
+                      {serviceListActionsAppointment.endTime
+                        ? `${serviceListActionsAppointment.startTime} – ${serviceListActionsAppointment.endTime}`
+                        : serviceListActionsAppointment.startTime}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Valor</p>
+                    <p className={`mt-0.5 text-sm font-bold ${
+                      serviceListActionsAppointment.status === "Concluído"
+                        ? "text-success"
+                        : serviceListActionsAppointment.status === "Cancelado"
+                          ? "text-muted line-through"
+                          : "text-foreground"
+                    }`}>
+                      {formatCurrency(serviceListActionsAppointment.totalAmount)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Status</p>
+                    <div className="mt-0.5">
+                      {(() => {
+                        const style = getStatusStyle(serviceListActionsAppointment.status);
+                        return (
+                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${style.statusBadge}`}>
+                            <AppointmentStatusLabel status={serviceListActionsAppointment.status} iconSize={11} />
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+
                 {serviceListActionsAppointment.notes.trim() && (
-                  <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-muted">
-                    <span className="font-semibold text-foreground">Obs:</span>{" "}
-                    {serviceListActionsAppointment.notes}
-                  </p>
+                  <div className="mt-3 rounded-lg border border-border bg-background px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-muted">Observações</p>
+                    <p className="mt-1 text-xs leading-relaxed text-foreground">
+                      {serviceListActionsAppointment.notes}
+                    </p>
+                  </div>
                 )}
               </div>
               <button
@@ -3405,7 +3950,7 @@ export function AgendaCalendar() {
 
             <div className="space-y-4 p-4">
               <div>
-                <p className="mb-2 text-xs font-semibold text-muted">Status</p>
+                <p className="mb-2 text-xs font-semibold text-muted">Alterar status</p>
                 <div className="grid grid-cols-2 gap-2">
                   {appointmentStatuses.map((status) => {
                     const optionStyle = getStatusStyle(status);

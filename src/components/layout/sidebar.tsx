@@ -2,7 +2,6 @@
 
 import type { Icon } from "@phosphor-icons/react";
 import {
-  Buildings,
   CalendarBlank,
   CurrencyDollar,
   Package,
@@ -45,7 +44,6 @@ const navigation: {
   { name: "Serviços", href: "/servicos", icon: Wrench },
   { name: "Produtos", href: "/produtos", icon: Package },
   { name: "Financeiro", href: "/financeiro", icon: CurrencyDollar },
-  { name: "Perfil da Empresa", href: "/empresa", icon: Buildings },
 ];
 
 interface SidebarProps {
