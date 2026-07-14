@@ -901,6 +901,10 @@ export function ServicesPage() {
     router.push(`/agenda${query}`);
   }
 
+  function handleBookService(serviceId: string) {
+    router.push(`/agenda?packageServices=${serviceId}`);
+  }
+
   return (
     <>
       <div className="mb-5 flex justify-stretch sm:mb-6 sm:justify-end">
@@ -1475,159 +1479,133 @@ export function ServicesPage() {
           </p>
         </div>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-8">
           {orderedCategories.map((category) => (
-            <section
-              key={category}
-              className="overflow-hidden rounded-lg border border-border bg-card shadow-card shadow-card"
-            >
-              <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-3 sm:px-5">
-                <h2 className="text-sm font-bold uppercase tracking-widest text-muted">
+            <section key={category}>
+              {/* Category separator */}
+              <div className="mb-4 flex items-center gap-3">
+                <h2 className="shrink-0 text-xs font-bold uppercase tracking-[0.2em] text-muted">
                   {category}
                 </h2>
-                <span className="rounded-full bg-success/10 px-3 py-1 text-xs font-semibold text-success">
-                  {servicesByCategory[category].length} serviço
-                  {servicesByCategory[category].length !== 1 ? "s" : ""}
+                <div className="h-px flex-1 bg-border" />
+                <span className="shrink-0 rounded-full border border-border bg-background px-2.5 py-0.5 text-[11px] font-semibold text-muted">
+                  {servicesByCategory[category].length}{" "}
+                  {servicesByCategory[category].length !== 1 ? "serviços" : "serviço"}
                 </span>
               </div>
 
-              <div className="w-full overflow-x-auto">
-                <div className="min-w-[760px]">
-                  <div className="hidden grid-cols-[minmax(220px,1fr)_88px_96px_96px_96px_120px] gap-3 border-b border-border px-5 py-3 text-xs font-bold uppercase tracking-widest text-muted md:grid">
-                    <span>Serviço</span>
-                    <span>Duração</span>
-                    <span>Preço</span>
-                    <span>Custo</span>
-                    <span>Lucro</span>
-                    <span className="text-right">Ações</span>
-                  </div>
+              {/* Service cards */}
+              <div className="space-y-3">
+                {servicesByCategory[category].map((service) => {
+                  const financials = getServiceFinancials(service.id, service.price);
+                  const profitPositive = financials.profit >= 0;
 
-                  <div className="space-y-3 p-3 md:space-y-0 md:divide-y md:divide-border md:p-0">
-                    {servicesByCategory[category].map((service) => {
-                      const financials = getServiceFinancials(
-                        service.id,
-                        service.price
-                      );
-                      const profitPositive = financials.profit >= 0;
+                  return (
+                    <article
+                      key={service.id}
+                      className={`overflow-hidden rounded-xl border border-border bg-card shadow-card transition-opacity ${
+                        service.active ? "" : "opacity-60"
+                      }`}
+                    >
+                      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:p-5">
+                        {/* Left: name, badges, duration, description */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-base font-semibold text-foreground">
+                              {service.name}
+                            </h3>
+                            <span className="rounded-full bg-accent/10 px-2.5 py-0.5 text-[11px] font-semibold text-accent">
+                              {getServiceCategory(service)}
+                            </span>
+                            <span
+                              className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                                service.active
+                                  ? "bg-success/10 text-success"
+                                  : "bg-muted/10 text-muted"
+                              }`}
+                            >
+                              {service.active ? "Ativo" : "Inativo"}
+                            </span>
+                          </div>
+                          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
+                            <Clock size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                            {formatDuration(service.duration_minutes)}
+                          </div>
+                          {service.description && (
+                            <p className="mt-2 line-clamp-2 text-sm text-muted">
+                              {service.description}
+                            </p>
+                          )}
+                        </div>
 
-                      return (
-                        <article
-                          key={service.id}
-                          className={`grid grid-cols-1 gap-4 rounded-lg border border-border bg-background/50 px-4 py-4 shadow-card transition-colors hover:bg-background/70 md:rounded-none md:border-0 md:bg-transparent md:px-5 md:py-4 md:shadow-none md:grid-cols-[minmax(220px,1fr)_88px_96px_96px_96px_120px] md:items-start md:gap-3 ${
-                            service.active ? "" : "opacity-70"
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="text-base font-semibold text-foreground md:text-sm">
-                                {service.name}
-                              </h3>
-                              <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent md:hidden">
-                                {getServiceCategory(service)}
-                              </span>
-                              <span
-                                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                                  service.active
-                                    ? "bg-success/10 text-success"
-                                    : "bg-muted/10 text-muted"
-                                }`}
-                              >
-                                {service.active ? "Ativo" : "Inativo"}
-                              </span>
-                            </div>
-                            {service.description && (
-                              <p className="mt-1 text-sm text-muted md:line-clamp-2">
-                                {service.description}
+                        {/* Right: price + financials + actions */}
+                        <div className="flex shrink-0 flex-row items-center justify-between gap-4 sm:flex-col sm:items-end">
+                          <div className="text-right">
+                            <p className="text-xl font-bold leading-none text-foreground">
+                              {formatCurrency(Number(service.price))}
+                            </p>
+                            {financials.hasCost && (
+                              <p className="mt-1 text-xs text-muted">
+                                Custo: {formatCurrency(financials.cost)}
                               </p>
                             )}
+                            <p
+                              className={`text-xs font-semibold ${
+                                profitPositive ? "text-success" : "text-danger"
+                              }`}
+                            >
+                              Lucro: {formatCurrency(financials.profit)}
+                            </p>
                           </div>
 
-                      <div className="flex items-center justify-between gap-3 rounded-lg bg-card px-3 py-2 text-sm font-semibold md:block md:bg-transparent md:p-0">
-                        <span className="text-xs font-bold uppercase tracking-widest text-muted md:hidden">
-                          Duração
-                        </span>
-                        <span className="inline-flex items-center gap-1.5 font-medium text-muted">
-                          <Clock size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
-                          {formatDuration(service.duration_minutes)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3 rounded-lg bg-card px-3 py-2 text-sm font-semibold text-foreground md:block md:bg-transparent md:p-0">
-                        <span className="text-xs font-bold uppercase tracking-widest text-muted md:hidden">
-                          Preço
-                        </span>
-                        <span>{formatCurrency(Number(service.price))}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3 rounded-lg bg-card px-3 py-2 text-sm font-semibold text-foreground md:block md:bg-transparent md:p-0">
-                        <span className="text-xs font-bold uppercase tracking-widest text-muted md:hidden">
-                          Custo
-                        </span>
-                        <span>
-                          {financials.hasCost
-                            ? formatCurrency(financials.cost)
-                            : "—"}
-                        </span>
-                      </div>
-                      <div
-                        className={`flex items-center justify-between gap-3 rounded-lg bg-card px-3 py-2 text-sm font-bold md:block md:bg-transparent md:p-0 ${
-                          profitPositive ? "text-success" : "text-danger"
-                        }`}
-                      >
-                        <span className="text-xs font-bold uppercase tracking-widest text-muted md:hidden">
-                          Lucro
-                        </span>
-                        <span>{formatCurrency(financials.profit)}</span>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2 md:flex md:items-center md:justify-end">
-                        <button
-                          type="button"
-                          onClick={() => openEditForm(service)}
-                          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white md:min-h-0 md:min-w-0"
-                          title="Editar serviço"
-                          aria-label="Editar serviço"
-                        >
-                          <PencilSimple
-                            weight={SERVICE_ICON_WEIGHT}
-                            className="h-5 w-5 md:h-4 md:w-4"
-                            aria-hidden
-                          />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleActive(service)}
-                          className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 transition-colors md:min-h-0 md:min-w-0 ${
-                            service.active
-                              ? "bg-primary/10 text-primary hover:bg-primary hover:text-white"
-                              : "bg-card text-muted hover:bg-background hover:text-foreground md:bg-background"
-                          }`}
-                          title={service.active ? "Desativar" : "Ativar"}
-                          aria-label={service.active ? "Desativar serviço" : "Ativar serviço"}
-                        >
-                          <Power
-                            weight={SERVICE_ICON_WEIGHT}
-                            className="h-5 w-5 md:h-4 md:w-4"
-                            aria-hidden
-                          />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => requestDeleteService(service)}
-                          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white md:min-h-0 md:min-w-0"
-                          title="Excluir serviço"
-                          aria-label="Excluir serviço"
-                        >
-                          <Trash
-                            weight={SERVICE_ICON_WEIGHT}
-                            className="h-5 w-5 md:h-4 md:w-4"
-                            aria-hidden
-                          />
-                        </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleBookService(service.id)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-success/30 bg-success/10 px-3 py-1.5 text-xs font-semibold text-success transition-colors hover:bg-success/20"
+                              title="Agendar serviço"
+                              aria-label="Agendar serviço"
+                            >
+                              <CalendarBlank size={13} weight="bold" aria-hidden />
+                              Agendar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openEditForm(service)}
+                              className="flex h-8 w-8 items-center justify-center rounded-lg bg-background text-muted transition-colors hover:bg-card hover:text-foreground"
+                              title="Editar serviço"
+                              aria-label="Editar serviço"
+                            >
+                              <PencilSimple size={15} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleActive(service)}
+                              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                                service.active
+                                  ? "bg-background text-muted hover:bg-primary/10 hover:text-primary"
+                                  : "bg-background text-muted hover:bg-card hover:text-foreground"
+                              }`}
+                              title={service.active ? "Desativar" : "Ativar"}
+                              aria-label={service.active ? "Desativar serviço" : "Ativar serviço"}
+                            >
+                              <Power size={15} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => requestDeleteService(service)}
+                              className="flex h-8 w-8 items-center justify-center rounded-lg bg-background text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                              title="Excluir serviço"
+                              aria-label="Excluir serviço"
+                            >
+                              <Trash size={15} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </article>
                   );
                 })}
-                  </div>
-                </div>
               </div>
             </section>
           ))}
