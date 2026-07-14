@@ -340,9 +340,9 @@ export async function importLocalAppointments(
     existingKeys.add(appointmentKey);
   }
 
-  if (importedAppointments.length > 0) {
-    clearLocalAppointments();
-  }
+  // Always clear local storage once we have a successful remote connection.
+  // Keeping stale local entries would cause deleted remote appointments to be re-inserted.
+  clearLocalAppointments();
 
   return [...remoteAppointments, ...importedAppointments];
 }

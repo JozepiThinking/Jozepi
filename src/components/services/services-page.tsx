@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
+  CalendarBlank,
+  CheckCircle,
   Clock,
   Funnel,
   PencilSimple,
@@ -11,6 +14,7 @@ import {
   Wrench,
   X,
 } from "@phosphor-icons/react";
+import { STAGE_PACKAGES, type ServicePackage } from "@/lib/services/packages";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dropdown } from "@/components/ui/dropdown";
@@ -241,6 +245,7 @@ async function migrateLegacyServiceCategories(
 
 export function ServicesPage() {
   const supabase = useMemo(() => createClient(), []);
+  const router = useRouter();
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [typeOptions, setTypeOptions] =
@@ -888,6 +893,14 @@ export function ServicesPage() {
     ])
   ).filter((category) => servicesByCategory[category]?.length > 0);
 
+  function handleBookPackage(pkg: ServicePackage) {
+    const ids = pkg.allServiceNames
+      .map((name) => services.find((s) => s.name === name)?.id)
+      .filter((id): id is string => Boolean(id));
+    const query = ids.length > 0 ? `?packageServices=${ids.join(",")}` : "";
+    router.push(`/agenda${query}`);
+  }
+
   return (
     <>
       <div className="mb-5 flex justify-stretch sm:mb-6 sm:justify-end">
@@ -1261,6 +1274,67 @@ export function ServicesPage() {
           </div>
         </form>
       )}
+
+      {/* ── Packages section ─────────────────────────────────────────── */}
+      <section className="mb-6 space-y-4">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-sm font-bold uppercase tracking-widest text-muted">
+            Pacotes — Lavagem Detalhada por Stages
+          </h2>
+          <p className="text-xs italic text-muted">
+            A cada Stage é feito todos os anteriores mais o selecionado
+          </p>
+        </div>
+
+        {STAGE_PACKAGES.map((pkg) => (
+          <div
+            key={pkg.id}
+            className="relative overflow-hidden rounded-lg border border-border bg-card shadow-card"
+          >
+            {pkg.popular && (
+              <span className="absolute right-3 top-3 rounded-full bg-success px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-white shadow-sm">
+                Mais popular
+              </span>
+            )}
+
+            <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+              <div className="min-w-0 flex-1">
+                <span className="mb-3 inline-block rounded-md bg-[#1a2744] px-3 py-1 text-xs font-bold tracking-widest text-white">
+                  {pkg.badge}
+                </span>
+                <ul className="space-y-1.5">
+                  {pkg.newItems.map((item) => (
+                    <li key={item} className="flex items-start gap-2 text-sm text-foreground">
+                      <CheckCircle
+                        size={16}
+                        weight="fill"
+                        className="mt-0.5 shrink-0 text-success"
+                        aria-hidden
+                      />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="flex shrink-0 flex-row items-center justify-between gap-4 sm:flex-col sm:items-end">
+                <p className="text-2xl font-bold text-foreground">
+                  {formatCurrency(pkg.price)}
+                </p>
+                <Button
+                  variant="success"
+                  onClick={() => handleBookPackage(pkg)}
+                  className="shrink-0"
+                >
+                  <CalendarBlank size={16} weight="bold" aria-hidden />
+                  Agendar
+                </Button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </section>
+      {/* ─────────────────────────────────────────────────────────────── */}
 
       <div className="mb-5 rounded-lg border border-border bg-card p-3 shadow-card">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">

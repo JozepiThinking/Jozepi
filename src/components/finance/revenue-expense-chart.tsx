@@ -207,15 +207,6 @@ export function RevenueExpenseChart({
           />
           Despesa
         </span>
-        {!compact && (
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              className="inline-block h-0.5 w-5 rounded-full"
-              style={{ background: PROFIT_COLOR }}
-            />
-            Lucro líquido
-          </span>
-        )}
       </div>
 
       {/* Selected month summary (full chart only) */}

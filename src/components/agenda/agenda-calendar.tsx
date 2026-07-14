@@ -642,6 +642,8 @@ export function AgendaCalendar() {
   const searchParams = useSearchParams();
   const linkedClientId = searchParams.get("clientId");
   const linkedClientHandledRef = useRef<string | null>(null);
+  const linkedServiceIds = searchParams.get("packageServices");
+  const linkedServicesHandledRef = useRef<string | null>(null);
   const today = useMemo(() => new Date(), []);
   const [now, setNow] = useState(today);
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(today));
@@ -1250,6 +1252,47 @@ export function AgendaCalendar() {
     });
   }, [clients, linkedClientId, loadingClients]);
 
+  useEffect(() => {
+    if (
+      !linkedServiceIds ||
+      loadingServices ||
+      linkedServicesHandledRef.current === linkedServiceIds
+    ) {
+      return;
+    }
+    linkedServicesHandledRef.current = linkedServiceIds;
+
+    const ids = linkedServiceIds.split(",").filter(Boolean);
+    if (ids.length === 0) return;
+
+    const validIds = ids.filter((id) => services.some((s) => s.id === id));
+    if (validIds.length === 0) return;
+
+    void Promise.resolve().then(() => {
+      const targetDate = new Date();
+      const targetKey = dateKey(targetDate);
+
+      setCurrentMonth(startOfMonth(targetDate));
+      setSelectedDate(targetDate);
+      setFocusedAppointmentId(null);
+      setDayDrawerOpen(true);
+      setEditingAppointmentId(null);
+      setForm((prev) => ({
+        ...prev,
+        date: targetKey,
+        endDate: targetKey,
+        isMultiDay: false,
+        serviceIds: validIds,
+      }));
+      setError(null);
+      setAddingService(false);
+      setEditingTotalAmount(false);
+      setOpenSelectId(null);
+      setFormClosing(false);
+      setCreating(true);
+    });
+  }, [services, linkedServiceIds, loadingServices]);
+
   function openEditForm(appointment: Appointment) {
     setOpenStatusMenuId(null);
     const appointmentEndDate = getAppointmentEndDate(appointment);
@@ -1708,6 +1751,12 @@ export function AgendaCalendar() {
     setError(null);
 
     try {
+      const { error: deleteItemsError } = await deleteAppointmentItems(
+        supabase,
+        appointment.id
+      );
+      if (deleteItemsError) throw new Error(deleteItemsError.message);
+
       const { data: deletedRows, error: deleteError } = await deleteAppointment(
         supabase,
         appointment.id
@@ -1724,6 +1773,10 @@ export function AgendaCalendar() {
       }
 
       setDeleteConfirm(null);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Erro ao excluir o agendamento."
+      );
     } finally {
       setDeletingAppointments(false);
     }
@@ -1742,6 +1795,11 @@ export function AgendaCalendar() {
       const appointmentIds = selectedAppointments.map((appointment) => appointment.id);
 
       if (appointmentIds.length > 0) {
+        for (const id of appointmentIds) {
+          const { error: deleteItemsError } = await deleteAppointmentItems(supabase, id);
+          if (deleteItemsError) throw new Error(deleteItemsError.message);
+        }
+
         const { data: deletedRows, error: deleteError } = await deleteAppointmentsForDay(
           supabase,
           appointmentIds
@@ -1759,6 +1817,10 @@ export function AgendaCalendar() {
       );
       closeForm();
       setDeleteConfirm(null);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Erro ao excluir os agendamentos do dia."
+      );
     } finally {
       setDeletingAppointments(false);
     }
@@ -3178,11 +3240,9 @@ export function AgendaCalendar() {
                             </span>
                             <span
                               className={`font-bold ${
-                                appointment.status === "Concluído"
-                                  ? "text-success"
-                                  : appointment.status === "Cancelado"
-                                    ? "text-muted line-through"
-                                    : "text-foreground"
+                                appointment.status === "Cancelado"
+                                  ? "text-muted line-through"
+                                  : "text-success"
                               }`}
                             >
                               {formatCurrency(appointment.totalAmount)}
@@ -3269,11 +3329,9 @@ export function AgendaCalendar() {
                               </div>
                               <div
                                 className={`text-right text-sm font-bold ${
-                                  appointment.status === "Concluído"
-                                    ? "text-success"
-                                    : appointment.status === "Cancelado"
-                                      ? "text-muted line-through"
-                                      : "text-foreground"
+                                  appointment.status === "Cancelado"
+                                    ? "text-muted line-through"
+                                    : "text-success"
                                 }`}
                               >
                                 {formatCurrency(appointment.totalAmount)}

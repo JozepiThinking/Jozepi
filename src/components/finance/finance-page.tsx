@@ -43,6 +43,15 @@ import { formatCurrency } from "@/lib/utils/format";
 
 type FinanceTab = "overview" | "revenues" | "expenses" | "fixedCosts" | "reports";
 type PeriodFilter = "all" | "today" | "week" | "month" | "custom";
+type ChartInterval = "7d" | "1m" | "3m" | "6m" | "1a";
+
+const chartIntervalOptions: { value: ChartInterval; label: string; title: string }[] = [
+  { value: "7d", label: "7D", title: "Últimos 7 dias" },
+  { value: "1m", label: "1M", title: "Último mês por semana" },
+  { value: "3m", label: "3M", title: "Últimos 3 meses" },
+  { value: "6m", label: "6M", title: "Últimos 6 meses" },
+  { value: "1a", label: "1A", title: "Último ano" },
+];
 type TransactionType = "receita" | "despesa";
 const SUPPLIERS_STORAGE_KEY = "auto-estetica-suppliers";
 const FIXED_COSTS_STORAGE_KEY = "auto-estetica-fixed-costs";
@@ -191,7 +200,7 @@ function parseDurabilityWashes(value: string) {
 interface CompletedOrderItem {
   quantity: number | string | null;
   unit_price: number | string | null;
-  services: { name: string } | { name: string }[] | null;
+  services: { name: string; price?: number | string | null } | { name: string; price?: number | string | null }[] | null;
 }
 
 interface CompletedOrder {
@@ -278,6 +287,8 @@ const expenseCategoryFilterOptions = [
   { value: categoryFilterAll, label: "Todas as categorias" },
   ...expenseCategoryOptions,
 ];
+const DONUT_COLORS = ["#f97316", "#3b82f6", "#22c55e", "#6b7280", "#ef4444"];
+
 const shortMonthLabels = [
   "jan",
   "fev",
@@ -362,6 +373,12 @@ function endOfMonth(date: Date) {
 
 function addMonths(date: Date, amount: number) {
   return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+}
+
+function subDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setDate(result.getDate() - days);
+  return result;
 }
 
 function getWeekRange(date: Date): DateRange {
@@ -896,6 +913,8 @@ function monthKeyFromDateStr(dateStr: string): string {
   return dateStr.slice(0, 7);
 }
 
+const TRANSACTION_PAGE_SIZE = 30;
+
 function TransactionList({
   entries,
   emptyMessage,
@@ -915,6 +934,18 @@ function TransactionList({
   onEditTransaction?: (entry: FinanceEntry) => void;
   onDeleteTransaction?: (entry: FinanceEntry) => void;
 }) {
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    setPage(0);
+  }, [entries]);
+
+  const totalPages = Math.ceil(entries.length / TRANSACTION_PAGE_SIZE);
+  const pagedEntries = entries.slice(
+    page * TRANSACTION_PAGE_SIZE,
+    (page + 1) * TRANSACTION_PAGE_SIZE
+  );
+
   const hasEditAction = Boolean(onEditTransaction);
   const labelColumnTitle = accent === "expense" ? "Fornecedor" : "Categoria";
   const gridColumnsClass = hasEditAction
@@ -965,7 +996,7 @@ function TransactionList({
             | { kind: "entry"; entry: FinanceEntry };
           const rows: Row[] = [];
           let lastMonthKey = "";
-          for (const entry of entries) {
+          for (const entry of pagedEntries) {
             if (groupByMonth) {
               const key = monthKeyFromDateStr(entry.date);
               if (key !== lastMonthKey) {
@@ -1077,6 +1108,45 @@ function TransactionList({
         })()} {/* end IIFE */}
         </div>
       </div>
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between border-t border-border px-3 pt-4">
+          <p className="text-xs text-muted">
+            {page * TRANSACTION_PAGE_SIZE + 1}–{Math.min((page + 1) * TRANSACTION_PAGE_SIZE, entries.length)} de {entries.length} lançamentos
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="flex h-8 items-center gap-1 rounded-lg border border-border bg-card px-3 text-xs font-semibold text-muted transition-colors hover:bg-background disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              ← Anterior
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i).map((i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setPage(i)}
+                className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition-colors ${
+                  i === page
+                    ? "bg-primary text-white"
+                    : "border border-border bg-card text-muted hover:bg-background"
+                }`}
+              >
+                {i + 1}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={page === totalPages - 1}
+              className="flex h-8 items-center gap-1 rounded-lg border border-border bg-card px-3 text-xs font-semibold text-muted transition-colors hover:bg-background disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Próximo →
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1214,6 +1284,7 @@ export function FinancePage() {
   const [fixedCostError, setFixedCostError] = useState<string | null>(null);
   const [savingFixedCost, setSavingFixedCost] = useState(false);
   const [catalogProducts, setCatalogProducts] = useState<ProductItem[]>([]);
+  const [overviewChartInterval, setOverviewChartInterval] = useState<ChartInterval>("6m");
   const [utensilWearSettings, setUtensilWearSettings] = useState<
     Record<string, UtensilWearSetting>
   >(() => readStoredUtensilWearSettings());
@@ -1253,7 +1324,7 @@ export function FinancePage() {
             service_order_items(
               quantity,
               unit_price,
-              services(name)
+              services(name, price)
             )
           `
           )
@@ -1564,6 +1635,77 @@ export function FinancePage() {
     ...monthlyReport.flatMap((item) => [item.revenue, item.expense])
   );
 
+  const dayLabels = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+  const overviewChartData = useMemo(() => {
+    if (overviewChartInterval === "7d") {
+      return Array.from({ length: 7 }, (_, i) => {
+        const d = subDays(today, 6 - i);
+        const range = { start: startOfDay(d), end: endOfDay(d) };
+        return {
+          label: dayLabels[d.getDay()],
+          revenue: sumEntries(revenueEntries.filter((e) => isDateInRange(e.date, range))),
+          expense: sumEntries(expenseEntries.filter((e) => isDateInRange(e.date, range))),
+        };
+      });
+    }
+    if (overviewChartInterval === "1m") {
+      const monthStart = startOfMonth(today);
+      const monthEnd = endOfMonth(today);
+      const weeks: { label: string; start: Date; end: Date }[] = [];
+      let cursor = new Date(monthStart);
+      let weekNum = 1;
+      while (cursor <= monthEnd) {
+        const weekEnd = new Date(cursor);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        const rangeEnd = weekEnd > monthEnd ? monthEnd : weekEnd;
+        weeks.push({
+          label: `Sem ${weekNum}`,
+          start: new Date(cursor),
+          end: endOfDay(rangeEnd),
+        });
+        cursor.setDate(cursor.getDate() + 7);
+        weekNum++;
+      }
+      return weeks.map(({ label, start, end }) => {
+        const range = { start, end };
+        return {
+          label,
+          revenue: sumEntries(revenueEntries.filter((e) => isDateInRange(e.date, range))),
+          expense: sumEntries(expenseEntries.filter((e) => isDateInRange(e.date, range))),
+        };
+      });
+    }
+    if (overviewChartInterval === "3m") {
+      return Array.from({ length: 3 }, (_, i) => {
+        const month = addMonths(startOfMonth(today), i - 2);
+        const range = { start: startOfMonth(month), end: endOfMonth(month) };
+        return {
+          label: getMonthLabel(month),
+          revenue: sumEntries(revenueEntries.filter((e) => isDateInRange(e.date, range))),
+          expense: sumEntries(expenseEntries.filter((e) => isDateInRange(e.date, range))),
+        };
+      });
+    }
+    if (overviewChartInterval === "1a") {
+      return Array.from({ length: 12 }, (_, i) => {
+        const month = addMonths(startOfMonth(today), i - 11);
+        const range = { start: startOfMonth(month), end: endOfMonth(month) };
+        return {
+          label: getMonthLabel(month),
+          revenue: sumEntries(revenueEntries.filter((e) => isDateInRange(e.date, range))),
+          expense: sumEntries(expenseEntries.filter((e) => isDateInRange(e.date, range))),
+        };
+      });
+    }
+    return monthlyReport;
+  }, [overviewChartInterval, revenueEntries, expenseEntries, today, monthlyReport]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const overviewChartMaxValue = useMemo(
+    () => Math.max(1, ...overviewChartData.flatMap((item) => [item.revenue, item.expense])),
+    [overviewChartData]
+  );
+
   const serviceRevenue = reportOrders.reduce<Record<string, number>>((acc, order) => {
     const items = order.service_order_items ?? [];
     if (items.length === 0) {
@@ -1572,9 +1714,10 @@ export function FinancePage() {
     }
 
     items.forEach((item) => {
-      const serviceName = firstRelation(item.services)?.name ?? "Serviço";
-      const subtotal =
-        toCurrencyNumber(item.unit_price) * (Number(item.quantity) || 1);
+      const service = firstRelation(item.services);
+      const serviceName = service?.name ?? "Serviço";
+      const catalogPrice = toCurrencyNumber(service?.price ?? item.unit_price);
+      const subtotal = catalogPrice * (Number(item.quantity) || 1);
       acc[serviceName] = (acc[serviceName] ?? 0) + subtotal;
     });
     return acc;
@@ -2215,25 +2358,100 @@ export function FinancePage() {
                 </section>
 
                 <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
-                  <div className="mb-5 flex items-center gap-3">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
-                      <ChartBar size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
-                    </span>
-                    <div>
-                      <h2 className="text-lg font-semibold text-foreground">
-                        Receita vs despesa
-                      </h2>
-                      <p className="text-sm text-muted">Últimos 6 meses.</p>
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
+                        <ChartBar size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+                      </span>
+                      <div>
+                        <h2 className="text-lg font-semibold text-foreground">
+                          Receita vs despesa
+                        </h2>
+                        <p className="text-sm text-muted">
+                          {chartIntervalOptions.find((o) => o.value === overviewChartInterval)?.title ?? ""}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center rounded-lg border border-border bg-background p-0.5">
+                      {chartIntervalOptions.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setOverviewChartInterval(opt.value)}
+                          className={`rounded-md px-2.5 py-1 text-xs font-bold transition-all ${
+                            overviewChartInterval === opt.value
+                              ? "bg-primary text-white shadow-sm"
+                              : "text-muted hover:text-foreground"
+                          }`}
+                          aria-pressed={overviewChartInterval === opt.value}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
                   <RevenueExpenseChart
-                    data={monthlyReport}
-                    maxValue={maxMonthlyValue}
+                    data={overviewChartData}
+                    maxValue={overviewChartMaxValue}
                     compact
                   />
                 </section>
+
+                <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
+                  <div className="mb-5 flex items-center gap-3">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      <ChartDonut size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+                    </span>
+                    <div>
+                      <h2 className="text-lg font-semibold text-foreground">
+                        Serviços que mais geram receita
+                      </h2>
+                      <p className="text-sm text-muted">Com base nas OS finalizadas.</p>
+                    </div>
+                  </div>
+                  {serviceRanking.length > 0 ? (
+                    <div className="grid grid-cols-1 gap-5 sm:grid-cols-[160px_1fr] sm:items-center">
+                      <svg viewBox="0 0 120 120" className="mx-auto h-40 w-40 -rotate-90">
+                        <circle cx="60" cy="60" r="44" fill="none" stroke="#e2e8f0" strokeWidth="18" />
+                        {donutSegments.map((segment, index) => (
+                          <circle
+                            key={segment.name}
+                            cx="60" cy="60" r="44" fill="none"
+                            stroke={DONUT_COLORS[index % DONUT_COLORS.length]}
+                            strokeWidth="18"
+                            strokeDasharray={`${segment.dash} ${100 - segment.dash}`}
+                            strokeDashoffset={segment.offset}
+                            pathLength="100"
+                          />
+                        ))}
+                      </svg>
+                      <div className="space-y-3">
+                        {serviceRanking.map((item, index) => (
+                          <div key={item.name} className="flex items-center justify-between gap-3 rounded-lg bg-background px-4 py-3">
+                            <span className="flex min-w-0 items-center gap-2.5 truncate text-sm font-semibold text-foreground">
+                              <span
+                                className="h-3 w-3 shrink-0 rounded-full"
+                                style={{ background: DONUT_COLORS[index % DONUT_COLORS.length] }}
+                              />
+                              {index + 1}. {item.name}
+                            </span>
+                            <span className="shrink-0 text-sm font-bold text-foreground">
+                              {formatCurrency(item.amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="rounded-lg border border-dashed border-border bg-background px-4 py-10 text-center text-sm text-muted">
+                      Nenhum serviço finalizado para gerar o gráfico.
+                    </p>
+                  )}
+                </section>
+
               </div>
 
+              <div className="sticky top-4 self-start space-y-4">
               <button
                 type="button"
                 onClick={() => setActiveTab("revenues")}
@@ -2295,6 +2513,35 @@ export function FinancePage() {
                   )}
                 </div>
               </button>
+
+                <section className="rounded-lg border border-border bg-card p-4 shadow-card">
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-success/10 text-success">
+                      <Trophy size={16} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+                    </span>
+                    <div>
+                      <h2 className="text-sm font-semibold text-foreground">Ranking de clientes</h2>
+                      <p className="text-xs text-muted">Clientes que mais gastaram.</p>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    {clientRanking.length > 0 ? (
+                      clientRanking.map((client, index) => (
+                        <div key={client.name} className="flex items-center justify-between gap-2 rounded-lg bg-background px-3 py-2">
+                          <span className="min-w-0 truncate text-xs font-semibold text-foreground">
+                            {index + 1}. {client.name}
+                          </span>
+                          <span className="shrink-0 text-xs font-bold text-success">
+                            {formatCurrency(client.amount)}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="py-4 text-center text-xs text-muted">Nenhum cliente com receita finalizada.</p>
+                    )}
+                  </div>
+                </section>
+              </div>
             </div>
           )}
 
@@ -2819,111 +3066,6 @@ export function FinancePage() {
 
           {activeTab === "reports" && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
-                <div className="mb-5 flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
-                    <ChartBar size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
-                  </span>
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">
-                      Receita vs despesa
-                    </h2>
-                    <p className="text-sm text-muted">Últimos 6 meses.</p>
-                  </div>
-                </div>
-                <RevenueExpenseChart data={monthlyReport} maxValue={maxMonthlyValue} />
-              </section>
-
-              <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
-                <div className="mb-5 flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <ChartDonut size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
-                  </span>
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">
-                      Serviços que mais geram receita
-                    </h2>
-                    <p className="text-sm text-muted">Com base nas OS finalizadas.</p>
-                  </div>
-                </div>
-                {serviceRanking.length > 0 ? (
-                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-[160px_1fr] sm:items-center">
-                    <svg viewBox="0 0 120 120" className="mx-auto h-40 w-40 -rotate-90">
-                      <circle
-                        cx="60"
-                        cy="60"
-                        r="44"
-                        fill="none"
-                        stroke="#e2e8f0"
-                        strokeWidth="18"
-                      />
-                      {donutSegments.map((segment, index) => (
-                        <circle
-                          key={segment.name}
-                          cx="60"
-                          cy="60"
-                          r="44"
-                          fill="none"
-                          stroke={index === 0 ? "var(--primary)" : index === 1 ? "var(--success)" : index === 2 ? "var(--warning)" : "var(--muted)"}
-                          strokeWidth="18"
-                          strokeDasharray={`${segment.dash} ${100 - segment.dash}`}
-                          strokeDashoffset={segment.offset}
-                          pathLength="100"
-                        />
-                      ))}
-                    </svg>
-                    <div className="space-y-3">
-                      {serviceRanking.map((item, index) => (
-                        <div key={item.name} className="flex items-center justify-between gap-3 rounded-lg bg-background px-4 py-3">
-                          <span className="min-w-0 truncate text-sm font-semibold text-foreground">
-                            {index + 1}. {item.name}
-                          </span>
-                          <span className="shrink-0 text-sm font-bold text-success">
-                            {formatCurrency(item.amount)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="rounded-lg border border-dashed border-border bg-background px-4 py-10 text-center text-sm text-muted">
-                    Nenhum serviço finalizado para gerar o gráfico.
-                  </p>
-                )}
-              </section>
-
-              <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
-                <div className="mb-5 flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
-                    <Trophy size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
-                  </span>
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">
-                      Ranking de clientes
-                    </h2>
-                    <p className="text-sm text-muted">Clientes que mais gastaram.</p>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  {clientRanking.length > 0 ? (
-                    clientRanking.map((client, index) => (
-                      <div key={client.name} className="flex items-center justify-between gap-3 rounded-lg bg-background px-4 py-3">
-                        <span className="text-sm font-semibold text-foreground">
-                          {index + 1}. {client.name}
-                        </span>
-                        <span className="text-sm font-bold text-success">
-                          {formatCurrency(client.amount)}
-                        </span>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="rounded-lg border border-dashed border-border bg-background px-4 py-10 text-center text-sm text-muted">
-                      Nenhum cliente com receita finalizada.
-                    </p>
-                  )}
-                </div>
-              </section>
-
               <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
                 <div className="mb-5 flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10 text-warning">
