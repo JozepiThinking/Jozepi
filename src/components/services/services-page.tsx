@@ -1276,14 +1276,11 @@ export function ServicesPage() {
       )}
 
       {/* ── Packages section ─────────────────────────────────────────── */}
-      <section className="mb-6 space-y-4">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-sm font-bold uppercase tracking-widest text-muted">
+      <section className="mb-10 space-y-5">
+        <div>
+          <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-muted">
             Pacotes — Lavagem Detalhada por Stages
           </h2>
-          <p className="text-xs italic text-muted">
-            A cada Stage é feito todos os anteriores mais o selecionado
-          </p>
         </div>
 
         {STAGE_PACKAGES.map((pkg) => {
@@ -1291,73 +1288,77 @@ export function ServicesPage() {
           return (
             <div
               key={pkg.id}
-              className={`relative overflow-hidden rounded-lg border border-l-4 bg-card shadow-card ${pkg.accentBorder} ${
-                isGold ? "border-[#c9a84c]/40" : "border-border"
+              className={`relative overflow-hidden rounded-xl bg-card shadow-card ${
+                isGold
+                  ? "border border-[#c9a84c]/50 shadow-[0_2px_16px_0_rgba(201,168,76,0.10)]"
+                  : "border border-border"
               }`}
             >
+              {/* badges */}
               {pkg.popular && (
-                <span className="absolute right-3 top-3 z-10 rounded-full bg-success px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-white shadow-sm">
+                <span className="absolute right-4 top-4 z-10 rounded-full border border-success/30 bg-success/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-success">
                   Mais popular
                 </span>
               )}
-              {isGold && (
-                <span className="absolute right-3 top-3 z-10 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest shadow-sm" style={{ background: "#c9a84c", color: "#1a1a0a" }}>
-                  Premium
-                </span>
-              )}
 
-              <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
-                <div className="min-w-0 flex-1">
-                  <span
-                    className="mb-3 inline-block rounded-md px-3 py-1 text-xs font-bold tracking-[0.18em]"
-                    style={{ background: pkg.badgeBg, color: pkg.badgeText }}
-                  >
-                    {pkg.badge}
-                  </span>
-
-                  <ul className="space-y-2">
-                    {pkg.prevBadge && (
-                      <li className="flex items-center gap-2 text-xs font-semibold text-muted">
-                        <CheckCircle size={14} weight="fill" className="shrink-0 text-muted" aria-hidden />
-                        Tudo do {pkg.prevBadge} +
-                      </li>
-                    )}
-                    {pkg.newItems.map((item) => (
-                      <li key={item} className="flex items-start gap-2 text-sm text-foreground">
-                        <CheckCircle
-                          size={16}
-                          weight="fill"
-                          className="mt-0.5 shrink-0 text-success"
-                          aria-hidden
-                        />
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="flex shrink-0 flex-row items-center justify-between gap-4 sm:flex-col sm:items-end sm:pt-1">
-                  <div className="flex flex-col items-end">
+              <div className="flex flex-col gap-0 sm:flex-row">
+                {/* LEFT — badge + price */}
+                <div
+                  className="flex shrink-0 flex-col justify-between gap-6 rounded-tl-xl rounded-bl-xl p-5 sm:w-44 sm:rounded-tr-none sm:rounded-bl-xl"
+                  style={isGold ? { background: "rgba(201,168,76,0.07)" } : { background: "var(--color-background, transparent)" }}
+                >
+                  <div className="flex flex-col gap-2">
+                    <span
+                      className="self-start rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.18em]"
+                      style={{ background: pkg.badgeBg, color: pkg.badgeText }}
+                    >
+                      {pkg.badge}
+                    </span>
+                  </div>
+                  <div>
                     <p
-                      className="text-3xl font-bold leading-none tracking-tight"
+                      className="text-3xl font-extrabold leading-none tracking-tight"
                       style={isGold ? { color: "#c9a84c" } : undefined}
                     >
                       {formatCurrency(pkg.price)}
                     </p>
+                    <p className="mt-1 text-[11px] text-muted">por veículo</p>
+                    <button
+                      type="button"
+                      onClick={() => handleBookPackage(pkg)}
+                      className={`mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                        isGold
+                          ? "border-[#c9a84c]/60 bg-[#c9a84c]/10 text-[#a07830] hover:bg-[#c9a84c]/20"
+                          : "border-success/30 bg-success/10 text-success hover:bg-success/20"
+                      }`}
+                    >
+                      <CalendarBlank size={13} weight="bold" aria-hidden />
+                      Agendar
+                    </button>
                   </div>
-                  <Button
-                    variant="success"
-                    onClick={() => handleBookPackage(pkg)}
-                    className="shrink-0"
-                    style={
-                      isGold
-                        ? { background: "#c9a84c", borderColor: "#c9a84c", color: "#1a1a0a" }
-                        : undefined
-                    }
-                  >
-                    <CalendarBlank size={16} weight="bold" aria-hidden />
-                    Agendar
-                  </Button>
+                </div>
+
+                {/* RIGHT — items list */}
+                <div className="flex-1 p-5">
+                  {pkg.prevBadge && (
+                    <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-muted">
+                      <CheckCircle size={13} weight="fill" className="shrink-0 text-muted" aria-hidden />
+                      Inclui {pkg.prevBadge} +
+                    </p>
+                  )}
+                  <ul className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                    {pkg.newItems.map((item) => (
+                      <li key={item} className="flex items-start gap-2 text-sm text-foreground">
+                        <CheckCircle
+                          size={15}
+                          weight="fill"
+                          className="mt-0.5 shrink-0 text-success"
+                          aria-hidden
+                        />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               </div>
             </div>
@@ -1365,6 +1366,14 @@ export function ServicesPage() {
         })}
       </section>
       {/* ─────────────────────────────────────────────────────────────── */}
+
+      {/* Separator + avulsos title */}
+      <div className="mb-5 flex items-center gap-3">
+        <span className="text-xs font-bold uppercase tracking-[0.2em] text-muted">
+          Serviços Avulsos
+        </span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
 
       <div className="mb-5 rounded-lg border border-border bg-card p-3 shadow-card">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
