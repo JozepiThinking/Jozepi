@@ -14,7 +14,11 @@ import {
   Wrench,
   X,
 } from "@phosphor-icons/react";
-import { STAGE_PACKAGES, type ServicePackage } from "@/lib/services/packages";
+import {
+  loadStagePackages,
+  saveStagePackageOverride,
+  type ServicePackage,
+} from "@/lib/services/packages";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dropdown } from "@/components/ui/dropdown";
@@ -246,6 +250,16 @@ async function migrateLegacyServiceCategories(
 export function ServicesPage() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
+
+  // Stage packages state (loaded from localStorage overrides merged over defaults)
+  const [stagePackages, setStagePackages] = useState<ServicePackage[]>(() =>
+    typeof window !== "undefined" ? loadStagePackages() : []
+  );
+  const [editingPackageId, setEditingPackageId] = useState<string | null>(null);
+  const [pkgEditPrice, setPkgEditPrice] = useState("");
+  const [pkgEditItems, setPkgEditItems] = useState<string[]>([]);
+  const [pkgEditNewItem, setPkgEditNewItem] = useState("");
+
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [typeOptions, setTypeOptions] =
@@ -893,6 +907,30 @@ export function ServicesPage() {
     ])
   ).filter((category) => servicesByCategory[category]?.length > 0);
 
+  function openPackageEdit(pkg: ServicePackage) {
+    setEditingPackageId(pkg.id);
+    setPkgEditPrice(String(pkg.price));
+    setPkgEditItems([...pkg.newItems]);
+    setPkgEditNewItem("");
+  }
+
+  function cancelPackageEdit() {
+    setEditingPackageId(null);
+    setPkgEditNewItem("");
+  }
+
+  function savePackageEdit(pkg: ServicePackage) {
+    const price = parseFloat(pkgEditPrice.replace(",", "."));
+    if (isNaN(price) || price < 0) return;
+    const newItems = pkgEditItems.filter((i) => i.trim() !== "");
+    saveStagePackageOverride(pkg.id, { price, newItems });
+    setStagePackages((prev) =>
+      prev.map((p) => (p.id === pkg.id ? { ...p, price, newItems } : p))
+    );
+    setEditingPackageId(null);
+    setPkgEditNewItem("");
+  }
+
   function handleBookPackage(pkg: ServicePackage) {
     const ids = pkg.allServiceNames
       .map((name) => services.find((s) => s.name === name)?.id)
@@ -1287,8 +1325,10 @@ export function ServicesPage() {
           </h2>
         </div>
 
-        {STAGE_PACKAGES.map((pkg) => {
+        {stagePackages.map((pkg) => {
           const isGold = pkg.id === "stage-4";
+          const isEditing = editingPackageId === pkg.id;
+
           return (
             <div
               key={pkg.id}
@@ -1298,73 +1338,197 @@ export function ServicesPage() {
                   : "border border-border"
               }`}
             >
-              {/* badges */}
-              {pkg.popular && (
-                <span className="absolute right-4 top-4 z-10 rounded-full border border-success/30 bg-success/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-success">
+              {/* "Mais popular" badge */}
+              {pkg.popular && !isEditing && (
+                <span className="absolute right-14 top-4 z-10 rounded-full border border-success/30 bg-success/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-success">
                   Mais popular
                 </span>
               )}
 
-              <div className="flex flex-col gap-0 sm:flex-row">
-                {/* LEFT — badge + price */}
-                <div
-                  className="flex shrink-0 flex-col justify-between gap-6 rounded-tl-xl rounded-bl-xl p-5 sm:w-44 sm:rounded-tr-none sm:rounded-bl-xl"
-                  style={isGold ? { background: "rgba(201,168,76,0.07)" } : { background: "var(--color-background, transparent)" }}
-                >
-                  <div className="flex flex-col gap-2">
+              {/* Edit toggle button */}
+              <button
+                type="button"
+                onClick={() => isEditing ? cancelPackageEdit() : openPackageEdit(pkg)}
+                className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background text-muted transition-colors hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
+                title={isEditing ? "Cancelar edição" : "Editar pacote"}
+                aria-label={isEditing ? "Cancelar edição" : "Editar pacote"}
+              >
+                {isEditing
+                  ? <X size={13} weight="bold" aria-hidden />
+                  : <PencilSimple size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                }
+              </button>
+
+              {isEditing ? (
+                /* ── Edit form ─────────────────────────────────────── */
+                <div className="p-5">
+                  <div className="mb-4 flex items-center gap-3">
                     <span
-                      className="self-start rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.18em]"
+                      className="rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.18em]"
                       style={{ background: pkg.badgeBg, color: pkg.badgeText }}
                     >
                       {pkg.badge}
                     </span>
+                    <span className="text-sm font-semibold text-foreground">Editar pacote</span>
                   </div>
-                  <div>
-                    <p
-                      className="text-3xl font-extrabold leading-none tracking-tight"
-                      style={isGold ? { color: "#c9a84c" } : undefined}
-                    >
-                      {formatCurrency(pkg.price)}
-                    </p>
-                    <p className="mt-1 text-[11px] text-muted">por veículo</p>
+
+                  {/* Price */}
+                  <div className="mb-4">
+                    <label className="mb-1 block text-xs font-semibold text-muted">
+                      Preço (R$)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={pkgEditPrice}
+                      onChange={(e) => setPkgEditPrice(e.target.value)}
+                      className="w-40 rounded-lg border border-border bg-background px-3 py-2 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
+                    />
+                  </div>
+
+                  {/* Items */}
+                  <div className="mb-4">
+                    <label className="mb-2 block text-xs font-semibold text-muted">
+                      Serviços incluídos neste stage
+                    </label>
+                    <div className="space-y-2">
+                      {pkgEditItems.map((item, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={item}
+                            onChange={(e) => {
+                              const next = [...pkgEditItems];
+                              next[idx] = e.target.value;
+                              setPkgEditItems(next);
+                            }}
+                            className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setPkgEditItems((prev) => prev.filter((_, i) => i !== idx))}
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-danger/10 text-danger transition-colors hover:bg-danger hover:text-white"
+                            aria-label="Remover item"
+                          >
+                            <Trash size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Add new item */}
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={pkgEditNewItem}
+                        onChange={(e) => setPkgEditNewItem(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && pkgEditNewItem.trim()) {
+                            e.preventDefault();
+                            setPkgEditItems((prev) => [...prev, pkgEditNewItem.trim()]);
+                            setPkgEditNewItem("");
+                          }
+                        }}
+                        placeholder="Novo serviço... (Enter para adicionar)"
+                        className="min-w-0 flex-1 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none placeholder:text-muted focus:border-primary focus:ring-1 focus:ring-primary/30"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!pkgEditNewItem.trim()) return;
+                          setPkgEditItems((prev) => [...prev, pkgEditNewItem.trim()]);
+                          setPkgEditNewItem("");
+                        }}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success transition-colors hover:bg-success hover:text-white"
+                        aria-label="Adicionar item"
+                      >
+                        <Plus size={13} weight="bold" aria-hidden />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 border-t border-border pt-4">
                     <button
                       type="button"
-                      onClick={() => handleBookPackage(pkg)}
-                      className={`mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
-                        isGold
-                          ? "border-[#c9a84c]/60 bg-[#c9a84c]/10 text-[#a07830] hover:bg-[#c9a84c]/20"
-                          : "border-success/30 bg-success/10 text-success hover:bg-success/20"
-                      }`}
+                      onClick={() => savePackageEdit(pkg)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-success/90"
                     >
-                      <CalendarBlank size={13} weight="bold" aria-hidden />
-                      Agendar
+                      Salvar alterações
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelPackageEdit}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-xs font-semibold text-muted transition-colors hover:bg-card"
+                    >
+                      Cancelar
                     </button>
                   </div>
                 </div>
+              ) : (
+                /* ── Normal view ────────────────────────────────────── */
+                <div className="flex flex-col gap-0 sm:flex-row">
+                  {/* LEFT — badge + price */}
+                  <div
+                    className="flex shrink-0 flex-col justify-between gap-6 rounded-tl-xl rounded-bl-xl p-5 sm:w-44 sm:rounded-tr-none sm:rounded-bl-xl"
+                    style={isGold ? { background: "rgba(201,168,76,0.07)" } : { background: "var(--color-background, transparent)" }}
+                  >
+                    <div className="flex flex-col gap-2">
+                      <span
+                        className="self-start rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.18em]"
+                        style={{ background: pkg.badgeBg, color: pkg.badgeText }}
+                      >
+                        {pkg.badge}
+                      </span>
+                    </div>
+                    <div>
+                      <p
+                        className="text-3xl font-extrabold leading-none tracking-tight"
+                        style={isGold ? { color: "#c9a84c" } : undefined}
+                      >
+                        {formatCurrency(pkg.price)}
+                      </p>
+                      <p className="mt-1 text-[11px] text-muted">por veículo</p>
+                      <button
+                        type="button"
+                        onClick={() => handleBookPackage(pkg)}
+                        className={`mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                          isGold
+                            ? "border-[#c9a84c]/60 bg-[#c9a84c]/10 text-[#a07830] hover:bg-[#c9a84c]/20"
+                            : "border-success/30 bg-success/10 text-success hover:bg-success/20"
+                        }`}
+                      >
+                        <CalendarBlank size={13} weight="bold" aria-hidden />
+                        Agendar
+                      </button>
+                    </div>
+                  </div>
 
-                {/* RIGHT — items list */}
-                <div className="flex-1 p-5">
-                  {pkg.prevBadge && (
-                    <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-muted">
-                      <CheckCircle size={13} weight="fill" className="shrink-0 text-muted" aria-hidden />
-                      Inclui {pkg.prevBadge} +
-                    </p>
-                  )}
-                  <ul className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
-                    {pkg.newItems.map((item) => (
-                      <li key={item} className="flex items-start gap-2 text-sm text-foreground">
-                        <CheckCircle
-                          size={15}
-                          weight="fill"
-                          className="mt-0.5 shrink-0 text-success"
-                          aria-hidden
-                        />
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  {/* RIGHT — items list */}
+                  <div className="flex-1 p-5">
+                    {pkg.prevBadge && (
+                      <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-muted">
+                        <CheckCircle size={13} weight="fill" className="shrink-0 text-muted" aria-hidden />
+                        Inclui {pkg.prevBadge} +
+                      </p>
+                    )}
+                    <ul className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                      {pkg.newItems.map((item) => (
+                        <li key={item} className="flex items-start gap-2 text-sm text-foreground">
+                          <CheckCircle
+                            size={15}
+                            weight="fill"
+                            className="mt-0.5 shrink-0 text-success"
+                            aria-hidden
+                          />
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           );
         })}

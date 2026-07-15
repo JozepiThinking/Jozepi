@@ -11,6 +11,14 @@ export interface ServicePackage {
   badgeText: string;
 }
 
+interface PackageOverride {
+  price?: number;
+  newItems?: string[];
+}
+type PackageOverrides = Record<string, PackageOverride>;
+
+const STAGE_PACKAGES_STORAGE_KEY = "auto-estetica-stage-packages";
+
 const STAGE_1_SERVICES = [
   "Lavagem técnica completa",
   "Limpeza interna detalhada",
@@ -93,3 +101,36 @@ export const STAGE_PACKAGES: ServicePackage[] = [
     badgeText: "#1a1a0a",
   },
 ];
+
+function readOverrides(): PackageOverrides {
+  if (typeof window === "undefined") return {};
+  try {
+    return (JSON.parse(localStorage.getItem(STAGE_PACKAGES_STORAGE_KEY) ?? "{}") as PackageOverrides);
+  } catch {
+    return {};
+  }
+}
+
+export function loadStagePackages(): ServicePackage[] {
+  const overrides = readOverrides();
+  return STAGE_PACKAGES.map((pkg) => {
+    const o = overrides[pkg.id];
+    if (!o) return pkg;
+    return {
+      ...pkg,
+      ...(o.price !== undefined ? { price: o.price } : {}),
+      ...(o.newItems !== undefined ? { newItems: o.newItems } : {}),
+    };
+  });
+}
+
+export function saveStagePackageOverride(id: string, override: PackageOverride): void {
+  if (typeof window === "undefined") return;
+  try {
+    const stored = readOverrides();
+    stored[id] = { ...stored[id], ...override };
+    localStorage.setItem(STAGE_PACKAGES_STORAGE_KEY, JSON.stringify(stored));
+  } catch {
+    // ignore
+  }
+}
