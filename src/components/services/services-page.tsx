@@ -294,6 +294,7 @@ export function ServicesPage() {
   const [productError, setProductError] = useState<string | null>(null);
   const [serviceToDelete, setServiceToDelete] = useState<ServiceItem | null>(null);
   const [deletingService, setDeletingService] = useState(false);
+  const [deleteServiceError, setDeleteServiceError] = useState<string | null>(null);
   const closeFormTimeoutRef = useRef<number | null>(null);
   const catalogSyncStartedRef = useRef(false);
 
@@ -598,29 +599,27 @@ export function ServicesPage() {
   }
 
   function requestDeleteService(service: ServiceItem) {
+    setDeleteServiceError(null);
     setServiceToDelete(service);
   }
 
   async function executeDeleteService(service: ServiceItem) {
     setDeletingService(true);
-    setError(null);
+    setDeleteServiceError(null);
 
     try {
-      const { data: deletedRows, error: deleteError } = await supabase
+      const { error: deleteError } = await supabase
         .from("services")
         .delete()
-        .eq("id", service.id)
-        .select("id");
+        .eq("id", service.id);
 
       if (deleteError) {
         const message = deleteError.message.includes("foreign key")
-          ? "Este serviço está vinculado a agendamentos ou ordens de serviço e não pode ser excluído."
+          ? "Este serviço está vinculado a agendamentos e não pode ser excluído."
           : deleteError.message;
-        setError(message);
+        setDeleteServiceError(message);
         return;
       }
-
-      assertMutationRows(deletedRows, null, "excluir o serviço");
 
       setServiceProductUsages((prev) => {
         const next = { ...prev };
@@ -630,7 +629,7 @@ export function ServicesPage() {
       setServiceToDelete(null);
       await loadServices();
     } catch (err) {
-      setError(
+      setDeleteServiceError(
         err instanceof Error ? err.message : "Erro ao excluir o serviço."
       );
     } finally {
@@ -1797,18 +1796,26 @@ export function ServicesPage() {
         open={Boolean(serviceToDelete)}
         title="Excluir serviço"
         description={
-          serviceToDelete
-            ? `Deseja excluir o serviço ${serviceToDelete.name}?`
+          deleteServiceError
+            ? deleteServiceError
+            : serviceToDelete
+            ? `Deseja excluir o serviço "${serviceToDelete.name}"? Esta ação não pode ser desfeita.`
             : ""
         }
         confirmLabel="Excluir serviço"
         loading={deletingService}
         onCancel={() => {
-          if (!deletingService) setServiceToDelete(null);
+          if (!deletingService) {
+            setServiceToDelete(null);
+            setDeleteServiceError(null);
+          }
         }}
         onConfirm={() => {
-          if (serviceToDelete) {
+          if (serviceToDelete && !deleteServiceError) {
             void executeDeleteService(serviceToDelete);
+          } else if (deleteServiceError) {
+            setServiceToDelete(null);
+            setDeleteServiceError(null);
           }
         }}
       />
