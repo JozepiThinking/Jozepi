@@ -1643,24 +1643,10 @@ export function ServicesPage() {
           </p>
         </div>
       ) : (
-        <div className="space-y-10">
-          {orderedCategories.map((category) => (
-            <section key={category}>
-              {/* Category separator — larger, more prominent */}
-              <div className="mb-4 flex items-center gap-3">
-                <h2 className="shrink-0 text-sm font-bold uppercase tracking-[0.22em] text-foreground/70">
-                  {category}
-                </h2>
-                <div className="h-px flex-1 bg-border" />
-                <span className="shrink-0 rounded-full border border-border bg-background px-2.5 py-0.5 text-[11px] font-semibold text-muted">
-                  {servicesByCategory[category].length}{" "}
-                  {servicesByCategory[category].length !== 1 ? "serviços" : "serviço"}
-                </span>
-              </div>
-
-              {/* Service cards — single container with dividers */}
-              <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card divide-y divide-border">
-                {servicesByCategory[category].map((service) => {
+        <div>
+          {/* Service cards — single container with dividers */}
+          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card divide-y divide-border">
+            {filteredServices.map((service) => {
                   const financials = getServiceFinancials(service.id, service.price);
                   const profitPositive = financials.profit >= 0;
 
@@ -1766,9 +1752,7 @@ export function ServicesPage() {
                     </article>
                   );
                 })}
-              </div>
-            </section>
-          ))}
+          </div>
         </div>
       )}
 
