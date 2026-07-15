@@ -275,7 +275,7 @@ export function ServicesPage() {
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState<ServiceStatusFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<ServiceStatusFilter>("active");
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -295,6 +295,7 @@ export function ServicesPage() {
   const [serviceToDelete, setServiceToDelete] = useState<ServiceItem | null>(null);
   const [deletingService, setDeletingService] = useState(false);
   const [deleteServiceError, setDeleteServiceError] = useState<string | null>(null);
+  const [deleteBlockedByHistory, setDeleteBlockedByHistory] = useState(false);
   const closeFormTimeoutRef = useRef<number | null>(null);
   const catalogSyncStartedRef = useRef(false);
 
@@ -600,6 +601,7 @@ export function ServicesPage() {
 
   function requestDeleteService(service: ServiceItem) {
     setDeleteServiceError(null);
+    setDeleteBlockedByHistory(false);
     setServiceToDelete(service);
   }
 
@@ -614,10 +616,12 @@ export function ServicesPage() {
         .eq("id", service.id);
 
       if (deleteError) {
-        const message = deleteError.message.includes("foreign key")
-          ? "Este serviço está vinculado a agendamentos e não pode ser excluído."
-          : deleteError.message;
-        setDeleteServiceError(message);
+        if (deleteError.message.includes("foreign key") || deleteError.code === "23503") {
+          // Service linked to history — offer to deactivate instead
+          setDeleteBlockedByHistory(true);
+          return;
+        }
+        setDeleteServiceError(deleteError.message);
         return;
       }
 
@@ -632,6 +636,20 @@ export function ServicesPage() {
       setDeleteServiceError(
         err instanceof Error ? err.message : "Erro ao excluir o serviço."
       );
+    } finally {
+      setDeletingService(false);
+    }
+  }
+
+  async function deactivateServiceInsteadOfDelete(service: ServiceItem) {
+    setDeletingService(true);
+    try {
+      await supabase.from("services").update({ active: false }).eq("id", service.id);
+      setServiceToDelete(null);
+      setDeleteBlockedByHistory(false);
+      await loadServices();
+    } catch {
+      setDeleteServiceError("Erro ao desativar o serviço.");
     } finally {
       setDeletingService(false);
     }
@@ -1794,26 +1812,31 @@ export function ServicesPage() {
 
       <ConfirmDialog
         open={Boolean(serviceToDelete)}
-        title="Excluir serviço"
+        title={deleteBlockedByHistory ? "Serviço com histórico" : "Excluir serviço"}
         description={
-          deleteServiceError
+          deleteBlockedByHistory
+            ? `"${serviceToDelete?.name}" está vinculado a agendamentos anteriores. O histórico será mantido — deseja desativar o serviço para que não apareça mais em novos agendamentos?`
+            : deleteServiceError
             ? deleteServiceError
             : serviceToDelete
             ? `Deseja excluir o serviço "${serviceToDelete.name}"? Esta ação não pode ser desfeita.`
             : ""
         }
-        confirmLabel="Excluir serviço"
+        confirmLabel={deleteBlockedByHistory ? "Desativar serviço" : "Excluir serviço"}
         loading={deletingService}
         onCancel={() => {
           if (!deletingService) {
             setServiceToDelete(null);
             setDeleteServiceError(null);
+            setDeleteBlockedByHistory(false);
           }
         }}
         onConfirm={() => {
-          if (serviceToDelete && !deleteServiceError) {
+          if (deleteBlockedByHistory && serviceToDelete) {
+            void deactivateServiceInsteadOfDelete(serviceToDelete);
+          } else if (serviceToDelete && !deleteServiceError) {
             void executeDeleteService(serviceToDelete);
-          } else if (deleteServiceError) {
+          } else {
             setServiceToDelete(null);
             setDeleteServiceError(null);
           }
