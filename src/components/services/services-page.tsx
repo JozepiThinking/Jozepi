@@ -1643,12 +1643,12 @@ export function ServicesPage() {
           </p>
         </div>
       ) : (
-        <div className="space-y-8">
+        <div className="space-y-10">
           {orderedCategories.map((category) => (
             <section key={category}>
-              {/* Category separator */}
+              {/* Category separator — larger, more prominent */}
               <div className="mb-4 flex items-center gap-3">
-                <h2 className="shrink-0 text-xs font-bold uppercase tracking-[0.2em] text-muted">
+                <h2 className="shrink-0 text-sm font-bold uppercase tracking-[0.22em] text-foreground/70">
                   {category}
                 </h2>
                 <div className="h-px flex-1 bg-border" />
@@ -1658,8 +1658,8 @@ export function ServicesPage() {
                 </span>
               </div>
 
-              {/* Service cards */}
-              <div className="space-y-3">
+              {/* Service cards — single container with dividers */}
+              <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card divide-y divide-border">
                 {servicesByCategory[category].map((service) => {
                   const financials = getServiceFinancials(service.id, service.price);
                   const profitPositive = financials.profit >= 0;
@@ -1667,102 +1667,98 @@ export function ServicesPage() {
                   return (
                     <article
                       key={service.id}
-                      className={`overflow-hidden rounded-xl border border-border bg-card shadow-card transition-opacity ${
+                      className={`flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:gap-4 sm:px-5 sm:py-4 transition-colors hover:bg-background/40 ${
                         service.active ? "" : "opacity-60"
                       }`}
                     >
-                      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:p-5">
-                        {/* Left: name, badges, duration, description */}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-base font-semibold text-foreground">
-                              {service.name}
-                            </h3>
-                            <span className="rounded-full bg-accent/10 px-2.5 py-0.5 text-[11px] font-semibold text-accent">
-                              {getServiceCategory(service)}
-                            </span>
-                            <span
-                              className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-                                service.active
-                                  ? "bg-success/10 text-success"
-                                  : "bg-muted/10 text-muted"
-                              }`}
-                            >
-                              {service.active ? "Ativo" : "Inativo"}
-                            </span>
-                          </div>
-                          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
-                            <Clock size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
-                            {formatDuration(service.duration_minutes)}
-                          </div>
-                          {service.description && (
-                            <p className="mt-2 line-clamp-2 text-sm text-muted">
-                              {service.description}
+                      {/* Left: name, badges, duration, description */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-sans text-sm font-semibold text-foreground">
+                            {service.name}
+                          </h3>
+                          <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent">
+                            {getServiceCategory(service)}
+                          </span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              service.active
+                                ? "bg-success/10 text-success"
+                                : "bg-muted/10 text-muted"
+                            }`}
+                          >
+                            {service.active ? "Ativo" : "Inativo"}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1 text-xs text-muted">
+                          <Clock size={12} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                          {formatDuration(service.duration_minutes)}
+                        </div>
+                        {service.description && (
+                          <p className="mt-1.5 line-clamp-2 text-xs text-muted">
+                            {service.description}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Right: price block + agendar + icon actions */}
+                      <div className="flex shrink-0 flex-row items-center justify-between gap-3 sm:flex-col sm:items-end sm:gap-2">
+                        {/* Financials */}
+                        <div className="text-right">
+                          <p className="text-base font-bold leading-tight text-foreground">
+                            {formatCurrency(Number(service.price))}
+                          </p>
+                          {financials.hasCost && (
+                            <p className="text-[11px] leading-tight text-muted">
+                              Custo {formatCurrency(financials.cost)}
                             </p>
                           )}
+                          <p className={`text-[11px] font-semibold leading-tight ${profitPositive ? "text-success" : "text-danger"}`}>
+                            Lucro {formatCurrency(financials.profit)}
+                          </p>
                         </div>
 
-                        {/* Right: price + financials + actions */}
-                        <div className="flex shrink-0 flex-row items-center justify-between gap-4 sm:flex-col sm:items-end">
-                          <div className="text-right">
-                            <p className="text-xl font-bold leading-none text-foreground">
-                              {formatCurrency(Number(service.price))}
-                            </p>
-                            {financials.hasCost && (
-                              <p className="mt-1 text-xs text-muted">
-                                Custo: {formatCurrency(financials.cost)}
-                              </p>
-                            )}
-                            <p
-                              className={`text-xs font-semibold ${
-                                profitPositive ? "text-success" : "text-danger"
-                              }`}
-                            >
-                              Lucro: {formatCurrency(financials.profit)}
-                            </p>
-                          </div>
-
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleBookService(service.id)}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-success/30 bg-success/10 px-3 py-1.5 text-xs font-semibold text-success transition-colors hover:bg-success/20"
-                              title="Agendar serviço"
-                              aria-label="Agendar serviço"
-                            >
-                              <CalendarBlank size={13} weight="bold" aria-hidden />
-                              Agendar
-                            </button>
+                        {/* Agendar + icon actions stacked */}
+                        <div className="flex flex-col items-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleBookService(service.id)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-success/30 bg-success/10 px-2.5 py-1.5 text-[11px] font-semibold text-success transition-colors hover:bg-success/20"
+                            title="Agendar serviço"
+                            aria-label="Agendar serviço"
+                          >
+                            <CalendarBlank size={12} weight="bold" aria-hidden />
+                            Agendar
+                          </button>
+                          <div className="flex items-center gap-1">
                             <button
                               type="button"
                               onClick={() => openEditForm(service)}
-                              className="flex h-8 w-8 items-center justify-center rounded-lg bg-background text-muted transition-colors hover:bg-card hover:text-foreground"
-                              title="Editar serviço"
+                              className="flex h-6 w-6 items-center justify-center rounded text-muted/60 transition-colors hover:bg-background hover:text-foreground"
+                              title="Editar"
                               aria-label="Editar serviço"
                             >
-                              <PencilSimple size={15} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                              <PencilSimple size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
                             </button>
                             <button
                               type="button"
                               onClick={() => handleToggleActive(service)}
-                              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                                service.active
-                                  ? "bg-background text-muted hover:bg-primary/10 hover:text-primary"
-                                  : "bg-background text-muted hover:bg-card hover:text-foreground"
+                              className={`flex h-6 w-6 items-center justify-center rounded transition-colors hover:bg-background ${
+                                service.active ? "text-muted/60 hover:text-primary" : "text-muted/60 hover:text-foreground"
                               }`}
                               title={service.active ? "Desativar" : "Ativar"}
                               aria-label={service.active ? "Desativar serviço" : "Ativar serviço"}
                             >
-                              <Power size={15} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                              <Power size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
                             </button>
                             <button
                               type="button"
                               onClick={() => requestDeleteService(service)}
-                              className="flex h-8 w-8 items-center justify-center rounded-lg bg-background text-muted transition-colors hover:bg-danger/10 hover:text-danger"
-                              title="Excluir serviço"
+                              className="flex h-6 w-6 items-center justify-center rounded text-muted/60 transition-colors hover:bg-background hover:text-danger"
+                              title="Excluir"
                               aria-label="Excluir serviço"
                             >
-                              <Trash size={15} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                              <Trash size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
                             </button>
                           </div>
                         </div>
