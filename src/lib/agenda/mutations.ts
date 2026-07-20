@@ -283,6 +283,12 @@ export async function importLocalAppointments(
   const localAppointments = readLocalAppointments();
   if (localAppointments.length === 0) return remoteAppointments;
 
+  // Clear localStorage IMMEDIATELY after reading — before any async inserts.
+  // This prevents race conditions when importLocalAppointments is called
+  // concurrently (e.g. React StrictMode double-invoke): only the first caller
+  // sees data; subsequent calls see an empty store and return early.
+  clearLocalAppointments();
+
   const existingKeys = new Set(
     remoteAppointments.map(
       (appointment) =>
@@ -339,10 +345,6 @@ export async function importLocalAppointments(
     importedAppointments.push({ ...appointment, id: savedAppointmentId });
     existingKeys.add(appointmentKey);
   }
-
-  // Always clear local storage once we have a successful remote connection.
-  // Keeping stale local entries would cause deleted remote appointments to be re-inserted.
-  clearLocalAppointments();
 
   return [...remoteAppointments, ...importedAppointments];
 }

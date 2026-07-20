@@ -853,6 +853,7 @@ export function AgendaCalendar() {
         ((appointmentsData as AppointmentOrderRow[] | null) ?? []).map(
           mapOrderToAppointment
         );
+
       try {
         setAppointments(
           await importLocalAppointmentsToSupabase(profile.workshop_id, remoteAppointments)

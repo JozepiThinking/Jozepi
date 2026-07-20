@@ -86,6 +86,7 @@ interface FixedCost {
   amount: number | string;
   active: boolean;
   notes: string | null;
+  payment_day: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +96,7 @@ interface FixedCostForm {
   kind: FixedCostKind;
   amount: string;
   notes: string;
+  paymentDay: string;
 }
 
 interface UtensilWearSetting {
@@ -325,7 +327,58 @@ const initialFixedCostForm: FixedCostForm = {
   kind: "real",
   amount: "",
   notes: "",
+  paymentDay: "1",
 };
+
+const FIXED_COST_SELECT_FULL =
+  "id, workshop_id, name, kind, amount, active, notes, payment_day, created_at, updated_at";
+const FIXED_COST_SELECT_LEGACY =
+  "id, workshop_id, name, kind, amount, active, notes, created_at, updated_at";
+
+const paymentDayOptions = Array.from({ length: 31 }, (_, index) => {
+  const day = String(index + 1);
+  return { value: day, label: `Dia ${day}` };
+});
+
+function normalizeFixedCost(row: Record<string, unknown>): FixedCost {
+  const paymentDayRaw = row.payment_day;
+  const paymentDay =
+    typeof paymentDayRaw === "number"
+      ? paymentDayRaw
+      : typeof paymentDayRaw === "string" && paymentDayRaw.trim()
+        ? Number(paymentDayRaw)
+        : null;
+
+  return {
+    id: String(row.id),
+    workshop_id: String(row.workshop_id),
+    name: String(row.name ?? ""),
+    kind: row.kind === "estimated" ? "estimated" : "real",
+    amount: (row.amount as number | string) ?? 0,
+    active: Boolean(row.active ?? true),
+    notes: typeof row.notes === "string" ? row.notes : null,
+    payment_day:
+      paymentDay !== null && Number.isFinite(paymentDay)
+        ? Math.min(31, Math.max(1, Math.round(paymentDay)))
+        : null,
+    created_at: String(row.created_at ?? new Date().toISOString()),
+    updated_at: String(row.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function fixedCostExpenseSource(costId: string, yearMonth: string) {
+  return `fixed_cost:${costId}:${yearMonth}`;
+}
+
+function paymentDateForMonth(year: number, monthIndex: number, paymentDay: number) {
+  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+  const day = Math.min(Math.max(1, paymentDay), lastDay);
+  return dateKey(new Date(year, monthIndex, day));
+}
+
+function yearMonthKey(year: number, monthIndex: number) {
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+}
 
 function dateKey(date: Date) {
   const year = date.getFullYear();
@@ -562,6 +615,99 @@ async function loadFinancialTransactions(
   }
 
   throw new Error(lastError?.message ?? "Não foi possível carregar lançamentos.");
+}
+
+async function syncFixedCostExpenses(
+  supabase: ReturnType<typeof createClient>,
+  workshopId: string,
+  costs: FixedCost[],
+  existingTransactions: FinancialTransaction[]
+): Promise<FinancialTransaction[]> {
+  const today = startOfDay(new Date());
+  const bySource = new Map(
+    existingTransactions
+      .filter((tx) => tx.source?.startsWith("fixed_cost:"))
+      .map((tx) => [tx.source as string, tx])
+  );
+  const synced: FinancialTransaction[] = [];
+
+  for (const cost of costs) {
+    if (!cost.active || cost.kind !== "real" || !cost.payment_day) continue;
+
+    const createdAt = cost.created_at ? new Date(cost.created_at) : today;
+
+    for (let offset = 0; offset < 12; offset += 1) {
+      const monthDate = new Date(today.getFullYear(), today.getMonth() - offset, 1);
+      const paymentDate = paymentDateForMonth(
+        monthDate.getFullYear(),
+        monthDate.getMonth(),
+        cost.payment_day
+      );
+      const paymentDateObj = startOfDay(parseLocalDate(paymentDate));
+
+      if (paymentDateObj > today) continue;
+      if (monthDate < startOfMonth(createdAt)) continue;
+
+      const source = fixedCostExpenseSource(
+        cost.id,
+        yearMonthKey(monthDate.getFullYear(), monthDate.getMonth())
+      );
+      const amount = toCurrencyNumber(cost.amount);
+      const existing = bySource.get(source);
+
+      if (existing) {
+        const needsUpdate =
+          Number(existing.amount) !== amount ||
+          existing.description !== cost.name ||
+          existing.transaction_date !== paymentDate;
+
+        if (!needsUpdate) continue;
+
+        const { data, error } = await supabase
+          .from("financial_transactions")
+          .update({
+            description: cost.name,
+            amount,
+            category: "Custo Fixo",
+            transaction_date: paymentDate,
+            source,
+          })
+          .eq("id", existing.id)
+          .eq("workshop_id", workshopId)
+          .select(TRANSACTION_SELECT_FULL)
+          .maybeSingle();
+
+        if (!error && data) {
+          const normalized = normalizeTransactionRow(data as Record<string, unknown>);
+          synced.push(normalized);
+          bySource.set(source, normalized);
+        }
+        continue;
+      }
+
+      const { data, error } = await supabase
+        .from("financial_transactions")
+        .insert({
+          workshop_id: workshopId,
+          type: "despesa",
+          description: cost.name,
+          amount,
+          category: "Custo Fixo",
+          transaction_date: paymentDate,
+          source,
+        })
+        .select(TRANSACTION_SELECT_FULL)
+        .single();
+
+      if (!error && data) {
+        const normalized = normalizeTransactionRow(data as Record<string, unknown>);
+        synced.push(normalized);
+        bySource.set(source, normalized);
+      }
+    }
+  }
+
+  return synced;
 }
 
 async function fetchFinancialTransactionById(
@@ -1338,7 +1484,7 @@ export function FinancePage() {
           .order("name", { ascending: true }),
         supabase
           .from("fixed_costs")
-          .select("id, workshop_id, name, kind, amount, active, notes, created_at, updated_at")
+          .select(FIXED_COST_SELECT_FULL)
           .eq("workshop_id", profile.workshop_id)
           .order("name", { ascending: true }),
       ]);
@@ -1368,12 +1514,54 @@ export function FinancePage() {
       setSuppliers(sortSuppliers((suppliersResult.data as Supplier[] | null) ?? []));
     }
 
-    const storedFixedCosts = readStoredFixedCosts();
+    const storedFixedCosts = readStoredFixedCosts().map((cost) =>
+      normalizeFixedCost(cost as unknown as Record<string, unknown>)
+    );
+    let loadedFixedCosts = storedFixedCosts;
     if (fixedCostsResult.error) {
-      setFixedCosts(storedFixedCosts);
+      if (isMissingColumnError(fixedCostsResult.error, "payment_day")) {
+        const legacyResult = await supabase
+          .from("fixed_costs")
+          .select(FIXED_COST_SELECT_LEGACY)
+          .eq("workshop_id", profile.workshop_id)
+          .order("name", { ascending: true });
+        if (!legacyResult.error) {
+          loadedFixedCosts = mergeFixedCosts(
+            storedFixedCosts,
+            ((legacyResult.data as Record<string, unknown>[] | null) ?? []).map(
+              normalizeFixedCost
+            )
+          );
+        } else {
+          loadedFixedCosts = storedFixedCosts;
+        }
+      } else {
+        loadedFixedCosts = storedFixedCosts;
+      }
     } else {
-      const remoteFixedCosts = (fixedCostsResult.data as FixedCost[] | null) ?? [];
-      setFixedCosts(mergeFixedCosts(storedFixedCosts, remoteFixedCosts));
+      loadedFixedCosts = mergeFixedCosts(
+        storedFixedCosts,
+        ((fixedCostsResult.data as Record<string, unknown>[] | null) ?? []).map(
+          normalizeFixedCost
+        )
+      );
+    }
+    setFixedCosts(loadedFixedCosts);
+
+    if (profile.workshop_id) {
+      const synced = await syncFixedCostExpenses(
+        supabase,
+        profile.workshop_id,
+        loadedFixedCosts,
+        transactionsData
+      );
+      if (synced.length > 0) {
+        setTransactions((prev) => {
+          const byId = new Map(prev.map((item) => [item.id, item]));
+          synced.forEach((item) => byId.set(item.id, item));
+          return Array.from(byId.values());
+        });
+      }
     }
 
     setLoading(false);
@@ -2049,6 +2237,7 @@ export function FinancePage() {
         maximumFractionDigits: 2,
       }),
       notes: cost.notes ?? "",
+      paymentDay: String(cost.payment_day ?? 1),
     });
     setFixedCostError(null);
     setShowFixedCostForm(true);
@@ -2075,6 +2264,15 @@ export function FinancePage() {
       return;
     }
 
+    const paymentDay = Number(fixedCostForm.paymentDay);
+    if (
+      fixedCostForm.kind === "real" &&
+      (!Number.isFinite(paymentDay) || paymentDay < 1 || paymentDay > 31)
+    ) {
+      setFixedCostError("Informe o dia de pagamento (1 a 31).");
+      return;
+    }
+
     setSavingFixedCost(true);
     setFixedCostError(null);
 
@@ -2088,6 +2286,7 @@ export function FinancePage() {
       amount,
       active: existingCost?.active ?? true,
       notes: fixedCostForm.notes.trim() || null,
+      payment_day: fixedCostForm.kind === "real" ? paymentDay : null,
       created_at: existingCost?.created_at ?? now,
       updated_at: now,
     };
@@ -2098,25 +2297,63 @@ export function FinancePage() {
       amount,
       active: localCost.active,
       notes: localCost.notes,
+      payment_day: localCost.payment_day,
       updated_at: now,
     };
-    const result = editingFixedCostId
+
+    let result = editingFixedCostId
       ? await supabase
           .from("fixed_costs")
           .update(payload)
           .eq("id", editingFixedCostId)
           .eq("workshop_id", workshopId)
-          .select("id, workshop_id, name, kind, amount, active, notes, created_at, updated_at")
+          .select(FIXED_COST_SELECT_FULL)
           .single()
       : await supabase
           .from("fixed_costs")
           .insert(payload)
-          .select("id, workshop_id, name, kind, amount, active, notes, created_at, updated_at")
+          .select(FIXED_COST_SELECT_FULL)
           .single();
+
+    if (result.error && isMissingColumnError(result.error, "payment_day")) {
+      const { payment_day: _removed, ...legacyPayload } = payload;
+      result = editingFixedCostId
+        ? await supabase
+            .from("fixed_costs")
+            .update(legacyPayload)
+            .eq("id", editingFixedCostId)
+            .eq("workshop_id", workshopId)
+            .select(FIXED_COST_SELECT_LEGACY)
+            .single()
+        : await supabase
+            .from("fixed_costs")
+            .insert(legacyPayload)
+            .select(FIXED_COST_SELECT_LEGACY)
+            .single();
+
+      if (!result.error) {
+        setError(
+          "Custo salvo. Para gerar despesas automáticas, execute a migration 016 no Supabase (coluna payment_day)."
+        );
+      }
+    }
 
     setSavingFixedCost(false);
 
-    const savedCost = result.data ? (result.data as FixedCost) : localCost;
+    if (result.error && !result.data) {
+      setFixedCostError(result.error.message);
+      return;
+    }
+
+    const savedCost = result.data
+      ? normalizeFixedCost({
+          ...(result.data as Record<string, unknown>),
+          payment_day:
+            (result.data as Record<string, unknown>).payment_day ??
+            localCost.payment_day,
+        })
+      : localCost;
+
     setFixedCosts((prev) => {
       const nextCosts = editingFixedCostId
         ? sortFixedCosts([
@@ -2127,6 +2364,23 @@ export function FinancePage() {
       writeStoredFixedCosts(nextCosts);
       return nextCosts;
     });
+
+    if (savedCost.kind === "real" && savedCost.active && savedCost.payment_day) {
+      const synced = await syncFixedCostExpenses(
+        supabase,
+        workshopId,
+        [savedCost],
+        transactions
+      );
+      if (synced.length > 0) {
+        setTransactions((prev) => {
+          const byId = new Map(prev.map((item) => [item.id, item]));
+          synced.forEach((item) => byId.set(item.id, item));
+          return Array.from(byId.values());
+        });
+      }
+    }
+
     resetFixedCostForm();
   }
 
@@ -2146,6 +2400,27 @@ export function FinancePage() {
       .update({ active: nextCost.active, updated_at: nextCost.updated_at })
       .eq("id", cost.id)
       .eq("workshop_id", cost.workshop_id);
+
+    if (
+      nextCost.active &&
+      nextCost.kind === "real" &&
+      nextCost.payment_day &&
+      workshopId
+    ) {
+      const synced = await syncFixedCostExpenses(
+        supabase,
+        workshopId,
+        [nextCost],
+        transactions
+      );
+      if (synced.length > 0) {
+        setTransactions((prev) => {
+          const byId = new Map(prev.map((item) => [item.id, item]));
+          synced.forEach((item) => byId.set(item.id, item));
+          return Array.from(byId.values());
+        });
+      }
+    }
   }
 
   function requestDeleteFixedCost(cost: FixedCost) {
@@ -2710,7 +2985,7 @@ export function FinancePage() {
                   Custos Fixos
                 </h2>
                 <p className="mt-1 text-sm text-muted">
-                  Controle custos reais e médias estimadas que entram no custo por lavagem.
+                  Custos reais entram como despesa todo mês na data de pagamento escolhida.
                 </p>
               </div>
 
@@ -2791,7 +3066,7 @@ export function FinancePage() {
                       {editingFixedCostId ? "Editar custo fixo" : "Novo custo fixo"}
                     </h2>
                     <p className="mt-1 text-sm text-muted">
-                      Cadastre custos reais ou médias estimadas mensais.
+                      Custos reais geram despesa automática todo mês na data de pagamento.
                     </p>
                   </div>
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -2832,6 +3107,19 @@ export function FinancePage() {
                       }
                       placeholder="250,00"
                     />
+                    {fixedCostForm.kind === "real" && (
+                      <Dropdown
+                        label="Dia de pagamento"
+                        value={fixedCostForm.paymentDay}
+                        options={paymentDayOptions}
+                        onChange={(paymentDay) =>
+                          setFixedCostForm((prev) => ({
+                            ...prev,
+                            paymentDay,
+                          }))
+                        }
+                      />
+                    )}
                     <Input
                       label={
                         fixedCostForm.kind === "estimated"
@@ -2906,6 +3194,11 @@ export function FinancePage() {
                             {cost.kind === "estimated" && (
                               <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
                                 Estimado
+                              </span>
+                            )}
+                            {cost.kind === "real" && cost.payment_day && (
+                              <span className="rounded-full bg-background px-2.5 py-1 text-[11px] font-semibold text-muted">
+                                Todo dia {cost.payment_day}
                               </span>
                             )}
                           </div>

@@ -61,7 +61,7 @@ type ProductTypeFilter = "all" | "liquid" | "utensil";
 type ProductPageTab = "products" | "suppliers";
 
 type ProductDeleteConfirm =
-  | { type: "product"; product: ProductItem }
+  | { type: "product"; product: ProductItem; linkedServiceCount: number }
   | { type: "supplier"; supplier: Supplier }
   | null;
 
@@ -996,7 +996,10 @@ export function ProductsPage() {
   }
 
   function requestDeleteProduct(product: ProductItem) {
-    setDeleteConfirm({ type: "product", product });
+    const linkedServiceCount = Object.values(serviceProductUsages).filter(
+      (usages) => usages.some((u) => u.productId === product.id)
+    ).length;
+    setDeleteConfirm({ type: "product", product, linkedServiceCount });
   }
 
   async function executeDeleteProduct(product: ProductItem) {
@@ -1004,8 +1007,31 @@ export function ProductsPage() {
     setError(null);
 
     try {
+      // Null out product_id in financial_transactions so historical records
+      // keep the description text but drop the FK reference
+      await supabase
+        .from("financial_transactions")
+        .update({ product_id: null })
+        .eq("product_id", product.id);
+
+      // Remove the product from all service definitions
+      await supabase
+        .from("service_product_usages")
+        .delete()
+        .eq("product_id", product.id);
+
+      // Delete the product itself
       await deleteSupabaseProduct(supabase, product.id);
+
+      // Update local state: remove product and strip it from all service usages
       setProducts((prev) => prev.filter((item) => item.id !== product.id));
+      setServiceProductUsages((prev) => {
+        const next: typeof prev = {};
+        for (const [serviceId, usages] of Object.entries(prev)) {
+          next[serviceId] = usages.filter((u) => u.productId !== product.id);
+        }
+        return next;
+      });
 
       if (editingProduct?.id === product.id) {
         closeForm();
@@ -1015,8 +1041,8 @@ export function ProductsPage() {
     } catch (err) {
       setError(
         err instanceof Error
-          ? `Não foi possível excluir no Supabase: ${err.message}`
-          : "Não foi possível excluir no Supabase."
+          ? `Não foi possível excluir: ${err.message}`
+          : "Não foi possível excluir o produto."
       );
     } finally {
       setDeletingItem(false);
@@ -1027,8 +1053,8 @@ export function ProductsPage() {
     const product = products.find((item) => item.id === productId);
     setReplenishingProductId(productId);
     setReplenishForm({
-      supplierId: product?.supplierId ?? "",
-      amount: "",
+      supplierId: "",
+      amount: product?.totalCost ?? "",
       paidAmount: "",
       purchaseDate: dateKey(today),
     });
@@ -1051,84 +1077,19 @@ export function ProductsPage() {
   async function handleReplenishProduct(product: ProductItem) {
     setReplenishError(null);
 
-    let addedAmount: number;
-    try {
-      addedAmount = parsePositiveNumber(replenishForm.amount);
-    } catch {
-      setReplenishError("Informe uma quantidade válida para repor.");
-      return;
-    }
-
-    let paidAmount: number;
-    try {
-      paidAmount = parseMoney(replenishForm.paidAmount || "0");
-    } catch {
-      setReplenishError("Informe um valor pago válido.");
-      return;
-    }
-
-    if (paidAmount <= 0) {
-      setReplenishError("Informe o valor pago na reposição.");
-      return;
-    }
-
-    if (!replenishForm.purchaseDate) {
-      setReplenishError("Informe a data da compra.");
-      return;
-    }
-
     if (!workshopId) {
       setReplenishError("Oficina não encontrada.");
       return;
     }
 
-    const currentStock = getProductRemainingStock(product);
-    const nextStock = currentStock + addedAmount;
-    const nextInitialStock = Math.max(getProductInitialStock(product), nextStock);
-    const stockFieldPatch =
-      product.type === "liquid"
-        ? { volumeMl: String(nextInitialStock) }
-        : { quantity: String(nextInitialStock) };
-
-    const supplierName = getSupplierName(replenishForm.supplierId);
-    const baseTransactionPayload = {
-      workshop_id: workshopId,
-      type: "despesa",
-      description: `Reposição: ${product.name}`,
-      amount: paidAmount,
-      category: "Produtos",
-      transaction_date: replenishForm.purchaseDate,
-    };
-    const { error: transactionError } = await supabase
-      .from("financial_transactions")
-      .insert({
-        ...baseTransactionPayload,
-        supplier_id: replenishForm.supplierId || null,
-        product_id: product.id,
-        source: "stock_replenishment",
-      });
-
-    if (transactionError) {
-      const { error: fallbackTransactionError } = await supabase
-        .from("financial_transactions")
-        .insert({
-          ...baseTransactionPayload,
-          notes: replenishForm.supplierId
-            ? `Fornecedor: ${supplierName}`
-            : null,
-        });
-
-      if (fallbackTransactionError) {
-        setReplenishError(fallbackTransactionError.message);
-        return;
-      }
-    }
+    // Fill bar to 100%: set stockRemaining = initialStock (keep max unchanged)
+    const initialStock = getProductInitialStock(product);
+    const newPrice = replenishForm.amount.trim();
 
     const updatedProduct: ProductItem = {
       ...product,
-      ...stockFieldPatch,
-      supplierId: replenishForm.supplierId || product.supplierId,
-      stockRemaining: String(nextStock),
+      stockRemaining: String(initialStock),
+      totalCost: newPrice || product.totalCost,
       priceHistory: product.priceHistory ?? [],
     };
 
@@ -1136,17 +1097,13 @@ export function ProductsPage() {
       await saveSupabaseProduct(supabase, workshopId, updatedProduct);
     } catch (err) {
       setReplenishError(
-        err instanceof Error
-          ? `Reposição registrada, mas estoque não sincronizou: ${err.message}`
-          : "Reposição registrada, mas estoque não sincronizou."
+        err instanceof Error ? err.message : "Erro ao salvar."
       );
       return;
     }
 
     setProducts((prev) =>
-      prev.map((item) =>
-        item.id === product.id ? updatedProduct : item
-      )
+      prev.map((item) => (item.id === product.id ? updatedProduct : item))
     );
     closeReplenish();
   }
@@ -1803,66 +1760,29 @@ export function ProductsPage() {
                       )}
 
                       {replenishingProductId === product.id && (
-                        <div className="mt-3 rounded-lg border border-border bg-card shadow-card p-3">
-                          <p className="mb-3 rounded-lg bg-background px-3 py-2 text-xs font-semibold text-muted">
-                            Produto:{" "}
-                            <span className="text-foreground">
-                              {product.name}
-                            </span>
+                        <div className="mt-3 rounded-lg border border-success/30 bg-success/5 p-3">
+                          <p className="mb-0.5 text-xs font-semibold text-foreground">
+                            Atualizar preço de compra
                           </p>
-                          <div className="grid grid-cols-1 gap-3">
-                            <Dropdown
-                              label="Fornecedor"
-                              value={replenishForm.supplierId}
-                              options={supplierOptions}
-                              onChange={(supplierId) => {
-                                setReplenishForm((prev) => ({ ...prev, supplierId }));
-                                setReplenishError(null);
-                              }}
-                            />
-                            <Input
-                              label={`Quantidade reposta (${stockUnit})`}
-                              type="number"
-                              min="0"
-                              step={product.type === "liquid" ? "1" : "0.01"}
-                              className="number-input-no-spinner"
-                              value={replenishForm.amount}
-                              onChange={(event) => {
-                                setReplenishForm((prev) => ({
-                                  ...prev,
-                                  amount: event.target.value,
-                                }));
-                                setReplenishError(null);
-                              }}
-                              placeholder={product.type === "liquid" ? "500" : "1"}
-                            />
-                            <Input
-                              label="Valor pago na reposição"
-                              prefix="R$"
-                              value={replenishForm.paidAmount}
-                              autoComplete="off"
-                              onChange={(event) => {
-                                setReplenishForm((prev) => ({
-                                  ...prev,
-                                  paidAmount: event.target.value,
-                                }));
-                                setReplenishError(null);
-                              }}
-                              placeholder="120,00"
-                            />
-                            <Input
-                              label="Data da compra"
-                              type="date"
-                              value={replenishForm.purchaseDate}
-                              onChange={(event) => {
-                                setReplenishForm((prev) => ({
-                                  ...prev,
-                                  purchaseDate: event.target.value,
-                                }));
-                                setReplenishError(null);
-                              }}
-                            />
-                          </div>
+                          <p className="mb-2 text-[11px] text-muted">
+                            Estoque será preenchido ao máximo. Informe o novo custo do produto (opcional).
+                          </p>
+                          <Input
+                            label="Custo total (R$)"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            className="number-input-no-spinner"
+                            value={replenishForm.amount}
+                            onChange={(event) => {
+                              setReplenishForm((prev) => ({
+                                ...prev,
+                                amount: event.target.value,
+                              }));
+                              setReplenishError(null);
+                            }}
+                            placeholder={product.totalCost || "0,00"}
+                          />
                           {replenishError && (
                             <p className="mt-2 text-xs font-medium text-danger">
                               {replenishError}
@@ -1881,7 +1801,7 @@ export function ProductsPage() {
                               variant="success"
                               onClick={() => handleReplenishProduct(product)}
                             >
-                              Salvar
+                              Repor
                             </Button>
                           </div>
                         </div>
@@ -2267,10 +2187,16 @@ export function ProductsPage() {
         title="Excluir produto"
         description={
           deleteConfirm?.type === "product"
-            ? `Deseja excluir ${deleteConfirm.product.name}?`
+            ? deleteConfirm.linkedServiceCount > 0
+              ? `Este produto está vinculado a ${deleteConfirm.linkedServiceCount} ${deleteConfirm.linkedServiceCount === 1 ? "serviço" : "serviços"}. Ao excluir, será removido dos serviços mas o nome será mantido no histórico financeiro.`
+              : `Deseja excluir "${deleteConfirm.product.name}"? Esta ação não pode ser desfeita.`
             : ""
         }
-        confirmLabel="Excluir produto"
+        confirmLabel={
+          deleteConfirm?.type === "product" && deleteConfirm.linkedServiceCount > 0
+            ? "Excluir mesmo assim"
+            : "Excluir produto"
+        }
         loading={deletingItem}
         onCancel={() => {
           if (!deletingItem) setDeleteConfirm(null);

@@ -468,11 +468,20 @@ export function ServicesPage() {
     setCategoryError(null);
     setAddingProduct(false);
     setProductFormOpen(false);
-    showForm();
+    // do not open the top form — editing is inline in the card
   }
 
   function closeForm() {
-    if (!formOpen) return;
+    // If editing inline (no top form open), just reset editing state immediately
+    if (!formOpen) {
+      setEditingService(null);
+      setForm(emptyForm);
+      setError(null);
+      setCategoryError(null);
+      setAddingProduct(false);
+      setProductFormOpen(false);
+      return;
+    }
 
     clearCloseFormTimeout();
     setFormClosing(true);
@@ -975,7 +984,7 @@ export function ServicesPage() {
         </div>
       )}
 
-      {formOpen && (
+      {formOpen && !editingService && (
         <form
           key={formAnimationKey}
           onSubmit={handleSaveService}
@@ -1667,105 +1676,315 @@ export function ServicesPage() {
                   const financials = getServiceFinancials(service.id, service.price);
                   const profitPositive = financials.profit >= 0;
 
+                  const isEditingThis = editingService?.id === service.id;
+
                   return (
                     <article
                       key={service.id}
-                      className={`flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:gap-4 sm:px-5 sm:py-4 transition-colors hover:bg-background/40 ${
-                        service.active ? "" : "opacity-60"
+                      className={`transition-colors ${
+                        isEditingThis
+                          ? "bg-background/60"
+                          : `flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:gap-4 sm:px-5 sm:py-4 hover:bg-background/40 ${service.active ? "" : "opacity-60"}`
                       }`}
                     >
-                      {/* Left: name, badges, duration, description */}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="font-sans text-sm font-semibold text-foreground">
-                            {service.name}
-                          </h3>
-                          <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent">
-                            {getServiceCategory(service)}
-                          </span>
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                              service.active
-                                ? "bg-success/10 text-success"
-                                : "bg-muted/10 text-muted"
-                            }`}
-                          >
-                            {service.active ? "Ativo" : "Inativo"}
-                          </span>
-                        </div>
-                        <div className="mt-1 flex items-center gap-1 text-xs text-muted">
-                          <Clock size={12} weight={SERVICE_ICON_WEIGHT} aria-hidden />
-                          {formatDuration(service.duration_minutes)}
-                        </div>
-                        {service.description && (
-                          <p className="mt-1.5 line-clamp-2 text-xs text-muted">
-                            {service.description}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Right: price block + agendar + icon actions */}
-                      <div className="flex shrink-0 flex-row items-center justify-between gap-3 sm:flex-col sm:items-end sm:gap-2">
-                        {/* Financials */}
-                        <div className="text-right">
-                          <p className="text-base font-bold leading-tight text-foreground">
-                            {formatCurrency(Number(service.price))}
-                          </p>
-                          {financials.hasCost && (
-                            <p className="text-[11px] leading-tight text-muted">
-                              Custo {formatCurrency(financials.cost)}
-                            </p>
-                          )}
-                          <p className={`text-[11px] font-semibold leading-tight ${profitPositive ? "text-success" : "text-danger"}`}>
-                            Lucro {formatCurrency(financials.profit)}
-                          </p>
-                        </div>
-
-                        {/* Agendar + icon actions stacked */}
-                        <div className="flex flex-col items-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleBookService(service.id)}
-                            className="inline-flex items-center gap-1 rounded-lg border border-success/30 bg-success/10 px-2.5 py-1.5 text-[11px] font-semibold text-success transition-colors hover:bg-success/20"
-                            title="Agendar serviço"
-                            aria-label="Agendar serviço"
-                          >
-                            <CalendarBlank size={12} weight="bold" aria-hidden />
-                            Agendar
-                          </button>
-                          <div className="flex items-center gap-1">
+                      {isEditingThis ? (
+                        /* ── Inline edit form ───────────────────────────────────── */
+                        <form onSubmit={handleSaveService} autoComplete="off" className="w-full p-4 sm:p-5">
+                          {/* Header */}
+                          <div className="mb-4 flex items-center justify-between gap-4">
+                            <div>
+                              <h3 className="text-sm font-semibold text-foreground">
+                                Editar serviço
+                              </h3>
+                              <p className="mt-0.5 text-xs text-muted">{service.name}</p>
+                            </div>
                             <button
                               type="button"
-                              onClick={() => openEditForm(service)}
-                              className="flex h-6 w-6 items-center justify-center rounded text-muted/60 transition-colors hover:bg-background hover:text-foreground"
-                              title="Editar"
-                              aria-label="Editar serviço"
+                              onClick={closeForm}
+                              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-card hover:text-foreground"
+                              aria-label="Fechar edição"
                             >
-                              <PencilSimple size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleToggleActive(service)}
-                              className={`flex h-6 w-6 items-center justify-center rounded transition-colors hover:bg-background ${
-                                service.active ? "text-muted/60 hover:text-primary" : "text-muted/60 hover:text-foreground"
-                              }`}
-                              title={service.active ? "Desativar" : "Ativar"}
-                              aria-label={service.active ? "Desativar serviço" : "Ativar serviço"}
-                            >
-                              <Power size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => requestDeleteService(service)}
-                              className="flex h-6 w-6 items-center justify-center rounded text-muted/60 transition-colors hover:bg-background hover:text-danger"
-                              title="Excluir"
-                              aria-label="Excluir serviço"
-                            >
-                              <Trash size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                              <X size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
                             </button>
                           </div>
-                        </div>
-                      </div>
+
+                          {/* Fields */}
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <Input
+                              label="Nome do serviço"
+                              value={form.name}
+                              autoComplete="off"
+                              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                              placeholder="Lavagem completa"
+                            />
+                            <Dropdown
+                              label="Categoria"
+                              value={form.category}
+                              options={serviceCategoryOptions}
+                              onChange={(category) => {
+                                setForm((prev) => ({ ...prev, category }));
+                                setCategoryError(null);
+                              }}
+                              actionLabel="Adicionar"
+                              createPlaceholder="Ex: Martelinho, Proteção, Inspeção"
+                              onCreateOption={handleAddServiceCategory}
+                              onDeleteOption={handleDeleteServiceCategory}
+                            />
+                            {categoryError && (
+                              <p className="text-xs font-medium text-danger">{categoryError}</p>
+                            )}
+                            <Input
+                              label="Preço base"
+                              prefix="R$"
+                              value={form.price}
+                              autoComplete="off"
+                              onChange={(e) => setForm((prev) => ({ ...prev, price: e.target.value }))}
+                              placeholder="150,00"
+                            />
+                            <Dropdown
+                              id="service-duration-inline"
+                              label="Duração em horas"
+                              value={form.durationMinutes}
+                              options={durationOptions}
+                              onChange={(durationMinutes) => setForm((prev) => ({ ...prev, durationMinutes }))}
+                            />
+                            <Input
+                              label="Descrição"
+                              value={form.description}
+                              autoComplete="off"
+                              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+                              placeholder="Detalhes do serviço"
+                            />
+                          </div>
+
+                          {/* Products section */}
+                          <div className="mt-5 rounded-lg border border-border bg-card p-4 sm:p-5">
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <h4 className="text-sm font-semibold text-foreground">
+                                  Produtos utilizados neste serviço
+                                </h4>
+                                <p className="mt-1 text-xs text-muted">
+                                  Escolha produtos do catálogo e informe quanto será usado.
+                                </p>
+                              </div>
+                              <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
+                                <button
+                                  type="button"
+                                  onClick={() => setAddingProduct(true)}
+                                  disabled={availableProducts.length === 0}
+                                  className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all hover:bg-success hover:text-white disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-1.5 sm:text-xs"
+                                >
+                                  <Plus size={14} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                                  Adicionar produto
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setProductForm(emptyProductForm); setProductError(null); setProductTypeError(null); setProductFormOpen(true); }}
+                                  className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full bg-success/10 px-3 py-2 text-sm font-semibold text-success transition-all hover:bg-success hover:text-white sm:min-h-0 sm:py-1.5 sm:text-xs"
+                                >
+                                  <Plus size={14} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                                  Cadastrar novo produto
+                                </button>
+                              </div>
+                            </div>
+
+                            {addingProduct && (
+                              <div className="mt-4">
+                                <Dropdown
+                                  label="Selecionar produto"
+                                  value=""
+                                  placeholder={availableProducts.length === 0 ? "Todos os produtos já foram adicionados" : "Selecione um produto"}
+                                  options={productOptions}
+                                  onChange={addProductToService}
+                                  disabled={availableProducts.length === 0}
+                                />
+                              </div>
+                            )}
+
+                            {products.length === 0 && (
+                              <p className="mt-4 rounded-lg border border-dashed border-border bg-background px-4 py-3 text-center text-xs text-muted">
+                                Nenhum produto cadastrado no catálogo.
+                              </p>
+                            )}
+
+                            {productError && (
+                              <div className="mt-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
+                                {productError}
+                              </div>
+                            )}
+
+                            {productFormOpen && (
+                              <div className="mt-4 rounded-lg border border-border bg-background p-4">
+                                <div className="mb-4 flex items-center justify-between">
+                                  <h4 className="text-sm font-semibold text-foreground">Produto rápido</h4>
+                                  <button type="button" onClick={closeProductForm} className="rounded-lg p-1.5 text-muted transition-colors hover:bg-card hover:text-foreground" aria-label="Fechar produto rápido">
+                                    <X size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                  <Input label="Nome do produto" value={productForm.name} autoComplete="off" onChange={(e) => updateProductForm({ name: e.target.value })} placeholder="Shampoo automotivo" />
+                                  <Dropdown label="Tipo" value={productForm.type} options={typeOptions} onChange={(type) => { updateProductForm({ type: type as ProductType }); setProductTypeError(null); }} actionLabel="Adicionar" createPlaceholder="Ex: Cera, Equipamento, Químico" onCreateOption={handleAddProductType} onDeleteOption={handleDeleteProductType} />
+                                  {productTypeError && <p className="text-xs font-medium text-danger">{productTypeError}</p>}
+                                  {productForm.type === "liquid" ? (
+                                    <Input label="Volume total (ml)" type="number" min="0" step="1" value={productForm.volumeMl} onChange={(e) => updateProductForm({ volumeMl: e.target.value })} placeholder="5000" />
+                                  ) : (
+                                    <Input label="Quantidade" type="number" min="0" step="1" value={productForm.quantity} onChange={(e) => updateProductForm({ quantity: e.target.value })} placeholder="3" />
+                                  )}
+                                  <Input label="Custo total do produto" value={productForm.totalCost} autoComplete="off" onChange={(e) => updateProductForm({ totalCost: e.target.value })} placeholder="80,00" />
+                                </div>
+                                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:justify-end">
+                                  <Button type="button" variant="secondary" onClick={closeProductForm} className="w-full sm:w-auto">Cancelar</Button>
+                                  <Button type="button" variant="success" onClick={handleSaveProduct} className="w-full sm:w-auto">Salvar e adicionar</Button>
+                                </div>
+                              </div>
+                            )}
+
+                            {form.productUsages.length > 0 && (
+                              <div className="mt-4 space-y-3">
+                                {form.productUsages.map((usage) => {
+                                  const product = products.find((item) => item.id === usage.productId);
+                                  if (!product) return null;
+                                  const usageCost = calculateProductUsageCost(product, usage.amount);
+                                  return (
+                                    <div key={usage.id} className="rounded-lg border border-border bg-background p-4">
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                          <p className="text-sm font-semibold text-foreground">{product.name}</p>
+                                          <p className="text-xs text-muted">{getTypeLabel(product.type)}</p>
+                                        </div>
+                                        <button type="button" onClick={() => removeProductUsage(usage.id)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white sm:min-h-0 sm:min-w-0" aria-label={`Remover ${product.name}`}>
+                                          <X size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                                        </button>
+                                      </div>
+                                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                                        <Input label={getProductAmountLabel(product.type)} type="number" min="0" step={product.type === "liquid" ? "1" : "0.01"} value={usage.amount} onChange={(e) => updateProductUsageAmount(usage.id, e.target.value)} placeholder="0" />
+                                        {usageCost !== null && (
+                                          <p className="pb-2 text-sm font-semibold text-foreground sm:text-right">
+                                            Custo: {formatCurrency(usageCost)}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                          {error && (
+                            <div className="mt-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
+                              {error}
+                            </div>
+                          )}
+
+                          {/* Actions */}
+                          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+                            <Button type="button" variant="secondary" onClick={closeForm} className="w-full sm:w-auto">
+                              Cancelar
+                            </Button>
+                            <Button type="submit" variant="success" disabled={saving} className="w-full sm:w-auto">
+                              {saving ? "Salvando…" : "Salvar alterações"}
+                            </Button>
+                          </div>
+                        </form>
+                      ) : (
+                        /* ── Normal card view ───────────────────────────────────── */
+                        <>
+                          {/* Left: name, badges, duration, description */}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="font-sans text-sm font-semibold text-foreground">
+                                {service.name}
+                              </h3>
+                              <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent">
+                                {getServiceCategory(service)}
+                              </span>
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  service.active
+                                    ? "bg-success/10 text-success"
+                                    : "bg-muted/10 text-muted"
+                                }`}
+                              >
+                                {service.active ? "Ativo" : "Inativo"}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex items-center gap-1 text-xs text-muted">
+                              <Clock size={12} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                              {formatDuration(service.duration_minutes)}
+                            </div>
+                            {service.description && (
+                              <p className="mt-1.5 line-clamp-2 text-xs text-muted">
+                                {service.description}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Right: price block + agendar + icon actions */}
+                          <div className="flex shrink-0 flex-row items-center justify-between gap-3 sm:flex-col sm:items-end sm:gap-2">
+                            {/* Financials */}
+                            <div className="text-right">
+                              <p className="text-base font-bold leading-tight text-foreground">
+                                {formatCurrency(Number(service.price))}
+                              </p>
+                              {financials.hasCost && (
+                                <p className="text-[11px] leading-tight text-muted">
+                                  Custo {formatCurrency(financials.cost)}
+                                </p>
+                              )}
+                              <p className={`text-[11px] font-semibold leading-tight ${profitPositive ? "text-success" : "text-danger"}`}>
+                                Lucro {formatCurrency(financials.profit)}
+                              </p>
+                            </div>
+
+                            {/* Agendar + icon actions stacked */}
+                            <div className="flex flex-col items-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleBookService(service.id)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-success/30 bg-success/10 px-2.5 py-1.5 text-[11px] font-semibold text-success transition-colors hover:bg-success/20"
+                                title="Agendar serviço"
+                                aria-label="Agendar serviço"
+                              >
+                                <CalendarBlank size={12} weight="bold" aria-hidden />
+                                Agendar
+                              </button>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditForm(service)}
+                                  className="flex h-6 w-6 items-center justify-center rounded text-muted/60 transition-colors hover:bg-background hover:text-foreground"
+                                  title="Editar"
+                                  aria-label="Editar serviço"
+                                >
+                                  <PencilSimple size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleActive(service)}
+                                  className={`flex h-6 w-6 items-center justify-center rounded transition-colors hover:bg-background ${
+                                    service.active ? "text-muted/60 hover:text-primary" : "text-muted/60 hover:text-foreground"
+                                  }`}
+                                  title={service.active ? "Desativar" : "Ativar"}
+                                  aria-label={service.active ? "Desativar serviço" : "Ativar serviço"}
+                                >
+                                  <Power size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => requestDeleteService(service)}
+                                  className="flex h-6 w-6 items-center justify-center rounded text-muted/60 transition-colors hover:bg-background hover:text-danger"
+                                  title="Excluir"
+                                  aria-label="Excluir serviço"
+                                >
+                                  <Trash size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </article>
                   );
                 })}

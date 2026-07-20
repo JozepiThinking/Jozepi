@@ -226,12 +226,53 @@ export default async function DashboardPage() {
       .eq("workshop_id", workshopId)
       .single();
 
+    // Month boundaries for current month filtering
+    const monthStart = toDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
+    const monthEnd = toDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+
+    // Count open orders (any date, not finished)
+    const { count: openCount } = await supabase
+      .from("service_orders")
+      .select("id", { count: "exact", head: true })
+      .eq("workshop_id", workshopId)
+      .in("status", ["aberta", "em_andamento"]);
+
+    // Count completed orders in the current month only
+    const { count: completedCount } = await supabase
+      .from("service_orders")
+      .select("id", { count: "exact", head: true })
+      .eq("workshop_id", workshopId)
+      .eq("status", "finalizada")
+      .gte("scheduled_date", monthStart)
+      .lte("scheduled_date", monthEnd);
+
+    // Sum total_amount of finalized orders in the current month
+    const { data: revenueRows } = await supabase
+      .from("service_orders")
+      .select("total_amount")
+      .eq("workshop_id", workshopId)
+      .eq("status", "finalizada")
+      .gte("scheduled_date", monthStart)
+      .lte("scheduled_date", monthEnd);
+
+    const monthlyRevenue = (revenueRows ?? []).reduce(
+      (sum, row) => sum + Number(row.total_amount ?? 0),
+      0
+    );
+
     if (statsData) {
       stats = {
-        monthly_revenue: Number(statsData.monthly_revenue),
-        open_orders: Number(statsData.open_orders),
-        completed_orders_month: Number(statsData.completed_orders_month),
+        monthly_revenue: monthlyRevenue,
+        open_orders: openCount ?? 0,
+        completed_orders_month: completedCount ?? 0,
         total_clients: Number(statsData.total_clients),
+      };
+    } else {
+      stats = {
+        ...stats,
+        monthly_revenue: monthlyRevenue,
+        open_orders: openCount ?? 0,
+        completed_orders_month: completedCount ?? 0,
       };
     }
 
@@ -493,7 +534,7 @@ export default async function DashboardPage() {
           </div>
 
           {/* Estoque baixo */}
-          <div className="card-surface flex-1">
+          <div className="card-surface flex flex-1 flex-col">
             <div className="mb-2 flex items-center gap-2">
               <WarningCircle size={15} weight="light" className="text-muted" />
               <p className="label-caps">Estoque Baixo</p>
@@ -522,6 +563,14 @@ export default async function DashboardPage() {
                 )}
               </ul>
             )}
+            <div className="mt-auto pt-3">
+              <Link
+                href="/produtos"
+                className="text-xs font-semibold text-premium transition-opacity hover:opacity-70"
+              >
+                Ver estoque →
+              </Link>
+            </div>
           </div>
         </div>
       </div>
