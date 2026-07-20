@@ -608,7 +608,9 @@ async function loadFinancialTransactions(
       .order("transaction_date", { ascending: false });
 
     if (!error) {
-      return ((data ?? []) as Record<string, unknown>[]).map(normalizeTransactionRow);
+      return ((data ?? []) as unknown as Record<string, unknown>[]).map(
+        normalizeTransactionRow
+      );
     }
 
     lastError = error;
@@ -678,7 +680,9 @@ async function syncFixedCostExpenses(
           .maybeSingle();
 
         if (!error && data) {
-          const normalized = normalizeTransactionRow(data as Record<string, unknown>);
+          const normalized = normalizeTransactionRow(
+            data as unknown as Record<string, unknown>
+          );
           synced.push(normalized);
           bySource.set(source, normalized);
         }
@@ -700,7 +704,9 @@ async function syncFixedCostExpenses(
         .single();
 
       if (!error && data) {
-        const normalized = normalizeTransactionRow(data as Record<string, unknown>);
+        const normalized = normalizeTransactionRow(
+          data as unknown as Record<string, unknown>
+        );
         synced.push(normalized);
         bySource.set(source, normalized);
       }
@@ -732,7 +738,7 @@ async function fetchFinancialTransactionById(
       .single();
 
     if (!error && data) {
-      return normalizeTransactionRow(data as Record<string, unknown>);
+      return normalizeTransactionRow(data as unknown as Record<string, unknown>);
     }
 
     lastError = error;
