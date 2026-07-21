@@ -15,10 +15,12 @@ import {
   X,
 } from "@phosphor-icons/react";
 import {
+  COATING_PACKAGES,
   loadCoatingPackages,
   loadStagePackages,
   saveCoatingPackageOverride,
   saveStagePackageOverride,
+  STAGE_PACKAGES,
   type ServicePackage,
 } from "@/lib/services/packages";
 import { Button } from "@/components/ui/button";
@@ -255,12 +257,11 @@ export function ServicesPage() {
   const router = useRouter();
 
   // Stage packages state (loaded from localStorage overrides merged over defaults)
-  const [stagePackages, setStagePackages] = useState<ServicePackage[]>(() =>
-    typeof window !== "undefined" ? loadStagePackages() : []
-  );
-  const [coatingPackages, setCoatingPackages] = useState<ServicePackage[]>(() =>
-    typeof window !== "undefined" ? loadCoatingPackages() : []
-  );
+  // Use static defaults for SSR + first client paint; apply localStorage overrides after mount.
+  const [stagePackages, setStagePackages] =
+    useState<ServicePackage[]>(STAGE_PACKAGES);
+  const [coatingPackages, setCoatingPackages] =
+    useState<ServicePackage[]>(COATING_PACKAGES);
   const [editingPackageId, setEditingPackageId] = useState<string | null>(null);
   const [pkgEditPrice, setPkgEditPrice] = useState("");
   const [pkgEditItems, setPkgEditItems] = useState<string[]>([]);
@@ -372,6 +373,11 @@ export function ServicesPage() {
     window.addEventListener("resize", updateTabIndicator);
     return () => window.removeEventListener("resize", updateTabIndicator);
   }, [activeTab]);
+
+  useEffect(() => {
+    setStagePackages(loadStagePackages());
+    setCoatingPackages(loadCoatingPackages());
+  }, []);
 
   useEffect(() => {
     void Promise.resolve().then(loadServices);

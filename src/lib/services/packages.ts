@@ -18,7 +18,7 @@ interface PackageOverride {
 }
 type PackageOverrides = Record<string, PackageOverride>;
 
-const STAGE_PACKAGES_STORAGE_KEY = "auto-estetica-stage-packages";
+const STAGE_PACKAGES_STORAGE_KEY = "auto-estetica-stage-packages-v2";
 
 const STAGE_1_SERVICES = [
   "Lavagem técnica completa",
@@ -50,6 +50,10 @@ const STAGE_4_NEW_SERVICES = [
   "Lavagem básica de manutenção em até 40 dias após o serviço",
 ];
 
+const STAGE_2_SERVICES = [...STAGE_1_SERVICES, ...STAGE_2_NEW_SERVICES];
+const STAGE_3_SERVICES = [...STAGE_2_SERVICES, ...STAGE_3_NEW_SERVICES];
+const STAGE_4_SERVICES = [...STAGE_3_SERVICES, ...STAGE_4_NEW_SERVICES];
+
 export const STAGE_PACKAGES: ServicePackage[] = [
   {
     id: "stage-1",
@@ -66,9 +70,9 @@ export const STAGE_PACKAGES: ServicePackage[] = [
     id: "stage-2",
     badge: "STAGE 2",
     price: 450,
-    prevBadge: "Stage 1",
-    newItems: STAGE_2_NEW_SERVICES,
-    allServiceNames: [...STAGE_1_SERVICES, ...STAGE_2_NEW_SERVICES],
+    prevBadge: null,
+    newItems: ["TUDO DO STAGE 1+", ...STAGE_2_NEW_SERVICES],
+    allServiceNames: STAGE_2_SERVICES,
     accentBorder: "border-l-[#60a5fa]",
     badgeBg: "#1a2744",
     badgeText: "#ffffff",
@@ -78,9 +82,9 @@ export const STAGE_PACKAGES: ServicePackage[] = [
     badge: "STAGE 3",
     price: 750,
     popular: true,
-    prevBadge: "Stage 2",
-    newItems: STAGE_3_NEW_SERVICES,
-    allServiceNames: [...STAGE_1_SERVICES, ...STAGE_2_NEW_SERVICES, ...STAGE_3_NEW_SERVICES],
+    prevBadge: null,
+    newItems: ["TUDO DO STAGE 2+", ...STAGE_3_NEW_SERVICES],
+    allServiceNames: STAGE_3_SERVICES,
     accentBorder: "border-l-[#1a2744]",
     badgeBg: "#1a2744",
     badgeText: "#ffffff",
@@ -89,14 +93,9 @@ export const STAGE_PACKAGES: ServicePackage[] = [
     id: "stage-4",
     badge: "STAGE 4",
     price: 1390,
-    prevBadge: "Stage 3",
-    newItems: STAGE_4_NEW_SERVICES,
-    allServiceNames: [
-      ...STAGE_1_SERVICES,
-      ...STAGE_2_NEW_SERVICES,
-      ...STAGE_3_NEW_SERVICES,
-      ...STAGE_4_NEW_SERVICES,
-    ],
+    prevBadge: null,
+    newItems: ["TUDO DO STAGE 3+", ...STAGE_4_NEW_SERVICES],
+    allServiceNames: STAGE_4_SERVICES,
     accentBorder: "border-l-[#c9a84c]",
     badgeBg: "#c9a84c",
     badgeText: "#1a1a0a",
@@ -106,7 +105,11 @@ export const STAGE_PACKAGES: ServicePackage[] = [
 function readOverrides(): PackageOverrides {
   if (typeof window === "undefined") return {};
   try {
-    return (JSON.parse(localStorage.getItem(STAGE_PACKAGES_STORAGE_KEY) ?? "{}") as PackageOverrides);
+    // Drop legacy overrides that still contained "Inclui / TUDO DO STAGE" edits.
+    window.localStorage.removeItem("auto-estetica-stage-packages");
+    return JSON.parse(
+      localStorage.getItem(STAGE_PACKAGES_STORAGE_KEY) ?? "{}"
+    ) as PackageOverrides;
   } catch {
     return {};
   }
