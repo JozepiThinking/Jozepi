@@ -3,6 +3,7 @@ export interface ServicePackage {
   badge: string;
   price: number;
   popular?: boolean;
+  subtitle?: string;
   prevBadge: string | null;
   newItems: string[];
   allServiceNames: string[];
@@ -130,6 +131,114 @@ export function saveStagePackageOverride(id: string, override: PackageOverride):
     const stored = readOverrides();
     stored[id] = { ...stored[id], ...override };
     localStorage.setItem(STAGE_PACKAGES_STORAGE_KEY, JSON.stringify(stored));
+  } catch {
+    // ignore
+  }
+}
+
+const COATING_PACKAGES_STORAGE_KEY = "auto-estetica-coating-packages";
+
+const COATING_COMMON_INCLUSIONS = [
+  "Lavagem técnica detalhada",
+  "Descontaminação da pintura",
+  "Correção de pintura",
+  "Vitrificação nos vidros",
+  "Rodas",
+  "Plásticos externos",
+  "Orientações de manutenção",
+];
+
+const CQUARTZ_LITE_FEATURES = [
+  "Excelente brilho e hidrofobia",
+  "Fácil manutenção",
+  "Ideal para quem busca proteção de alto desempenho",
+];
+
+const CQUARTZ_UK_FEATURES = [
+  "Maior resistência química e à lavagem",
+  "Brilho intenso e acabamento vítreo",
+  "Excelente durabilidade para uso diário",
+];
+
+const DQUARTZ_GO_FEATURES = [
+  "Tecnologia Nano Diamond",
+  "Máxima resistência ao desgaste e microrriscos",
+  "Brilho profundo e hidrofobia excepcional",
+];
+
+export const COATING_PACKAGES: ServicePackage[] = [
+  {
+    id: "coating-cquartz-lite",
+    badge: "CQUARTZ Lite",
+    price: 2200,
+    subtitle: "Proteção cerâmica de até 2 anos",
+    prevBadge: null,
+    newItems: [...CQUARTZ_LITE_FEATURES, ...COATING_COMMON_INCLUSIONS],
+    allServiceNames: [...CQUARTZ_LITE_FEATURES, ...COATING_COMMON_INCLUSIONS],
+    accentBorder: "border-l-[#60a5fa]",
+    badgeBg: "#1a2744",
+    badgeText: "#ffffff",
+  },
+  {
+    id: "coating-cquartz-uk",
+    badge: "CQUARTZ UK 3.0",
+    price: 2800,
+    subtitle: "Proteção cerâmica de até 3 anos",
+    prevBadge: null,
+    newItems: [...CQUARTZ_UK_FEATURES, ...COATING_COMMON_INCLUSIONS],
+    allServiceNames: [...CQUARTZ_UK_FEATURES, ...COATING_COMMON_INCLUSIONS],
+    accentBorder: "border-l-[#93c5fd]",
+    badgeBg: "#1a2744",
+    badgeText: "#ffffff",
+  },
+  {
+    id: "coating-dquartz-go",
+    badge: "DQUARTZ GO",
+    price: 3199,
+    popular: true,
+    subtitle: "Nano Diamonds · Proteção cerâmica de 3+ anos",
+    prevBadge: null,
+    newItems: [...DQUARTZ_GO_FEATURES, ...COATING_COMMON_INCLUSIONS],
+    allServiceNames: [...DQUARTZ_GO_FEATURES, ...COATING_COMMON_INCLUSIONS],
+    accentBorder: "border-l-[#c9a84c]",
+    badgeBg: "#c9a84c",
+    badgeText: "#1a1a0a",
+  },
+];
+
+function readCoatingOverrides(): PackageOverrides {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(
+      localStorage.getItem(COATING_PACKAGES_STORAGE_KEY) ?? "{}"
+    ) as PackageOverrides;
+  } catch {
+    return {};
+  }
+}
+
+export function loadCoatingPackages(): ServicePackage[] {
+  const overrides = readCoatingOverrides();
+  return COATING_PACKAGES.map((pkg) => {
+    const o = overrides[pkg.id];
+    if (!o) return pkg;
+    return {
+      ...pkg,
+      ...(o.price !== undefined ? { price: o.price } : {}),
+      ...(o.newItems !== undefined ? { newItems: o.newItems } : {}),
+    };
+  });
+}
+
+export function saveCoatingPackageOverride(
+  id: string,
+  override: PackageOverride
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    const stored = readCoatingOverrides();
+    stored[id] = { ...stored[id], ...override };
+    localStorage.setItem(COATING_PACKAGES_STORAGE_KEY, JSON.stringify(stored));
   } catch {
     // ignore
   }

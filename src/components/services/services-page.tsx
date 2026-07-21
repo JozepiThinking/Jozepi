@@ -15,7 +15,9 @@ import {
   X,
 } from "@phosphor-icons/react";
 import {
+  loadCoatingPackages,
   loadStagePackages,
+  saveCoatingPackageOverride,
   saveStagePackageOverride,
   type ServicePackage,
 } from "@/lib/services/packages";
@@ -113,6 +115,7 @@ interface ServiceCategoryOption {
 }
 
 const defaultServiceCategoryOptions: ServiceCategoryOption[] = [
+  { value: "Coating", label: "Coating" },
   { value: "Lavagem", label: "Lavagem" },
   { value: "Polimento", label: "Polimento" },
   { value: "Higienização", label: "Higienização" },
@@ -255,10 +258,24 @@ export function ServicesPage() {
   const [stagePackages, setStagePackages] = useState<ServicePackage[]>(() =>
     typeof window !== "undefined" ? loadStagePackages() : []
   );
+  const [coatingPackages, setCoatingPackages] = useState<ServicePackage[]>(() =>
+    typeof window !== "undefined" ? loadCoatingPackages() : []
+  );
   const [editingPackageId, setEditingPackageId] = useState<string | null>(null);
   const [pkgEditPrice, setPkgEditPrice] = useState("");
   const [pkgEditItems, setPkgEditItems] = useState<string[]>([]);
   const [pkgEditNewItem, setPkgEditNewItem] = useState("");
+  const [activeTab, setActiveTab] = useState<"coating" | "stages" | "servicos">(
+    "stages"
+  );
+  const servicesTabs = [
+    { id: "coating", label: "Coating" },
+    { id: "stages", label: "Stages" },
+    { id: "servicos", label: "Serviços" },
+  ] as const;
+  const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const tabsRowRef = useRef<HTMLDivElement | null>(null);
+  const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
 
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
@@ -272,9 +289,7 @@ export function ServicesPage() {
   >(defaultServiceCategoryOptions);
   const [serviceCategoryOptionsLoaded, setServiceCategoryOptionsLoaded] =
     useState(false);
-  const [categoryError, setCategoryError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<ServiceStatusFilter>("active");
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
@@ -341,6 +356,22 @@ export function ServicesPage() {
 
     setLoading(false);
   }
+
+  useEffect(() => {
+    function updateTabIndicator() {
+      const button = tabButtonRefs.current[activeTab];
+      const row = tabsRowRef.current;
+      if (!button || !row) return;
+      setTabIndicator({
+        left: button.offsetLeft,
+        width: button.offsetWidth,
+      });
+    }
+
+    updateTabIndicator();
+    window.addEventListener("resize", updateTabIndicator);
+    return () => window.removeEventListener("resize", updateTabIndicator);
+  }, [activeTab]);
 
   useEffect(() => {
     void Promise.resolve().then(loadServices);
@@ -444,11 +475,20 @@ export function ServicesPage() {
     setFormAnimationKey((current) => current + 1);
   }
 
-  function openCreateForm() {
+  function openCreateForm(presetCategory?: string) {
     setEditingService(null);
-    setForm(emptyForm);
+    const category = presetCategory?.trim() || emptyForm.category;
+    if (
+      presetCategory &&
+      !serviceCategoryOptions.some((option) => option.value === category)
+    ) {
+      setServiceCategoryOptions((prev) => [
+        ...prev,
+        { value: category, label: category, custom: true },
+      ]);
+    }
+    setForm({ ...emptyForm, category });
     setError(null);
-    setCategoryError(null);
     setAddingProduct(false);
     setProductFormOpen(false);
     showForm();
@@ -465,7 +505,6 @@ export function ServicesPage() {
       productUsages: serviceProductUsages[service.id] ?? [],
     });
     setError(null);
-    setCategoryError(null);
     setAddingProduct(false);
     setProductFormOpen(false);
     // do not open the top form — editing is inline in the card
@@ -477,7 +516,6 @@ export function ServicesPage() {
       setEditingService(null);
       setForm(emptyForm);
       setError(null);
-      setCategoryError(null);
       setAddingProduct(false);
       setProductFormOpen(false);
       return;
@@ -490,7 +528,6 @@ export function ServicesPage() {
       setEditingService(null);
       setForm(emptyForm);
       setError(null);
-      setCategoryError(null);
       setAddingProduct(false);
       setProductFormOpen(false);
       setFormOpen(false);
@@ -682,45 +719,6 @@ export function ServicesPage() {
     );
   }
 
-  function handleAddServiceCategory(label: string) {
-    const alreadyExists = serviceCategoryOptions.some(
-      (option) => option.label.toLowerCase() === label.toLowerCase()
-    );
-
-    if (alreadyExists) {
-      return "Essa categoria já existe.";
-    }
-
-    const nextCategory: ServiceCategoryOption = {
-      value: label,
-      label,
-      custom: true,
-    };
-
-    setServiceCategoryOptions((prev) => [...prev, nextCategory]);
-    setForm((prev) => ({ ...prev, category: nextCategory.value }));
-    setCategoryError(null);
-  }
-
-  function handleDeleteServiceCategory(category: string) {
-    const option = serviceCategoryOptions.find((item) => item.value === category);
-    if (!option?.custom) return;
-
-    const categoryInUse =
-      services.some((item) => getServiceCategory(item) === category) ||
-      form.category === category;
-
-    if (categoryInUse) {
-      setCategoryError("Não é possível apagar uma categoria em uso.");
-      return;
-    }
-
-    setServiceCategoryOptions((prev) =>
-      prev.filter((item) => item.value !== category)
-    );
-    setCategoryError(null);
-  }
-
   function handleAddProductType(label: string) {
     const alreadyExists = typeOptions.some(
       (option) => option.label.toLowerCase() === label.toLowerCase()
@@ -880,10 +878,6 @@ export function ServicesPage() {
     const product = products.find((item) => item.id === usage.productId);
     return product ? total + calculateProductUsageCost(product, usage.amount) : total;
   }, 0);
-  const categoryFilterOptions = [
-    { value: "all", label: "Todas" },
-    ...serviceCategoryOptions,
-  ];
 
   function getServiceFinancials(serviceId: string, price: number | string) {
     const usages = serviceProductUsages[serviceId] ?? [];
@@ -905,18 +899,15 @@ export function ServicesPage() {
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
   const filteredServices = services.filter((service) => {
-    const category = getServiceCategory(service);
     const matchesSearch =
       !normalizedSearchTerm ||
       service.name.toLowerCase().includes(normalizedSearchTerm);
-    const matchesCategory =
-      categoryFilter === "all" || category === categoryFilter;
     const matchesStatus =
       statusFilter === "all" ||
       (statusFilter === "active" && service.active) ||
       (statusFilter === "inactive" && !service.active);
 
-    return matchesSearch && matchesCategory && matchesStatus;
+    return matchesSearch && matchesStatus;
   });
   const servicesByCategory = filteredServices.reduce<Record<string, ServiceItem[]>>(
     (acc, service) => {
@@ -949,10 +940,18 @@ export function ServicesPage() {
     const price = parseFloat(pkgEditPrice.replace(",", "."));
     if (isNaN(price) || price < 0) return;
     const newItems = pkgEditItems.filter((i) => i.trim() !== "");
-    saveStagePackageOverride(pkg.id, { price, newItems });
-    setStagePackages((prev) =>
-      prev.map((p) => (p.id === pkg.id ? { ...p, price, newItems } : p))
-    );
+    const isCoating = pkg.id.startsWith("coating-");
+    if (isCoating) {
+      saveCoatingPackageOverride(pkg.id, { price, newItems });
+      setCoatingPackages((prev) =>
+        prev.map((p) => (p.id === pkg.id ? { ...p, price, newItems } : p))
+      );
+    } else {
+      saveStagePackageOverride(pkg.id, { price, newItems });
+      setStagePackages((prev) =>
+        prev.map((p) => (p.id === pkg.id ? { ...p, price, newItems } : p))
+      );
+    }
     setEditingPackageId(null);
     setPkgEditNewItem("");
   }
@@ -971,18 +970,475 @@ export function ServicesPage() {
 
   return (
     <>
-      <div className="mb-5 flex justify-stretch sm:mb-6 sm:justify-end">
-        <Button variant="success" onClick={openCreateForm} className="w-full sm:w-auto">
-          <Plus size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
-          Novo serviço
-        </Button>
-      </div>
+      <nav className="mb-6 overflow-x-auto" aria-label="Seções de serviços">
+        <div
+          ref={tabsRowRef}
+          className="relative flex min-w-max items-center gap-8 border-b border-border pb-0 sm:gap-10"
+        >
+          {servicesTabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                ref={(node) => {
+                  tabButtonRefs.current[tab.id] = node;
+                }}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`relative pb-3 text-sm font-medium tracking-wide transition-colors ${
+                  isActive
+                    ? "text-foreground"
+                    : "text-muted hover:text-foreground"
+                }`}
+                aria-current={isActive ? "page" : undefined}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute bottom-0 h-0.5 rounded-full bg-foreground transition-all duration-300 ease-out"
+            style={{
+              left: tabIndicator.left,
+              width: tabIndicator.width,
+            }}
+          />
+        </div>
+      </nav>
 
       {error && (
         <div className="mb-4 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
           {error}
         </div>
       )}
+
+      {activeTab === "coating" && (
+<section className="mb-10 space-y-5">
+        <div>
+          <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-muted">
+            Coatings Cerâmicos — CarPro
+          </h2>
+        </div>
+
+        {coatingPackages.map((pkg) => {
+          const isGold = pkg.id === "coating-dquartz-go";
+          const isEditing = editingPackageId === pkg.id;
+
+          return (
+            <div
+              key={pkg.id}
+              className={`relative overflow-hidden rounded-xl bg-card shadow-card ${
+                isGold
+                  ? "border border-[#c9a84c]/50 shadow-[0_2px_16px_0_rgba(201,168,76,0.10)]"
+                  : "border border-border"
+              }`}
+            >
+              {/* Edit toggle button */}
+              <button
+                type="button"
+                onClick={() => isEditing ? cancelPackageEdit() : openPackageEdit(pkg)}
+                className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background text-muted transition-colors hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
+                title={isEditing ? "Cancelar edição" : "Editar pacote"}
+                aria-label={isEditing ? "Cancelar edição" : "Editar pacote"}
+              >
+                {isEditing
+                  ? <X size={13} weight="bold" aria-hidden />
+                  : <PencilSimple size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                }
+              </button>
+
+              {isEditing ? (
+                /* ── Edit form ─────────────────────────────────────── */
+                <div className="p-5">
+                  <div className="mb-4 flex items-center gap-3">
+                    <span
+                      className="rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.18em]"
+                      style={{ background: pkg.badgeBg, color: pkg.badgeText }}
+                    >
+                      {pkg.badge}
+                    </span>
+                    <span className="text-sm font-semibold text-foreground">Editar pacote</span>
+                  </div>
+
+                  {/* Price */}
+                  <div className="mb-4">
+                    <label className="mb-1 block text-xs font-semibold text-muted">
+                      Preço (R$)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={pkgEditPrice}
+                      onChange={(e) => setPkgEditPrice(e.target.value)}
+                      className="w-40 rounded-lg border border-border bg-background px-3 py-2 text-sm font-bold text-foreground outline-none [appearance:textfield] focus:border-primary focus:ring-1 focus:ring-primary/30 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                  </div>
+
+                  {/* Items */}
+                  <div className="mb-4">
+                    <label className="mb-2 block text-xs font-semibold text-muted">
+                      Itens incluídos neste coating
+                    </label>
+                    <div className="space-y-2">
+                      {pkgEditItems.map((item, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={item}
+                            onChange={(e) => {
+                              const next = [...pkgEditItems];
+                              next[idx] = e.target.value;
+                              setPkgEditItems(next);
+                            }}
+                            className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setPkgEditItems((prev) => prev.filter((_, i) => i !== idx))}
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-danger/10 text-danger transition-colors hover:bg-danger hover:text-white"
+                            aria-label="Remover item"
+                          >
+                            <Trash size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Add new item */}
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={pkgEditNewItem}
+                        onChange={(e) => setPkgEditNewItem(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && pkgEditNewItem.trim()) {
+                            e.preventDefault();
+                            setPkgEditItems((prev) => [...prev, pkgEditNewItem.trim()]);
+                            setPkgEditNewItem("");
+                          }
+                        }}
+                        placeholder="Novo serviço... (Enter para adicionar)"
+                        className="min-w-0 flex-1 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none placeholder:text-muted focus:border-primary focus:ring-1 focus:ring-primary/30"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!pkgEditNewItem.trim()) return;
+                          setPkgEditItems((prev) => [...prev, pkgEditNewItem.trim()]);
+                          setPkgEditNewItem("");
+                        }}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success transition-colors hover:bg-success hover:text-white"
+                        aria-label="Adicionar item"
+                      >
+                        <Plus size={13} weight="bold" aria-hidden />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 border-t border-border pt-4">
+                    <button
+                      type="button"
+                      onClick={() => savePackageEdit(pkg)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-success/90"
+                    >
+                      Salvar alterações
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelPackageEdit}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-xs font-semibold text-muted transition-colors hover:bg-card"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* ── Normal view ────────────────────────────────────── */
+                <div className="flex flex-col gap-0 sm:flex-row">
+                  {/* LEFT — badge + price */}
+                  <div
+                    className="flex shrink-0 flex-col justify-between gap-6 rounded-tl-xl rounded-bl-xl p-5 sm:w-52 sm:rounded-tr-none sm:rounded-bl-xl"
+                    style={isGold ? { background: "rgba(201,168,76,0.07)" } : { background: "var(--color-background, transparent)" }}
+                  >
+                    <div className="flex flex-col gap-2">
+                      <span
+                        className="self-start rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.18em]"
+                        style={{ background: pkg.badgeBg, color: pkg.badgeText }}
+                      >
+                        {pkg.badge}
+                      </span>
+                    </div>
+                    <div>
+                      <p
+                        className="whitespace-nowrap text-xl font-extrabold leading-tight tracking-tight tabular-nums sm:text-2xl"
+                        style={isGold ? { color: "#c9a84c" } : undefined}
+                      >
+                        {formatCurrency(pkg.price)}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleBookPackage(pkg)}
+                        className={`mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                          isGold
+                            ? "border-[#c9a84c]/60 bg-[#c9a84c]/10 text-[#a07830] hover:bg-[#c9a84c]/20"
+                            : "border-success/30 bg-success/10 text-success hover:bg-success/20"
+                        }`}
+                      >
+                        <CalendarBlank size={13} weight="bold" aria-hidden />
+                        Agendar
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* RIGHT — items list */}
+                  <div className="flex-1 p-5">
+                    {pkg.subtitle && (
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+                        {pkg.subtitle}
+                      </p>
+                    )}
+                    <ul className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                      {pkg.newItems.map((item) => (
+                        <li key={item} className="flex items-start gap-2 text-sm text-foreground">
+                          <CheckCircle
+                            size={15}
+                            weight="fill"
+                            className="mt-0.5 shrink-0 text-success"
+                            aria-hidden
+                          />
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </section>
+      )}
+
+      {activeTab === "stages" && (
+<section className="mb-10 space-y-5">
+        <div>
+          <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-muted">
+            Pacotes — Lavagem Detalhada por Stages
+          </h2>
+        </div>
+
+        {stagePackages.map((pkg) => {
+          const isGold = pkg.id === "stage-4";
+          const isEditing = editingPackageId === pkg.id;
+
+          return (
+            <div
+              key={pkg.id}
+              className={`relative overflow-hidden rounded-xl bg-card shadow-card ${
+                isGold
+                  ? "border border-[#c9a84c]/50 shadow-[0_2px_16px_0_rgba(201,168,76,0.10)]"
+                  : "border border-border"
+              }`}
+            >
+              {/* Edit toggle button */}
+              <button
+                type="button"
+                onClick={() => isEditing ? cancelPackageEdit() : openPackageEdit(pkg)}
+                className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background text-muted transition-colors hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
+                title={isEditing ? "Cancelar edição" : "Editar pacote"}
+                aria-label={isEditing ? "Cancelar edição" : "Editar pacote"}
+              >
+                {isEditing
+                  ? <X size={13} weight="bold" aria-hidden />
+                  : <PencilSimple size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                }
+              </button>
+
+              {isEditing ? (
+                /* ── Edit form ─────────────────────────────────────── */
+                <div className="p-5">
+                  <div className="mb-4 flex items-center gap-3">
+                    <span
+                      className="rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.18em]"
+                      style={{ background: pkg.badgeBg, color: pkg.badgeText }}
+                    >
+                      {pkg.badge}
+                    </span>
+                    <span className="text-sm font-semibold text-foreground">Editar pacote</span>
+                  </div>
+
+                  {/* Price */}
+                  <div className="mb-4">
+                    <label className="mb-1 block text-xs font-semibold text-muted">
+                      Preço (R$)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={pkgEditPrice}
+                      onChange={(e) => setPkgEditPrice(e.target.value)}
+                      className="w-40 rounded-lg border border-border bg-background px-3 py-2 text-sm font-bold text-foreground outline-none [appearance:textfield] focus:border-primary focus:ring-1 focus:ring-primary/30 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                  </div>
+
+                  {/* Items */}
+                  <div className="mb-4">
+                    <label className="mb-2 block text-xs font-semibold text-muted">
+                      Serviços incluídos neste stage
+                    </label>
+                    <div className="space-y-2">
+                      {pkgEditItems.map((item, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={item}
+                            onChange={(e) => {
+                              const next = [...pkgEditItems];
+                              next[idx] = e.target.value;
+                              setPkgEditItems(next);
+                            }}
+                            className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setPkgEditItems((prev) => prev.filter((_, i) => i !== idx))}
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-danger/10 text-danger transition-colors hover:bg-danger hover:text-white"
+                            aria-label="Remover item"
+                          >
+                            <Trash size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Add new item */}
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={pkgEditNewItem}
+                        onChange={(e) => setPkgEditNewItem(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && pkgEditNewItem.trim()) {
+                            e.preventDefault();
+                            setPkgEditItems((prev) => [...prev, pkgEditNewItem.trim()]);
+                            setPkgEditNewItem("");
+                          }
+                        }}
+                        placeholder="Novo serviço... (Enter para adicionar)"
+                        className="min-w-0 flex-1 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none placeholder:text-muted focus:border-primary focus:ring-1 focus:ring-primary/30"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!pkgEditNewItem.trim()) return;
+                          setPkgEditItems((prev) => [...prev, pkgEditNewItem.trim()]);
+                          setPkgEditNewItem("");
+                        }}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success transition-colors hover:bg-success hover:text-white"
+                        aria-label="Adicionar item"
+                      >
+                        <Plus size={13} weight="bold" aria-hidden />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 border-t border-border pt-4">
+                    <button
+                      type="button"
+                      onClick={() => savePackageEdit(pkg)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-success/90"
+                    >
+                      Salvar alterações
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelPackageEdit}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-xs font-semibold text-muted transition-colors hover:bg-card"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* ── Normal view ────────────────────────────────────── */
+                <div className="flex flex-col gap-0 sm:flex-row">
+                  {/* LEFT — badge + price */}
+                  <div
+                    className="flex shrink-0 flex-col justify-between gap-6 rounded-tl-xl rounded-bl-xl p-5 sm:w-52 sm:rounded-tr-none sm:rounded-bl-xl"
+                    style={isGold ? { background: "rgba(201,168,76,0.07)" } : { background: "var(--color-background, transparent)" }}
+                  >
+                    <div className="flex flex-col gap-2">
+                      <span
+                        className="self-start rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.18em]"
+                        style={{ background: pkg.badgeBg, color: pkg.badgeText }}
+                      >
+                        {pkg.badge}
+                      </span>
+                    </div>
+                    <div>
+                      <p
+                        className="whitespace-nowrap text-xl font-extrabold leading-tight tracking-tight tabular-nums sm:text-2xl"
+                        style={isGold ? { color: "#c9a84c" } : undefined}
+                      >
+                        {formatCurrency(pkg.price)}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleBookPackage(pkg)}
+                        className={`mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                          isGold
+                            ? "border-[#c9a84c]/60 bg-[#c9a84c]/10 text-[#a07830] hover:bg-[#c9a84c]/20"
+                            : "border-success/30 bg-success/10 text-success hover:bg-success/20"
+                        }`}
+                      >
+                        <CalendarBlank size={13} weight="bold" aria-hidden />
+                        Agendar
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* RIGHT — items list */}
+                  <div className="flex-1 p-5">
+                    {pkg.subtitle && (
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+                        {pkg.subtitle}
+                      </p>
+                    )}
+                    <ul className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                      {pkg.newItems.map((item) => (
+                        <li key={item} className="flex items-start gap-2 text-sm text-foreground">
+                          <CheckCircle
+                            size={15}
+                            weight="fill"
+                            className="mt-0.5 shrink-0 text-success"
+                            aria-hidden
+                          />
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </section>
+      )}
+
+      {activeTab === "servicos" && (
+        <>
+      <div className="mb-5 flex justify-stretch sm:mb-6 sm:justify-end">
+        <Button variant="success" onClick={() => openCreateForm()} className="w-full sm:w-auto">
+          <Plus size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
+          Novo serviço
+        </Button>
+      </div>
 
       {formOpen && !editingService && (
         <form
@@ -1022,22 +1478,6 @@ export function ServicesPage() {
               }
               placeholder="Lavagem completa"
             />
-            <Dropdown
-              label="Categoria"
-              value={form.category}
-              options={serviceCategoryOptions}
-              onChange={(category) => {
-                setForm((prev) => ({ ...prev, category }));
-                setCategoryError(null);
-              }}
-              actionLabel="Adicionar"
-              createPlaceholder="Ex: Martelinho, Proteção, Inspeção"
-              onCreateOption={handleAddServiceCategory}
-              onDeleteOption={handleDeleteServiceCategory}
-            />
-            {categoryError && (
-              <p className="text-xs font-medium text-danger">{categoryError}</p>
-            )}
             <Input
               label="Preço base"
               prefix="R$"
@@ -1343,224 +1783,8 @@ export function ServicesPage() {
         </form>
       )}
 
-      {/* ── Packages section ─────────────────────────────────────────── */}
-      <section className="mb-10 space-y-5">
-        <div>
-          <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-muted">
-            Pacotes — Lavagem Detalhada por Stages
-          </h2>
-        </div>
-
-        {stagePackages.map((pkg) => {
-          const isGold = pkg.id === "stage-4";
-          const isEditing = editingPackageId === pkg.id;
-
-          return (
-            <div
-              key={pkg.id}
-              className={`relative overflow-hidden rounded-xl bg-card shadow-card ${
-                isGold
-                  ? "border border-[#c9a84c]/50 shadow-[0_2px_16px_0_rgba(201,168,76,0.10)]"
-                  : "border border-border"
-              }`}
-            >
-              {/* "Mais popular" badge */}
-              {pkg.popular && !isEditing && (
-                <span className="absolute right-14 top-4 z-10 rounded-full border border-success/30 bg-success/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-success">
-                  Mais popular
-                </span>
-              )}
-
-              {/* Edit toggle button */}
-              <button
-                type="button"
-                onClick={() => isEditing ? cancelPackageEdit() : openPackageEdit(pkg)}
-                className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background text-muted transition-colors hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
-                title={isEditing ? "Cancelar edição" : "Editar pacote"}
-                aria-label={isEditing ? "Cancelar edição" : "Editar pacote"}
-              >
-                {isEditing
-                  ? <X size={13} weight="bold" aria-hidden />
-                  : <PencilSimple size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
-                }
-              </button>
-
-              {isEditing ? (
-                /* ── Edit form ─────────────────────────────────────── */
-                <div className="p-5">
-                  <div className="mb-4 flex items-center gap-3">
-                    <span
-                      className="rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.18em]"
-                      style={{ background: pkg.badgeBg, color: pkg.badgeText }}
-                    >
-                      {pkg.badge}
-                    </span>
-                    <span className="text-sm font-semibold text-foreground">Editar pacote</span>
-                  </div>
-
-                  {/* Price */}
-                  <div className="mb-4">
-                    <label className="mb-1 block text-xs font-semibold text-muted">
-                      Preço (R$)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={pkgEditPrice}
-                      onChange={(e) => setPkgEditPrice(e.target.value)}
-                      className="w-40 rounded-lg border border-border bg-background px-3 py-2 text-sm font-bold text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
-                    />
-                  </div>
-
-                  {/* Items */}
-                  <div className="mb-4">
-                    <label className="mb-2 block text-xs font-semibold text-muted">
-                      Serviços incluídos neste stage
-                    </label>
-                    <div className="space-y-2">
-                      {pkgEditItems.map((item, idx) => (
-                        <div key={idx} className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={item}
-                            onChange={(e) => {
-                              const next = [...pkgEditItems];
-                              next[idx] = e.target.value;
-                              setPkgEditItems(next);
-                            }}
-                            className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setPkgEditItems((prev) => prev.filter((_, i) => i !== idx))}
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-danger/10 text-danger transition-colors hover:bg-danger hover:text-white"
-                            aria-label="Remover item"
-                          >
-                            <Trash size={13} weight={SERVICE_ICON_WEIGHT} aria-hidden />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Add new item */}
-                    <div className="mt-2 flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={pkgEditNewItem}
-                        onChange={(e) => setPkgEditNewItem(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && pkgEditNewItem.trim()) {
-                            e.preventDefault();
-                            setPkgEditItems((prev) => [...prev, pkgEditNewItem.trim()]);
-                            setPkgEditNewItem("");
-                          }
-                        }}
-                        placeholder="Novo serviço... (Enter para adicionar)"
-                        className="min-w-0 flex-1 rounded-lg border border-dashed border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none placeholder:text-muted focus:border-primary focus:ring-1 focus:ring-primary/30"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!pkgEditNewItem.trim()) return;
-                          setPkgEditItems((prev) => [...prev, pkgEditNewItem.trim()]);
-                          setPkgEditNewItem("");
-                        }}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success transition-colors hover:bg-success hover:text-white"
-                        aria-label="Adicionar item"
-                      >
-                        <Plus size={13} weight="bold" aria-hidden />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 border-t border-border pt-4">
-                    <button
-                      type="button"
-                      onClick={() => savePackageEdit(pkg)}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-success/90"
-                    >
-                      Salvar alterações
-                    </button>
-                    <button
-                      type="button"
-                      onClick={cancelPackageEdit}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-xs font-semibold text-muted transition-colors hover:bg-card"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* ── Normal view ────────────────────────────────────── */
-                <div className="flex flex-col gap-0 sm:flex-row">
-                  {/* LEFT — badge + price */}
-                  <div
-                    className="flex shrink-0 flex-col justify-between gap-6 rounded-tl-xl rounded-bl-xl p-5 sm:w-44 sm:rounded-tr-none sm:rounded-bl-xl"
-                    style={isGold ? { background: "rgba(201,168,76,0.07)" } : { background: "var(--color-background, transparent)" }}
-                  >
-                    <div className="flex flex-col gap-2">
-                      <span
-                        className="self-start rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.18em]"
-                        style={{ background: pkg.badgeBg, color: pkg.badgeText }}
-                      >
-                        {pkg.badge}
-                      </span>
-                    </div>
-                    <div>
-                      <p
-                        className="text-3xl font-extrabold leading-none tracking-tight"
-                        style={isGold ? { color: "#c9a84c" } : undefined}
-                      >
-                        {formatCurrency(pkg.price)}
-                      </p>
-                      <p className="mt-1 text-[11px] text-muted">por veículo</p>
-                      <button
-                        type="button"
-                        onClick={() => handleBookPackage(pkg)}
-                        className={`mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
-                          isGold
-                            ? "border-[#c9a84c]/60 bg-[#c9a84c]/10 text-[#a07830] hover:bg-[#c9a84c]/20"
-                            : "border-success/30 bg-success/10 text-success hover:bg-success/20"
-                        }`}
-                      >
-                        <CalendarBlank size={13} weight="bold" aria-hidden />
-                        Agendar
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* RIGHT — items list */}
-                  <div className="flex-1 p-5">
-                    {pkg.prevBadge && (
-                      <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-muted">
-                        <CheckCircle size={13} weight="fill" className="shrink-0 text-muted" aria-hidden />
-                        Inclui {pkg.prevBadge} +
-                      </p>
-                    )}
-                    <ul className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
-                      {pkg.newItems.map((item) => (
-                        <li key={item} className="flex items-start gap-2 text-sm text-foreground">
-                          <CheckCircle
-                            size={15}
-                            weight="fill"
-                            className="mt-0.5 shrink-0 text-success"
-                            aria-hidden
-                          />
-                          <span>{item}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </section>
-      {/* ─────────────────────────────────────────────────────────────── */}
-
+      {activeTab === "servicos" && (
+        <>
       {/* Separator + avulsos title */}
       <div className="mb-5 flex items-center gap-3">
         <span className="text-xs font-bold uppercase tracking-[0.2em] text-muted">
@@ -1590,14 +1814,14 @@ export function ServicesPage() {
               onClick={() => setFiltersExpanded((open) => !open)}
               aria-expanded={filtersExpanded}
               className={`inline-flex min-h-11 items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold transition-colors sm:min-h-0 ${
-                filtersExpanded || categoryFilter !== "all" || statusFilter !== "all"
+                filtersExpanded || statusFilter !== "all"
                   ? "border-premium/40 bg-premium/10 text-premium"
                   : "border-border bg-input text-foreground hover:bg-background"
               }`}
             >
               <Funnel size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
               Filtros
-              {(categoryFilter !== "all" || statusFilter !== "all") && (
+              {statusFilter !== "all" && (
                 <span className="flex h-2 w-2 rounded-full bg-premium" aria-hidden />
               )}
             </button>
@@ -1615,12 +1839,6 @@ export function ServicesPage() {
         {filtersExpanded && (
           <div className="mt-3 grid grid-cols-1 gap-3 border-t border-border pt-3 sm:grid-cols-2">
             <Dropdown
-              label="Categoria"
-              value={categoryFilter}
-              options={categoryFilterOptions}
-              onChange={setCategoryFilter}
-            />
-            <Dropdown
               label="Status"
               value={statusFilter}
               options={statusFilterOptions}
@@ -1634,6 +1852,9 @@ export function ServicesPage() {
           </div>
         )}
       </div>
+
+        </>
+      )}
 
       {loading ? (
         <div className="rounded-lg border border-border bg-card shadow-card py-16 text-center text-sm text-muted shadow-card">
@@ -1653,7 +1874,7 @@ export function ServicesPage() {
           <Button
             variant="success"
             className="mt-4 w-full sm:w-auto"
-            onClick={openCreateForm}
+            onClick={() => openCreateForm()}
           >
             <Plus size={16} weight={SERVICE_ICON_WEIGHT} aria-hidden />
             Novo serviço
@@ -1717,22 +1938,6 @@ export function ServicesPage() {
                               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
                               placeholder="Lavagem completa"
                             />
-                            <Dropdown
-                              label="Categoria"
-                              value={form.category}
-                              options={serviceCategoryOptions}
-                              onChange={(category) => {
-                                setForm((prev) => ({ ...prev, category }));
-                                setCategoryError(null);
-                              }}
-                              actionLabel="Adicionar"
-                              createPlaceholder="Ex: Martelinho, Proteção, Inspeção"
-                              onCreateOption={handleAddServiceCategory}
-                              onDeleteOption={handleDeleteServiceCategory}
-                            />
-                            {categoryError && (
-                              <p className="text-xs font-medium text-danger">{categoryError}</p>
-                            )}
                             <Input
                               label="Preço base"
                               prefix="R$"
@@ -1897,9 +2102,6 @@ export function ServicesPage() {
                               <h3 className="font-sans text-sm font-semibold text-foreground">
                                 {service.name}
                               </h3>
-                              <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent">
-                                {getServiceCategory(service)}
-                              </span>
                               <span
                                 className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                                   service.active
@@ -1990,6 +2192,8 @@ export function ServicesPage() {
                 })}
           </div>
         </div>
+      )}
+        </>
       )}
 
       <style>{`

@@ -2554,25 +2554,11 @@ export function AgendaCalendar() {
                   )}
                 </div>
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center justify-between gap-3">
                     <label className="block text-sm font-semibold text-foreground">
                       Serviços
                     </label>
                     <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCreatingServiceInline(true);
-                          setAddingService(false);
-                          setInlineServiceError(null);
-                          setInlineServiceForm({ name: "", price: "", durationMinutes: "60" });
-                        }}
-                        disabled={loadingServices}
-                        className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-background px-3 py-2 text-sm font-semibold text-muted transition-all duration-200 hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-1.5 sm:text-xs border border-border"
-                      >
-                        <Plus size={14} weight={AGENDA_ICON_WEIGHT} aria-hidden />
-                        Criar novo
-                      </button>
                       <button
                         type="button"
                         onClick={() => {
@@ -3468,9 +3454,6 @@ export function AgendaCalendar() {
                     <div className="flex items-center justify-between gap-2">
                       <label className="text-sm font-semibold text-foreground">Serviços</label>
                       <div className="flex items-center gap-1.5">
-                        <button type="button" onClick={() => { setCreatingServiceInline(true); setAddingService(false); setInlineServiceError(null); setInlineServiceForm({ name: "", price: "", durationMinutes: "60" }); }} disabled={loadingServices} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted transition-all hover:bg-card hover:text-foreground disabled:opacity-50">
-                          <Plus size={12} weight={AGENDA_ICON_WEIGHT} aria-hidden /> Criar
-                        </button>
                         <button type="button" onClick={() => { setAddingService(true); setOpenSelectId("service"); setCreatingServiceInline(false); }} disabled={loadingServices || services.length === 0 || availableServices.length === 0} className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success transition-all hover:bg-success hover:text-white disabled:opacity-50">
                           <Plus size={12} weight={AGENDA_ICON_WEIGHT} aria-hidden /> Adicionar
                         </button>
