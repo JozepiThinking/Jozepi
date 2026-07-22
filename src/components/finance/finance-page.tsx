@@ -1620,11 +1620,11 @@ function TransactionList({
               >
                 {formatCurrency(entry.amount)}
               </div>
-              {showNotes && (
+              {showNotes && onUpdateNotes && (
                 <div className="flex justify-center">
                   <TransactionNotesIcon
                     notes={entry.notes ?? ""}
-                    onUpdateNotes={(notes) => onUpdateNotes?.(entry, notes)}
+                    onUpdateNotes={(notes) => onUpdateNotes(entry, notes)}
                   />
                 </div>
               )}
