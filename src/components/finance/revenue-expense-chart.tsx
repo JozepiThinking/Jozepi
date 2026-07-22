@@ -50,9 +50,7 @@ export function RevenueExpenseChart({
     <div>
       {/* Chart visual area */}
       <div
-        className={`relative flex items-end gap-2 overflow-hidden rounded-lg bg-background px-4 pb-8 pt-4 ${
-          compact ? "h-52" : "h-64"
-        }`}
+        className="relative flex h-64 items-end gap-2 overflow-hidden rounded-lg bg-background px-4 pb-8 pt-4"
       >
         {/* Floating tooltip */}
         {tooltipIdx !== null && (
@@ -118,7 +116,7 @@ export function RevenueExpenseChart({
             >
               <div
                 className={`flex w-full items-end justify-center gap-1 ${
-                  compact ? "h-36" : "h-44"
+                  compact ? "h-48" : "h-44"
                 }`}
               >
                 {/* Revenue bar */}

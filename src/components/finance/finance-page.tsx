@@ -5,16 +5,18 @@ import {
   ArrowUp,
   CalendarBlank,
   CalendarCheck,
-  CaretUpDown,
+  CaretDown,
   ChartBar,
   ChartDonut,
   ChartLineUp,
   CheckCircle,
-  ClipboardText,
+  CircleHalf,
   Funnel,
   ListChecks,
+  Note,
   PencilSimple,
   Plus,
+  Prohibit,
   Trash,
   TrendDown,
   TrendUp,
@@ -33,15 +35,10 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
-import {
-  parseMoney as parseProductMoney,
-  type ProductItem,
-} from "@/lib/products/catalog";
-import { loadSupabaseCatalog } from "@/lib/products/supabase-catalog";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/format";
 
-type FinanceTab = "overview" | "revenues" | "expenses" | "fixedCosts" | "reports";
+type FinanceTab = "overview" | "revenues" | "expenses" | "fixedCosts";
 type PeriodFilter = "all" | "today" | "week" | "month" | "custom";
 type ChartInterval = "7d" | "1m" | "3m" | "6m" | "1a";
 
@@ -53,9 +50,23 @@ const chartIntervalOptions: { value: ChartInterval; label: string; title: string
   { value: "1a", label: "1A", title: "Último ano" },
 ];
 type TransactionType = "receita" | "despesa";
+type PaymentStatus = "pendente" | "pago" | "parcial" | "cancelado";
+
+function normalizePaymentStatus(value: unknown): PaymentStatus {
+  if (
+    value === "pendente" ||
+    value === "pago" ||
+    value === "parcial" ||
+    value === "cancelado"
+  ) {
+    return value;
+  }
+  return "pago";
+}
+
 const SUPPLIERS_STORAGE_KEY = "auto-estetica-suppliers";
 const FIXED_COSTS_STORAGE_KEY = "auto-estetica-fixed-costs";
-const UTENSIL_WEAR_STORAGE_KEY = "auto-estetica-utensil-wear-settings";
+const TX_PAYMENT_STATUS_STORAGE_KEY = "auto-estetica-tx-payment-status";
 
 interface FinancialTransaction {
   id: string;
@@ -67,6 +78,8 @@ interface FinancialTransaction {
   supplier_id: string | null;
   product_id: string | null;
   source: string | null;
+  payment_status: PaymentStatus;
+  notes: string | null;
   transaction_date: string;
   created_at: string;
 }
@@ -97,11 +110,6 @@ interface FixedCostForm {
   amount: string;
   notes: string;
   paymentDay: string;
-}
-
-interface UtensilWearSetting {
-  durability: string;
-  included: boolean;
 }
 
 function sortSuppliers(list: Supplier[]) {
@@ -144,7 +152,23 @@ function sortFixedCosts(list: FixedCost[]) {
 
 function mergeFixedCosts(current: FixedCost[], incoming: FixedCost[]) {
   const byId = new Map(current.map((cost) => [cost.id, cost]));
-  incoming.forEach((cost) => byId.set(cost.id, cost));
+  incoming.forEach((cost) => {
+    const existing = byId.get(cost.id);
+    if (!existing) {
+      byId.set(cost.id, cost);
+      return;
+    }
+
+    byId.set(cost.id, {
+      ...existing,
+      ...cost,
+      // Keep local payment_day when DB/legacy rows omit the column (comes back as null).
+      payment_day:
+        cost.kind === "estimated"
+          ? null
+          : cost.payment_day ?? existing.payment_day,
+    });
+  });
   return sortFixedCosts(Array.from(byId.values()));
 }
 
@@ -164,39 +188,54 @@ function writeStoredFixedCosts(costs: FixedCost[]) {
   window.localStorage.setItem(FIXED_COSTS_STORAGE_KEY, JSON.stringify(costs));
 }
 
-function readStoredUtensilWearSettings() {
+function readStoredTxPaymentStatuses(): Record<string, PaymentStatus> {
   if (typeof window === "undefined") return {};
 
   try {
-    const stored = window.localStorage.getItem(UTENSIL_WEAR_STORAGE_KEY);
-    return stored
-      ? (JSON.parse(stored) as Record<string, UtensilWearSetting>)
-      : {};
+    const stored = window.localStorage.getItem(TX_PAYMENT_STATUS_STORAGE_KEY);
+    if (!stored) return {};
+
+    const parsed = JSON.parse(stored) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([id, value]) => {
+        const status = normalizePaymentStatus(value);
+        return id ? [[id, status] as const] : [];
+      })
+    );
   } catch {
     return {};
   }
 }
 
-function writeStoredUtensilWearSettings(
-  settings: Record<string, UtensilWearSetting>
-) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(UTENSIL_WEAR_STORAGE_KEY, JSON.stringify(settings));
-}
+function writeStoredTxPaymentStatus(id: string, status: PaymentStatus) {
+  if (typeof window === "undefined" || !id) return;
 
-function getProductTotalCost(product: ProductItem) {
   try {
-    return parseProductMoney(product.totalCost || "0");
+    const current = readStoredTxPaymentStatuses();
+    current[id] = status;
+    window.localStorage.setItem(
+      TX_PAYMENT_STATUS_STORAGE_KEY,
+      JSON.stringify(current)
+    );
   } catch {
-    return 0;
+    // Ignora falhas de armazenamento local.
   }
 }
 
-function parseDurabilityWashes(value: string) {
-  const normalized = value.replace(/\./g, "").replace(",", ".");
-  const durability = Number(normalized);
+function clearStoredTxPaymentStatus(id: string) {
+  if (typeof window === "undefined" || !id) return;
 
-  return Number.isFinite(durability) && durability > 0 ? durability : 0;
+  try {
+    const current = readStoredTxPaymentStatuses();
+    if (!(id in current)) return;
+    delete current[id];
+    window.localStorage.setItem(
+      TX_PAYMENT_STATUS_STORAGE_KEY,
+      JSON.stringify(current)
+    );
+  } catch {
+    // Ignora falhas de armazenamento local.
+  }
 }
 
 interface CompletedOrderItem {
@@ -210,6 +249,7 @@ interface CompletedOrder {
   total_amount: number | string;
   completed_at: string | null;
   opened_at: string | null;
+  payment_status: PaymentStatus;
   clients: { name: string } | { name: string }[] | null;
   service_order_items: CompletedOrderItem[] | null;
 }
@@ -229,6 +269,8 @@ interface FinanceEntry {
   supplierName?: string;
   source?: string;
   serviceOrderId?: string;
+  paymentStatus?: PaymentStatus;
+  notes?: string;
 }
 
 type FinanceDeleteConfirm =
@@ -255,7 +297,6 @@ const tabs: { id: FinanceTab; label: string }[] = [
   { id: "revenues", label: "Receitas" },
   { id: "expenses", label: "Despesas" },
   { id: "fixedCosts", label: "Custos Fixos" },
-  { id: "reports", label: "Relatórios" },
 ];
 
 const periodOptions = [
@@ -544,6 +585,10 @@ function formatSupplierSaveError(message: string) {
   return message;
 }
 
+const TRANSACTION_SELECT_WITH_NOTES =
+  "id, type, description, amount, category, service_order_id, supplier_id, product_id, source, payment_status, notes, transaction_date, created_at";
+const TRANSACTION_SELECT_WITH_PAYMENT =
+  "id, type, description, amount, category, service_order_id, supplier_id, product_id, source, payment_status, transaction_date, created_at";
 const TRANSACTION_SELECT_FULL =
   "id, type, description, amount, category, service_order_id, supplier_id, product_id, source, transaction_date, created_at";
 const TRANSACTION_SELECT_WITH_SUPPLIER =
@@ -551,7 +596,10 @@ const TRANSACTION_SELECT_WITH_SUPPLIER =
 const TRANSACTION_SELECT_LEGACY =
   "id, type, description, amount, category, service_order_id, transaction_date, created_at";
 
-function normalizeTransactionRow(row: Record<string, unknown>): FinancialTransaction {
+function normalizeTransactionRow(
+  row: Record<string, unknown>,
+  fallback?: Pick<FinancialTransaction, "payment_status" | "notes"> | null
+): FinancialTransaction {
   return {
     id: String(row.id),
     type: row.type as TransactionType,
@@ -562,6 +610,16 @@ function normalizeTransactionRow(row: Record<string, unknown>): FinancialTransac
     supplier_id: (row.supplier_id as string | null) ?? null,
     product_id: (row.product_id as string | null) ?? null,
     source: (row.source as string | null) ?? null,
+    payment_status:
+      "payment_status" in row
+        ? normalizePaymentStatus(row.payment_status)
+        : fallback?.payment_status ?? "pago",
+    notes:
+      "notes" in row
+        ? typeof row.notes === "string"
+          ? row.notes
+          : null
+        : fallback?.notes ?? null,
     transaction_date: String(row.transaction_date),
     created_at: String(row.created_at ?? row.transaction_date),
   };
@@ -593,6 +651,8 @@ async function loadFinancialTransactions(
   workshopId: string
 ) {
   const attempts = [
+    TRANSACTION_SELECT_WITH_NOTES,
+    TRANSACTION_SELECT_WITH_PAYMENT,
     TRANSACTION_SELECT_FULL,
     TRANSACTION_SELECT_WITH_SUPPLIER,
     TRANSACTION_SELECT_LEGACY,
@@ -608,8 +668,8 @@ async function loadFinancialTransactions(
       .order("transaction_date", { ascending: false });
 
     if (!error) {
-      return ((data ?? []) as unknown as Record<string, unknown>[]).map(
-        normalizeTransactionRow
+      return ((data ?? []) as unknown as Record<string, unknown>[]).map((row) =>
+        normalizeTransactionRow(row)
       );
     }
 
@@ -681,7 +741,8 @@ async function syncFixedCostExpenses(
 
         if (!error && data) {
           const normalized = normalizeTransactionRow(
-            data as unknown as Record<string, unknown>
+            data as unknown as Record<string, unknown>,
+            existing
           );
           synced.push(normalized);
           bySource.set(source, normalized);
@@ -700,10 +761,35 @@ async function syncFixedCostExpenses(
           transaction_date: paymentDate,
           source,
         })
-        .select(TRANSACTION_SELECT_FULL)
+        .select(TRANSACTION_SELECT_WITH_PAYMENT)
         .single();
 
-      if (!error && data) {
+      if (error) {
+        const legacyInsert = await supabase
+          .from("financial_transactions")
+          .insert({
+            workshop_id: workshopId,
+            type: "despesa",
+            description: cost.name,
+            amount,
+            category: "Custo Fixo",
+            transaction_date: paymentDate,
+            source,
+          })
+          .select(TRANSACTION_SELECT_FULL)
+          .single();
+
+        if (!legacyInsert.error && legacyInsert.data) {
+          const normalized = normalizeTransactionRow(
+            legacyInsert.data as unknown as Record<string, unknown>
+          );
+          synced.push(normalized);
+          bySource.set(source, normalized);
+        }
+        continue;
+      }
+
+      if (data) {
         const normalized = normalizeTransactionRow(
           data as unknown as Record<string, unknown>
         );
@@ -722,6 +808,8 @@ async function fetchFinancialTransactionById(
   transactionId: string
 ) {
   const attempts = [
+    TRANSACTION_SELECT_WITH_NOTES,
+    TRANSACTION_SELECT_WITH_PAYMENT,
     TRANSACTION_SELECT_FULL,
     TRANSACTION_SELECT_WITH_SUPPLIER,
     TRANSACTION_SELECT_LEGACY,
@@ -1067,6 +1155,278 @@ function monthKeyFromDateStr(dateStr: string): string {
 
 const TRANSACTION_PAGE_SIZE = 30;
 
+const PAYMENT_STATUS_OPTIONS: {
+  value: PaymentStatus;
+  label: string;
+  className: string;
+  icon: typeof CheckCircle;
+}[] = [
+  {
+    value: "pendente",
+    label: "Pendente",
+    className: "bg-warning/10 text-warning hover:bg-warning hover:text-white",
+    icon: XCircle,
+  },
+  {
+    value: "pago",
+    label: "Pago",
+    className: "bg-success/10 text-success hover:bg-success hover:text-white",
+    icon: CheckCircle,
+  },
+  {
+    value: "parcial",
+    label: "Parcial",
+    className: "bg-premium/10 text-premium hover:bg-premium hover:text-white",
+    icon: CircleHalf,
+  },
+  {
+    value: "cancelado",
+    label: "Cancelado",
+    className: "bg-danger/10 text-danger hover:bg-danger hover:text-white",
+    icon: Prohibit,
+  },
+];
+
+function getPaymentStatusOption(status?: PaymentStatus) {
+  return (
+    PAYMENT_STATUS_OPTIONS.find((option) => option.value === status) ??
+    PAYMENT_STATUS_OPTIONS[0]
+  );
+}
+
+function TransactionNotesIcon({
+  notes,
+  onUpdateNotes,
+}: {
+  notes: string;
+  onUpdateNotes: (notes: string | null) => Promise<void>;
+}) {
+  const trimmedNotes = notes.trim();
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(!trimmedNotes);
+  const [draft, setDraft] = useState(trimmedNotes);
+  const [saving, setSaving] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handleClickOutside(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setOpen(false);
+        setEditing(!trimmedNotes);
+        setDraft(trimmedNotes);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open, trimmedNotes]);
+
+  async function handleSave() {
+    const next = draft.trim();
+    if (!next) return;
+    setSaving(true);
+    try {
+      await onUpdateNotes(next);
+      setEditing(false);
+      setOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRemove() {
+    setSaving(true);
+    try {
+      await onUpdateNotes(null);
+      setDraft("");
+      setEditing(true);
+      setOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div ref={ref} className="relative z-20 flex shrink-0 items-center justify-center">
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((value) => !value);
+          setEditing(!trimmedNotes);
+          setDraft(trimmedNotes);
+        }}
+        className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 ${
+          trimmedNotes
+            ? "text-amber-600 hover:bg-amber-50 hover:text-amber-700"
+            : "text-muted hover:bg-background hover:text-foreground"
+        }`}
+        aria-label={trimmedNotes ? "Ver observação" : "Adicionar observação"}
+        title={trimmedNotes ? "Ver observação" : "Adicionar observação"}
+      >
+        <Note size={16} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-40 mt-2 w-72 rounded-md border border-border bg-card p-3 shadow-lg">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted">
+            Observação
+          </p>
+
+          {editing || !trimmedNotes ? (
+            <div className="space-y-2">
+              <textarea
+                rows={3}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                disabled={saving}
+                placeholder="Escreva uma observação..."
+                className="w-full resize-none border-0 border-b border-border bg-transparent px-0 py-1 text-xs text-foreground outline-none placeholder:text-muted/60 focus:border-primary/40 disabled:opacity-60"
+              />
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setOpen(false);
+                    setEditing(!trimmedNotes);
+                    setDraft(trimmedNotes);
+                  }}
+                  className="text-[11px] font-semibold text-muted hover:text-foreground disabled:opacity-60"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={saving || !draft.trim()}
+                  onClick={() => void handleSave()}
+                  className="text-[11px] font-semibold text-success hover:text-success/80 disabled:opacity-60"
+                >
+                  {saving ? "Salvando..." : "Salvar"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground">
+                {trimmedNotes}
+              </p>
+              <div className="mt-3 flex justify-end gap-2 border-t border-border/60 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditing(true);
+                    setDraft(trimmedNotes);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-foreground transition-colors hover:text-success"
+                >
+                  <PencilSimple size={12} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void handleRemove()}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-danger transition-colors hover:text-danger/80 disabled:opacity-60"
+                >
+                  <Trash size={12} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+                  {saving ? "..." : "Excluir"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PaymentStatusSelect({
+  value,
+  onChange,
+}: {
+  value?: PaymentStatus;
+  onChange: (status: PaymentStatus) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const current = getPaymentStatusOption(value);
+  const CurrentIcon = current.icon;
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Alterar status de pagamento"
+        title="Alterar status de pagamento"
+        className={`inline-flex h-8 w-full min-w-0 items-center justify-center gap-1 rounded-full px-2.5 text-[11px] font-bold transition-colors ${current.className}`}
+      >
+        <CurrentIcon size={12} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+        {current.label}
+        <CaretDown size={10} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          aria-label="Status de pagamento"
+          className="absolute right-0 top-full z-40 mt-1.5 min-w-[9.5rem] overflow-hidden rounded-lg border border-border bg-card p-1 shadow-card-hover"
+        >
+          {PAYMENT_STATUS_OPTIONS.map((option) => {
+            const OptionIcon = option.icon;
+            const selected = option.value === current.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[11px] font-bold transition-colors ${
+                  selected
+                    ? option.className.split(" hover:")[0]
+                    : "text-foreground hover:bg-background"
+                }`}
+              >
+                <OptionIcon size={12} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TransactionList({
   entries,
   emptyMessage,
@@ -1076,6 +1436,8 @@ function TransactionList({
   groupByMonth = false,
   onEditTransaction,
   onDeleteTransaction,
+  onChangePaymentStatus,
+  onUpdateNotes,
 }: {
   entries: FinanceEntry[];
   emptyMessage: string;
@@ -1085,24 +1447,48 @@ function TransactionList({
   groupByMonth?: boolean;
   onEditTransaction?: (entry: FinanceEntry) => void;
   onDeleteTransaction?: (entry: FinanceEntry) => void;
+  onChangePaymentStatus?: (entry: FinanceEntry, status: PaymentStatus) => void;
+  onUpdateNotes?: (entry: FinanceEntry, notes: string | null) => Promise<void>;
 }) {
   const [page, setPage] = useState(0);
+  const entriesSignature = useMemo(
+    () => entries.map((entry) => entry.id).join("|"),
+    [entries]
+  );
 
   useEffect(() => {
     setPage(0);
-  }, [entries]);
+  }, [entriesSignature]);
 
   const totalPages = Math.ceil(entries.length / TRANSACTION_PAGE_SIZE);
+  const safePage = Math.min(page, Math.max(0, totalPages - 1));
   const pagedEntries = entries.slice(
-    page * TRANSACTION_PAGE_SIZE,
-    (page + 1) * TRANSACTION_PAGE_SIZE
+    safePage * TRANSACTION_PAGE_SIZE,
+    (safePage + 1) * TRANSACTION_PAGE_SIZE
   );
 
-  const hasEditAction = Boolean(onEditTransaction);
+  useEffect(() => {
+    if (page !== safePage) setPage(safePage);
+  }, [page, safePage]);
+
+  const showPayment = Boolean(onChangePaymentStatus);
+  const showNotes = Boolean(onUpdateNotes);
   const labelColumnTitle = accent === "expense" ? "Fornecedor" : "Categoria";
-  const gridColumnsClass = hasEditAction
-    ? "grid-cols-[minmax(240px,1fr)_150px_130px_130px_112px]"
-    : "grid-cols-[minmax(240px,1fr)_150px_130px_130px_80px]";
+  const canEditPaymentStatus = (entry: FinanceEntry) =>
+    accent === "expense" || Boolean(entry.serviceOrderId);
+
+  // Separate fixed columns so OBS / status / edit stay aligned across rows.
+  const gridTemplateColumns = [
+    "minmax(0, 1fr)",
+    "150px",
+    "100px",
+    "110px",
+    showNotes ? "44px" : null,
+    showPayment ? "108px" : null,
+    "72px",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   if (entries.length === 0) {
     return (
@@ -1133,12 +1519,17 @@ function TransactionList({
     <div className="w-full">
       {filter && <div className="mb-2 flex justify-end px-3">{filter}</div>}
       <div className="overflow-x-auto">
-        <div className="min-w-[760px]">
-        <div className={`grid ${gridColumnsClass} gap-4 border-b border-border px-3 py-3 text-xs font-semibold text-muted`}>
+        <div className="min-w-[860px]">
+        <div
+          className="grid items-center gap-x-4 border-b border-border px-3 py-3 text-xs font-semibold text-muted"
+          style={{ gridTemplateColumns }}
+        >
           <span>Descrição</span>
           <span>{labelColumnTitle}</span>
           <span>Data</span>
           <span>Valor</span>
+          {showNotes && <span className="text-center">OBS</span>}
+          {showPayment && <span>Status</span>}
           <span className="text-right">Ações</span>
         </div>
         {(() => {
@@ -1163,9 +1554,9 @@ function TransactionList({
               return (
                 <div
                   key={`header-${row.key}`}
-                  className={`grid ${gridColumnsClass} gap-4 border-b border-border bg-background/60 px-3 py-2`}
+                  className="border-b border-border bg-background/60 px-3 py-2"
                 >
-                  <span className="col-span-full text-[11px] font-bold uppercase tracking-wide text-muted capitalize">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-muted capitalize">
                     {row.label}
                   </span>
                 </div>
@@ -1184,15 +1575,16 @@ function TransactionList({
           return (
             <article
               key={entry.id}
-              className={`grid ${gridColumnsClass} items-center gap-4 border-b border-border/70 px-3 py-3 transition-colors hover:bg-background/70`}
+              className="grid items-center gap-x-4 border-b border-border/70 px-3 py-3 transition-colors hover:bg-background/70"
+              style={{ gridTemplateColumns }}
             >
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-semibold text-foreground">
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <p className="truncate text-sm font-semibold text-foreground">
                     {displayTitle}
                   </p>
                   <span
-                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                    className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
                       entry.kind === "automatic"
                         ? "bg-success/10 text-success"
                         : "bg-primary/10 text-primary"
@@ -1212,28 +1604,51 @@ function TransactionList({
                   </span>
                 </div>
                 {displaySubtitle && (
-                  <p className="mt-1 text-xs text-muted">{displaySubtitle}</p>
+                  <p className="mt-1 truncate text-xs text-muted">{displaySubtitle}</p>
                 )}
               </div>
-              <div className="text-sm font-medium text-foreground">
-                <span>{accent === "expense" ? entry.supplierName ?? "-" : entry.category}</span>
+              <div className="min-w-0 truncate text-sm font-medium text-foreground">
+                {accent === "expense" ? entry.supplierName ?? "-" : entry.category}
               </div>
               <div className="text-sm font-medium text-foreground">
-                <span>{formatShortDate(entry.date)}</span>
+                {formatShortDate(entry.date)}
               </div>
               <div
                 className={`text-sm font-bold ${
                   isRevenue ? "text-success" : "text-danger"
                 }`}
               >
-                <span>{formatCurrency(entry.amount)}</span>
+                {formatCurrency(entry.amount)}
               </div>
-              <div className="flex justify-end gap-2">
+              {showNotes && (
+                <div className="flex justify-center">
+                  <TransactionNotesIcon
+                    notes={entry.notes ?? ""}
+                    onUpdateNotes={(notes) => onUpdateNotes?.(entry, notes)}
+                  />
+                </div>
+              )}
+              {showPayment && (
+                <div className="flex min-w-0 items-center">
+                  {canEditPaymentStatus(entry) ? (
+                    <PaymentStatusSelect
+                      value={entry.paymentStatus}
+                      onChange={(status) => onChangePaymentStatus?.(entry, status)}
+                    />
+                  ) : (
+                    <span className="inline-flex h-8 items-center gap-1 rounded-full bg-success/10 px-2.5 text-[11px] font-bold text-success">
+                      <CheckCircle size={12} weight={FINANCE_ICON_WEIGHT} aria-hidden />
+                      Pago
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="flex items-center justify-end gap-1.5">
                 {onEditTransaction && (
                   <button
                     type="button"
                     onClick={() => onEditTransaction(entry)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary/10"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary/10"
                     aria-label={`Editar ${entry.description}`}
                     title="Editar lançamento"
                   >
@@ -1244,14 +1659,16 @@ function TransactionList({
                   <button
                     type="button"
                     onClick={() => onDeleteTransaction(entry)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-danger transition-colors hover:bg-danger/10"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-danger transition-colors hover:bg-danger/10"
                     aria-label={`Apagar ${entry.description}`}
                     title="Apagar lançamento"
                   >
                     <Trash size={16} weight={FINANCE_ICON_WEIGHT} aria-hidden />
                   </button>
                 ) : (
-                  <span className="text-xs font-semibold text-muted">-</span>
+                  !onEditTransaction && (
+                    <span className="text-xs font-semibold text-muted">-</span>
+                  )
                 )}
               </div>
             </article>
@@ -1263,13 +1680,13 @@ function TransactionList({
       {totalPages > 1 && (
         <div className="mt-4 flex items-center justify-between border-t border-border px-3 pt-4">
           <p className="text-xs text-muted">
-            {page * TRANSACTION_PAGE_SIZE + 1}–{Math.min((page + 1) * TRANSACTION_PAGE_SIZE, entries.length)} de {entries.length} lançamentos
+            {safePage * TRANSACTION_PAGE_SIZE + 1}–{Math.min((safePage + 1) * TRANSACTION_PAGE_SIZE, entries.length)} de {entries.length} lançamentos
           </p>
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={page === 0}
+              disabled={safePage === 0}
               className="flex h-8 items-center gap-1 rounded-lg border border-border bg-card px-3 text-xs font-semibold text-muted transition-colors hover:bg-background disabled:cursor-not-allowed disabled:opacity-40"
             >
               ← Anterior
@@ -1280,7 +1697,7 @@ function TransactionList({
                 type="button"
                 onClick={() => setPage(i)}
                 className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition-colors ${
-                  i === page
+                  i === safePage
                     ? "bg-primary text-white"
                     : "border border-border bg-card text-muted hover:bg-background"
                 }`}
@@ -1291,7 +1708,7 @@ function TransactionList({
             <button
               type="button"
               onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              disabled={page === totalPages - 1}
+              disabled={safePage === totalPages - 1}
               className="flex h-8 items-center gap-1 rounded-lg border border-border bg-card px-3 text-xs font-semibold text-muted transition-colors hover:bg-background disabled:cursor-not-allowed disabled:opacity-40"
             >
               Próximo →
@@ -1404,7 +1821,12 @@ export function FinancePage() {
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [orders, setOrders] = useState<CompletedOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [fixedCosts, setFixedCosts] = useState<FixedCost[]>([]);
+  const [fixedCosts, setFixedCosts] = useState<FixedCost[]>(() => {
+    if (typeof window === "undefined") return [];
+    return readStoredFixedCosts().map((cost) =>
+      normalizeFixedCost(cost as unknown as Record<string, unknown>)
+    );
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<FinanceDeleteConfirm>(null);
@@ -1435,11 +1857,7 @@ export function FinancePage() {
   const [fixedCostForm, setFixedCostForm] = useState<FixedCostForm>(initialFixedCostForm);
   const [fixedCostError, setFixedCostError] = useState<string | null>(null);
   const [savingFixedCost, setSavingFixedCost] = useState(false);
-  const [catalogProducts, setCatalogProducts] = useState<ProductItem[]>([]);
   const [overviewChartInterval, setOverviewChartInterval] = useState<ChartInterval>("6m");
-  const [utensilWearSettings, setUtensilWearSettings] = useState<
-    Record<string, UtensilWearSetting>
-  >(() => readStoredUtensilWearSettings());
 
   const loadFinanceData = useCallback(async () => {
     setLoading(true);
@@ -1472,6 +1890,7 @@ export function FinancePage() {
             total_amount,
             completed_at,
             opened_at,
+            payment_status,
             clients(name),
             service_order_items(
               quantity,
@@ -1592,24 +2011,10 @@ export function FinancePage() {
   }, [suppliers]);
 
   useEffect(() => {
+    // Avoid wiping localStorage with [] before the first finance load finishes.
+    if (loading) return;
     writeStoredFixedCosts(fixedCosts);
-  }, [fixedCosts]);
-
-  useEffect(() => {
-    if (!workshopId) return;
-
-    void loadSupabaseCatalog(supabase, workshopId)
-      .then((catalog) => {
-        setCatalogProducts(catalog.products);
-      })
-      .catch(() => {
-        setCatalogProducts([]);
-      });
-  }, [supabase, workshopId]);
-
-  useEffect(() => {
-    writeStoredUtensilWearSettings(utensilWearSettings);
-  }, [utensilWearSettings]);
+  }, [fixedCosts, loading]);
 
   useEffect(() => {
     if (!workshopId) return;
@@ -1680,6 +2085,8 @@ export function FinancePage() {
   }, [suppliers]);
 
   const transactionEntries = useMemo<FinanceEntry[]>(() => {
+    const storedPaymentStatuses = readStoredTxPaymentStatuses();
+
     return transactions.map((transaction) => {
       const order = transaction.service_order_id
         ? ordersById.get(transaction.service_order_id)
@@ -1689,6 +2096,14 @@ export function FinancePage() {
           ?.map((item) => firstRelation(item.services)?.name)
           .filter(Boolean)
           .join(", ") || undefined;
+
+      const storedStatus = storedPaymentStatuses[transaction.id];
+      const paymentStatus =
+        transaction.type === "receita" && order
+          ? order.payment_status
+          : transaction.type === "receita" && transaction.service_order_id
+            ? "pendente"
+            : storedStatus ?? transaction.payment_status;
 
       return {
         id: transaction.id,
@@ -1707,6 +2122,8 @@ export function FinancePage() {
           : undefined,
         source: transaction.source ?? undefined,
         serviceOrderId: transaction.service_order_id ?? undefined,
+        paymentStatus,
+        notes: transaction.notes ?? "",
       };
     });
   }, [ordersById, suppliersById, transactions]);
@@ -1953,33 +2370,6 @@ export function FinancePage() {
     expenseEntries.filter((entry) => isDateInRange(entry.date, todayRange))
   );
   const todayProfit = todayRevenue - todayExpenses;
-  const utensilWearItems = useMemo(() => {
-    return catalogProducts
-      .filter((product) => product.id && product.type !== "liquid")
-      .map((product) => {
-        const setting = utensilWearSettings[product.id];
-        const durability = setting?.durability ?? product.durabilityWashes ?? "";
-        const included = setting?.included ?? true;
-        const durabilityWashes = parseDurabilityWashes(durability);
-        const value = getProductTotalCost(product);
-        const costPerWash =
-          included && durabilityWashes > 0 ? value / durabilityWashes : 0;
-
-        return {
-          product,
-          value,
-          durability,
-          included,
-          durabilityWashes,
-          costPerWash,
-        };
-      })
-      .sort((a, b) => a.product.name.localeCompare(b.product.name));
-  }, [catalogProducts, utensilWearSettings]);
-  const utensilWearPerWash = utensilWearItems.reduce(
-    (total, item) => total + item.costPerWash,
-    0
-  );
   const activeFixedCosts = fixedCosts.filter((cost) => cost.active);
   const fixedRealTotal = activeFixedCosts
     .filter((cost) => cost.kind === "real")
@@ -1992,30 +2382,8 @@ export function FinancePage() {
     const orderDate = getOrderDate(order);
     return orderDate ? isDateInRange(orderDate, currentMonthRange) : false;
   }).length;
-  const utensilWearMonthlyTotal = utensilWearPerWash * monthlyWashCount;
   const fixedCostPerWash =
-    (monthlyWashCount > 0 ? fixedMonthlyTotal / monthlyWashCount : 0) +
-    utensilWearPerWash;
-
-  function handleUpdateUtensilDurability(product: ProductItem, durability: string) {
-    setUtensilWearSettings((prev) => ({
-      ...prev,
-      [product.id]: {
-        durability,
-        included: prev[product.id]?.included ?? true,
-      },
-    }));
-  }
-
-  function handleToggleUtensilWear(product: ProductItem) {
-    setUtensilWearSettings((prev) => ({
-      ...prev,
-      [product.id]: {
-        durability: prev[product.id]?.durability ?? product.durabilityWashes ?? "",
-        included: !(prev[product.id]?.included ?? true),
-      },
-    }));
-  }
+    monthlyWashCount > 0 ? fixedMonthlyTotal / monthlyWashCount : 0;
 
   function resetForm(type: TransactionType) {
     if (type === "receita") {
@@ -2208,6 +2576,119 @@ export function FinancePage() {
     setRevenueError(null);
     setEditingRevenueId(entry.id);
     setShowRevenueForm(true);
+  }
+
+  async function handleChangePaymentStatus(
+    entry: FinanceEntry,
+    nextStatus: PaymentStatus
+  ) {
+    if (entry.paymentStatus === nextStatus) return;
+
+    const previousStatus = entry.paymentStatus ?? "pendente";
+    setError(null);
+
+    if (entry.type === "receita" && entry.serviceOrderId) {
+      setOrders((prev) =>
+        prev.map((order) =>
+          order.id === entry.serviceOrderId
+            ? { ...order, payment_status: nextStatus }
+            : order
+        )
+      );
+
+      const { error: updateError } = await supabase
+        .from("service_orders")
+        .update({ payment_status: nextStatus })
+        .eq("id", entry.serviceOrderId);
+
+      if (updateError) {
+        setOrders((prev) =>
+          prev.map((order) =>
+            order.id === entry.serviceOrderId
+              ? { ...order, payment_status: previousStatus }
+              : order
+          )
+        );
+        setError(updateError.message);
+      }
+      return;
+    }
+
+    if (entry.type !== "despesa") return;
+
+    writeStoredTxPaymentStatus(entry.id, nextStatus);
+    setTransactions((prev) =>
+      prev.map((transaction) =>
+        transaction.id === entry.id
+          ? { ...transaction, payment_status: nextStatus }
+          : transaction
+      )
+    );
+
+    const { error: updateError } = await supabase
+      .from("financial_transactions")
+      .update({ payment_status: nextStatus })
+      .eq("id", entry.id)
+      .eq("workshop_id", workshopId);
+
+    if (!updateError) {
+      clearStoredTxPaymentStatus(entry.id);
+      return;
+    }
+
+    if (isMissingColumnError(updateError, "payment_status")) {
+      // Keep local/optimistic status until migration 018 is applied.
+      return;
+    }
+
+    writeStoredTxPaymentStatus(entry.id, previousStatus);
+    setTransactions((prev) =>
+      prev.map((transaction) =>
+        transaction.id === entry.id
+          ? { ...transaction, payment_status: previousStatus }
+          : transaction
+      )
+    );
+    setError(updateError.message);
+  }
+
+  async function handleUpdateTransactionNotes(
+    entry: FinanceEntry,
+    notes: string | null
+  ) {
+    const nextNotes = notes?.trim() || null;
+    const previousNotes = entry.notes ?? "";
+
+    setTransactions((prev) =>
+      prev.map((transaction) =>
+        transaction.id === entry.id
+          ? { ...transaction, notes: nextNotes }
+          : transaction
+      )
+    );
+    setError(null);
+
+    const { error: updateError } = await supabase
+      .from("financial_transactions")
+      .update({ notes: nextNotes })
+      .eq("id", entry.id)
+      .eq("workshop_id", workshopId);
+
+    if (updateError) {
+      setTransactions((prev) =>
+        prev.map((transaction) =>
+          transaction.id === entry.id
+            ? { ...transaction, notes: previousNotes || null }
+            : transaction
+        )
+      );
+      setError(
+        isMissingColumnError(updateError, "notes")
+          ? "Não foi possível salvar a observação neste lançamento."
+          : updateError.message
+      );
+      throw updateError;
+    }
   }
 
   function handleEditExpense(entry: FinanceEntry) {
@@ -2561,12 +3042,12 @@ export function FinancePage() {
           icon={<ChartLineUp size={24} weight={FINANCE_ICON_WEIGHT} aria-hidden />}
           tone="muted"
           valueTone={growthPositive ? "success" : "danger"}
-          onClick={() => setActiveTab("reports")}
+          onClick={() => setActiveTab("overview")}
         />
       </div>
 
       <div className="rounded-lg border border-border bg-card shadow-card p-1.5 shadow-card">
-        <div className="grid grid-cols-2 gap-1.5 md:grid-cols-5">
+        <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -2874,6 +3355,8 @@ export function FinancePage() {
                 emptyMessage="Nenhuma receita encontrada."
                 groupByMonth={revenuePeriod !== "all"}
                 onEditTransaction={handleEditRevenue}
+                onChangePaymentStatus={handleChangePaymentStatus}
+                onUpdateNotes={handleUpdateTransactionNotes}
                 filter={
                   <InlineFilterButton
                     value={revenuePeriod}
@@ -2980,6 +3463,8 @@ export function FinancePage() {
                 }
                 onEditTransaction={handleEditExpense}
                 onDeleteTransaction={handleDeleteTransaction}
+                onChangePaymentStatus={handleChangePaymentStatus}
+                onUpdateNotes={handleUpdateTransactionNotes}
               />
             </div>
           )}
@@ -2995,7 +3480,7 @@ export function FinancePage() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card">
                   <p className="text-xs font-semibold uppercase tracking-widest text-muted">
                     Total fixos reais
@@ -3018,17 +3503,6 @@ export function FinancePage() {
                   </p>
                   <p className="mt-1 text-xl font-bold text-foreground">
                     {formatCurrency(fixedMonthlyTotal)}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-muted">
-                    Total desgaste utensílios
-                  </p>
-                  <p className="mt-1 text-xl font-bold text-warning">
-                    {formatCurrency(utensilWearMonthlyTotal)}
-                  </p>
-                  <p className="mt-1 text-xs font-semibold text-muted">
-                    {formatCurrency(utensilWearPerWash)} por lavagem
                   </p>
                 </div>
                 <div className="rounded-lg border border-border bg-card shadow-card px-4 py-3 shadow-card">
@@ -3256,154 +3730,6 @@ export function FinancePage() {
                   )}
                 </div>
               </div>
-
-              <section className="space-y-3 pt-2">
-                <div>
-                  <h3 className="text-base font-semibold text-foreground">
-                    Desgaste de Utensílios
-                  </h3>
-                  <p className="mt-1 text-sm text-muted">
-                    Utensílios cadastrados em Produtos entram no cálculo pelo valor dividido pela durabilidade em lavagens.
-                  </p>
-                </div>
-
-                <div className="w-full overflow-x-auto">
-                  <div className="min-w-[820px]">
-                    <div className="grid grid-cols-[minmax(220px,1fr)_130px_190px_150px_120px] gap-4 border-b border-border px-3 py-3 text-xs font-semibold text-muted">
-                      <span>Nome</span>
-                      <span>Valor</span>
-                      <span>Durabilidade (lavagens)</span>
-                      <span>Custo por lavagem</span>
-                      <span>Status</span>
-                    </div>
-                    {utensilWearItems.length === 0 ? (
-                      <p className="px-3 py-10 text-center text-sm font-semibold text-muted">
-                        Nenhum utensílio cadastrado em Produtos
-                      </p>
-                    ) : (
-                      utensilWearItems.map((item) => (
-                        <article
-                          key={item.product.id}
-                          className="grid grid-cols-[minmax(220px,1fr)_130px_190px_150px_120px] items-center gap-4 border-b border-border/70 px-3 py-3 transition-colors hover:bg-background/70"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold text-foreground">
-                              {item.product.name}
-                            </p>
-                            <p className="mt-1 text-xs text-muted">
-                              {item.durabilityWashes > 0
-                                ? `${item.durabilityWashes} lavagens de vida útil`
-                                : "Informe a durabilidade para calcular"}
-                            </p>
-                          </div>
-                          <p className="text-sm font-bold text-foreground">
-                            {formatCurrency(item.value)}
-                          </p>
-                          <div className="relative">
-                            <input
-                              type="number"
-                              min="1"
-                              value={item.durability}
-                              onChange={(event) =>
-                                handleUpdateUtensilDurability(
-                                  item.product,
-                                  event.target.value
-                                )
-                              }
-                              placeholder="Ex: 200"
-                              aria-label={`Durabilidade de ${item.product.name} em lavagens`}
-                              className="w-full rounded-lg border border-border bg-input px-4 py-2.5 pr-11 text-sm text-foreground placeholder:text-muted/60 transition-colors [appearance:textfield] focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                            />
-                            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-muted">
-                              <CaretUpDown
-                                size={16}
-                                weight={FINANCE_ICON_WEIGHT}
-                                aria-hidden
-                              />
-                            </span>
-                          </div>
-                          <p className="text-sm font-bold text-success">
-                            {formatCurrency(item.costPerWash)}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleUtensilWear(item.product)}
-                            className={`inline-flex w-fit items-center gap-1 rounded-full px-3 py-1 text-xs font-bold transition-colors ${
-                              item.included
-                                ? "bg-success/10 text-success hover:bg-success hover:text-white"
-                                : "bg-muted/10 text-muted hover:bg-background hover:text-foreground"
-                            }`}
-                          >
-                            {item.included ? (
-                              <>
-                                <CheckCircle
-                                  size={12}
-                                  weight={FINANCE_ICON_WEIGHT}
-                                  aria-hidden
-                                />
-                                Incluído
-                              </>
-                            ) : (
-                              <>
-                                <XCircle
-                                  size={12}
-                                  weight={FINANCE_ICON_WEIGHT}
-                                  aria-hidden
-                                />
-                                Excluído
-                              </>
-                            )}
-                          </button>
-                        </article>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </section>
-            </div>
-          )}
-
-          {activeTab === "reports" && (
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <section className="rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
-                <div className="mb-5 flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10 text-warning">
-                    <ClipboardText size={20} weight={FINANCE_ICON_WEIGHT} aria-hidden />
-                  </span>
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">
-                      Resumo operacional do dia
-                    </h2>
-                    <p className="text-sm text-muted">Serviços, receita e lucro.</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 gap-3">
-                  <div className="rounded-lg bg-background px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-muted">
-                      Serviços finalizados
-                    </p>
-                    <p className="mt-1 currency-display text-foreground">
-                      {todayOrders.length}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-background px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-muted">
-                      Receita do dia
-                    </p>
-                    <p className="mt-1 currency-display text-success">
-                      {formatCurrency(todayRevenue)}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-background px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-muted">
-                      Lucro do dia
-                    </p>
-                    <p className={`mt-1 currency-display ${todayProfit >= 0 ? "text-success" : "text-danger"}`}>
-                      {formatCurrency(todayProfit)}
-                    </p>
-                  </div>
-                </div>
-              </section>
             </div>
           )}
         </>
