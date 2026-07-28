@@ -1,6 +1,9 @@
 import { Header } from "@/components/layout/header";
 import { AgendaCapacityCard } from "@/components/settings/agenda-capacity-card";
+import { AccountCredentialsCard } from "@/components/settings/account-credentials-card";
+import { createClient } from "@/lib/supabase/server";
 import { Bell, LockKeyhole, Settings, SlidersHorizontal } from "lucide-react";
+import { redirect } from "next/navigation";
 
 const settingsSections = [
   {
@@ -20,7 +23,16 @@ const settingsSections = [
   },
 ];
 
-export default function ConfiguracoesPage() {
+export default async function ConfiguracoesPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
   return (
     <>
       <Header
@@ -28,12 +40,13 @@ export default function ConfiguracoesPage() {
         description="Gerencie preferências, notificações e segurança"
       />
 
+      <div className="mb-6">
+        <AccountCredentialsCard email={user.email ?? ""} />
+      </div>
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {settingsSections.map((section) => (
-          <div
-            key={section.title}
-            className="card-surface"
-          >
+          <div key={section.title} className="card-surface">
             <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-premium/10 text-premium">
               <section.icon className="h-5 w-5" />
             </div>

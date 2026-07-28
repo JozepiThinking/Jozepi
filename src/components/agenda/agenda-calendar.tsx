@@ -25,6 +25,10 @@ import { ClientFormModal } from "@/components/clients/client-form-modal";
 import { createClient } from "@/lib/supabase/client";
 import { assertMutationRows } from "@/lib/supabase/mutations";
 import { formatCurrency } from "@/lib/utils/format";
+import {
+  ensurePackageServicesInCatalog,
+  isPackageCatalogServiceName,
+} from "@/lib/services/packages";
 import { type Client, type ClientFormData } from "@/types/client";
 import {
   fetchWorkshopProfile,
@@ -355,22 +359,31 @@ function ServiceListNotesIcon({
   }
 
   return (
-    <div ref={ref} className="relative flex items-center justify-center">
+    <div
+      ref={ref}
+      className="relative z-20 flex items-center justify-center"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
       <button
         type="button"
-        onClick={() => {
+        onClick={(event) => {
+          event.stopPropagation();
           setOpen((value) => !value);
           setEditing(false);
           setDraft(trimmedNotes);
         }}
-        className="inline-flex items-center justify-center rounded-sm text-amber-600 transition-colors hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-amber-600 transition-colors hover:bg-amber-50 hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
         aria-label="Ver observação"
       >
-        <Note size={16} weight="light" aria-hidden />
+        <Note size={20} weight="light" aria-hidden />
       </button>
 
       {open && (
-        <div className="absolute left-1/2 top-full z-30 mt-2 w-72 -translate-x-1/2 rounded-md border border-border bg-card p-3 shadow-lg">
+        <div
+          className="absolute left-1/2 top-full z-40 mt-2 w-72 -translate-x-1/2 rounded-md border border-border bg-card p-3 shadow-lg"
+          onClick={(event) => event.stopPropagation()}
+        >
           <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted">
             Observação
           </p>
@@ -797,7 +810,17 @@ export function AgendaCalendar() {
     );
 
     if (!servicesError) {
-      setServices((servicesData as AgendaService[]) ?? []);
+      const loadedServices = (servicesData as AgendaService[]) ?? [];
+      try {
+        const withPackages = await ensurePackageServicesInCatalog(
+          supabase,
+          profile.workshop_id,
+          loadedServices
+        );
+        setServices(withPackages as AgendaService[]);
+      } catch {
+        setServices(loadedServices);
+      }
     }
 
     const { data: appointmentsData, error: appointmentsError } = await fetchAppointments(
@@ -1105,19 +1128,37 @@ export function AgendaCalendar() {
   const availableServices = services.filter(
     (service) => !form.serviceIds.includes(service.id)
   );
-  const availableServiceOptions = availableServices.map((service) => {
-    const duration = formatServiceDuration(service.duration_minutes);
-    const details = [
-      duration,
-      getServicePrice(service) > 0 ? formatCurrency(getServicePrice(service)) : null,
-    ].filter(Boolean);
+  const availableServiceOptions = [...availableServices]
+    .sort((a, b) => {
+      const aPackage = isPackageCatalogServiceName(a.name);
+      const bPackage = isPackageCatalogServiceName(b.name);
+      if (aPackage !== bPackage) return aPackage ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    })
+    .map((service) => {
+      const duration = formatServiceDuration(service.duration_minutes);
+      const isPackage = isPackageCatalogServiceName(service.name);
+      const kindLabel = service.name.toLowerCase().startsWith("coating")
+        ? "Coating"
+        : service.name.toLowerCase().startsWith("pacote")
+          ? "Stage"
+          : null;
+      const details = [
+        kindLabel,
+        duration,
+        getServicePrice(service) > 0 ? formatCurrency(getServicePrice(service)) : null,
+      ].filter(Boolean);
 
-    return {
-      value: service.id,
-      label: service.name,
-      description: details.length > 0 ? details.join(" • ") : "Serviço cadastrado",
-    };
-  });
+      return {
+        value: service.id,
+        label: service.name,
+        description: details.length > 0
+          ? details.join(" • ")
+          : isPackage
+            ? "Pacote"
+            : "Serviço cadastrado",
+      };
+    });
   const servicesTotal = selectedServices.reduce(
     (total, service) => total + getServicePrice(service),
     0

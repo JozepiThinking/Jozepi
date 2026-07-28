@@ -246,3 +246,147 @@ export function saveCoatingPackageOverride(
     // ignore
   }
 }
+
+export type BookablePackageKind = "stage" | "coating";
+
+export interface BookablePackage extends ServicePackage {
+  kind: BookablePackageKind;
+  durationMinutes: number;
+}
+
+const PACKAGE_DURATION_MINUTES: Record<string, number> = {
+  "stage-1": 180,
+  "stage-2": 240,
+  "stage-3": 360,
+  "stage-4": 480,
+  "coating-cquartz-lite": 480,
+  "coating-cquartz-uk": 600,
+  "coating-dquartz-go": 720,
+};
+
+export function packageCatalogName(
+  pkg: Pick<ServicePackage, "badge">,
+  kind: BookablePackageKind
+) {
+  return kind === "stage" ? `Pacote ${pkg.badge}` : `Coating ${pkg.badge}`;
+}
+
+export function getBookablePackages(): BookablePackage[] {
+  return [
+    ...loadStagePackages().map((pkg) => ({
+      ...pkg,
+      kind: "stage" as const,
+      durationMinutes: PACKAGE_DURATION_MINUTES[pkg.id] ?? 180,
+    })),
+    ...loadCoatingPackages().map((pkg) => ({
+      ...pkg,
+      kind: "coating" as const,
+      durationMinutes: PACKAGE_DURATION_MINUTES[pkg.id] ?? 480,
+    })),
+  ];
+}
+
+export function isPackageCatalogServiceName(name: string) {
+  const normalized = name.trim().toLowerCase();
+  return (
+    normalized.startsWith("pacote stage") ||
+    normalized.startsWith("coating ")
+  );
+}
+
+type PackageCatalogService = {
+  id: string;
+  name: string;
+  price: number | string;
+  duration_minutes: number | null;
+  active: boolean;
+};
+
+export async function ensurePackageServicesInCatalog(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  workshopId: string,
+  existingServices: PackageCatalogService[]
+): Promise<PackageCatalogService[]> {
+  const packages = getBookablePackages();
+  const byName = new Map(
+    existingServices.map((service) => [service.name.trim().toLowerCase(), service])
+  );
+  const nextServices = [...existingServices];
+
+  for (const pkg of packages) {
+    const name = packageCatalogName(pkg, pkg.kind);
+    const key = name.toLowerCase();
+    const existing = byName.get(key);
+
+    if (existing) {
+      const priceChanged = Number(existing.price) !== pkg.price;
+      const durationChanged = existing.duration_minutes !== pkg.durationMinutes;
+      const inactive = !existing.active;
+
+      if (priceChanged || durationChanged || inactive) {
+        await supabase
+          .from("services")
+          .update({
+            price: pkg.price,
+            duration_minutes: pkg.durationMinutes,
+            active: true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id);
+
+        const index = nextServices.findIndex((service) => service.id === existing.id);
+        if (index >= 0) {
+          nextServices[index] = {
+            ...nextServices[index],
+            price: pkg.price,
+            duration_minutes: pkg.durationMinutes,
+            active: true,
+          };
+        }
+      }
+      continue;
+    }
+
+    const description =
+      pkg.subtitle?.trim() ||
+      pkg.newItems.slice(0, 3).join(" • ") ||
+      null;
+
+    const payload = {
+      workshop_id: workshopId,
+      name,
+      description,
+      price: pkg.price,
+      duration_minutes: pkg.durationMinutes,
+      category: pkg.kind === "stage" ? "Stages" : "Coating",
+      active: true,
+    };
+
+    let insertResult = await supabase
+      .from("services")
+      .insert(payload)
+      .select("id, name, price, duration_minutes, active")
+      .single();
+
+    if (
+      insertResult.error?.message &&
+      String(insertResult.error.message).toLowerCase().includes("category")
+    ) {
+      const { category: _removed, ...legacyPayload } = payload;
+      insertResult = await supabase
+        .from("services")
+        .insert(legacyPayload)
+        .select("id, name, price, duration_minutes, active")
+        .single();
+    }
+
+    if (insertResult.error || !insertResult.data) continue;
+
+    const created = insertResult.data as PackageCatalogService;
+    byName.set(key, created);
+    nextServices.push(created);
+  }
+
+  return nextServices;
+}

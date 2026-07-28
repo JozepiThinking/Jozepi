@@ -16,8 +16,10 @@ import {
 } from "@phosphor-icons/react";
 import {
   COATING_PACKAGES,
+  ensurePackageServicesInCatalog,
   loadCoatingPackages,
   loadStagePackages,
+  packageCatalogName,
   saveCoatingPackageOverride,
   saveStagePackageOverride,
   STAGE_PACKAGES,
@@ -962,12 +964,41 @@ export function ServicesPage() {
     setPkgEditNewItem("");
   }
 
-  function handleBookPackage(pkg: ServicePackage) {
-    const ids = pkg.allServiceNames
-      .map((name) => services.find((s) => s.name === name)?.id)
-      .filter((id): id is string => Boolean(id));
-    const query = ids.length > 0 ? `?packageServices=${ids.join(",")}` : "";
-    router.push(`/agenda${query}`);
+  async function handleBookPackage(pkg: ServicePackage) {
+    const kind = pkg.id.startsWith("coating-") ? "coating" : "stage";
+    const catalogName = packageCatalogName(pkg, kind);
+
+    if (workshopId) {
+      try {
+        const synced = await ensurePackageServicesInCatalog(
+          supabase,
+          workshopId,
+          services.map((service) => ({
+            id: service.id,
+            name: service.name,
+            price: service.price,
+            duration_minutes: service.duration_minutes,
+            active: service.active,
+          }))
+        );
+        const matched = synced.find(
+          (service) => service.name.trim().toLowerCase() === catalogName.toLowerCase()
+        );
+        if (matched) {
+          router.push(`/agenda?packageServices=${matched.id}`);
+          return;
+        }
+      } catch {
+        // fall through to name lookup below
+      }
+    }
+
+    const existing = services.find(
+      (service) => service.name.trim().toLowerCase() === catalogName.toLowerCase()
+    );
+    router.push(
+      existing ? `/agenda?packageServices=${existing.id}` : "/agenda"
+    );
   }
 
   function handleBookService(serviceId: string) {
@@ -1791,14 +1822,6 @@ export function ServicesPage() {
 
       {activeTab === "servicos" && (
         <>
-      {/* Separator + avulsos title */}
-      <div className="mb-5 flex items-center gap-3">
-        <span className="text-xs font-bold uppercase tracking-[0.2em] text-muted">
-          Serviços Avulsos
-        </span>
-        <div className="h-px flex-1 bg-border" />
-      </div>
-
       <div className="mb-5 rounded-lg border border-border bg-card p-3 shadow-card">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
           <div className="min-w-0 flex-1">
