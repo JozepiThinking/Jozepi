@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Camera, ImagePlus, KeyRound, PencilLine } from "lucide-react";
+import { Camera, ImagePlus, PencilLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
@@ -60,11 +60,6 @@ export function UserProfileCard({
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [savingPassword, setSavingPassword] = useState(false);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
-  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
 
   const displayName = (editing ? name : savedName) || email || "Usuário";
   const initial = displayName.slice(0, 1).toUpperCase();
@@ -99,46 +94,6 @@ export function UserProfileCard({
       );
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleChangePassword(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    setPasswordError(null);
-    setPasswordSuccess(null);
-
-    if (newPassword.length < 6) {
-      setPasswordError("A senha precisa ter pelo menos 6 caracteres.");
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      setPasswordError("As senhas não conferem.");
-      return;
-    }
-
-    setSavingPassword(true);
-
-    try {
-      const supabase = createClient();
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
-
-      if (updateError) {
-        throw updateError;
-      }
-
-      setNewPassword("");
-      setConfirmPassword("");
-      setPasswordSuccess("Senha atualizada para testes.");
-    } catch (err) {
-      setPasswordError(
-        err instanceof Error ? err.message : "Erro ao atualizar a senha."
-      );
-    } finally {
-      setSavingPassword(false);
     }
   }
 
@@ -318,77 +273,6 @@ export function UserProfileCard({
           </Button>
         </div>
       )}
-
-      <form
-        onSubmit={handleChangePassword}
-        className="mt-6 rounded-lg border border-dashed border-warning/30 bg-warning/5 p-5"
-      >
-        <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
-            <KeyRound className="h-5 w-5" />
-          </span>
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">
-              Senha de teste
-            </h3>
-            <p className="mt-1 text-xs text-muted">
-              Altere rapidamente a senha desta conta. Depois podemos trocar por
-              um fluxo com senha atual e confirmação por e-mail.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Input
-            label="Nova senha"
-            type="password"
-            value={newPassword}
-            onChange={(event) => {
-              setNewPassword(event.target.value);
-              setPasswordError(null);
-              setPasswordSuccess(null);
-            }}
-            placeholder="Mínimo 6 caracteres"
-            autoComplete="new-password"
-            minLength={6}
-            className="bg-card"
-          />
-          <Input
-            label="Confirmar senha"
-            type="password"
-            value={confirmPassword}
-            onChange={(event) => {
-              setConfirmPassword(event.target.value);
-              setPasswordError(null);
-              setPasswordSuccess(null);
-            }}
-            placeholder="Repita a nova senha"
-            autoComplete="new-password"
-            minLength={6}
-            className="bg-card"
-          />
-        </div>
-
-        {passwordError && (
-          <p className="mt-3 text-xs font-medium text-danger">{passwordError}</p>
-        )}
-        {passwordSuccess && (
-          <p className="mt-3 text-xs font-medium text-success">
-            {passwordSuccess}
-          </p>
-        )}
-
-        <div className="mt-4 flex justify-end">
-          <Button
-            type="submit"
-            variant="success"
-            loading={savingPassword}
-            disabled={!newPassword || !confirmPassword}
-          >
-            Trocar senha
-          </Button>
-        </div>
-      </form>
     </div>
   );
 }
