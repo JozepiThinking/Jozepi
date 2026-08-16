@@ -1,6 +1,5 @@
 import { Header } from "@/components/layout/header";
 import { UserProfileCard } from "@/components/profile/user-profile-card";
-import { CompanyInfoCard } from "@/components/settings/company-info-card";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 
@@ -51,10 +50,6 @@ export default async function PerfilPage() {
             : null
         }
       />
-
-      <div className="mt-6">
-        <CompanyInfoCard />
-      </div>
     </>
   );
 }

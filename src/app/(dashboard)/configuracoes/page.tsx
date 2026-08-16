@@ -1,6 +1,7 @@
 import { Header } from "@/components/layout/header";
 import { AgendaCapacityCard } from "@/components/settings/agenda-capacity-card";
 import { AccountCredentialsCard } from "@/components/settings/account-credentials-card";
+import { CompanyInfoCard } from "@/components/settings/company-info-card";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 
@@ -23,6 +24,10 @@ export default async function ConfiguracoesPage() {
 
       <div className="mb-6">
         <AccountCredentialsCard email={user.email ?? ""} />
+      </div>
+
+      <div className="mb-6">
+        <CompanyInfoCard />
       </div>
 
       <div>
