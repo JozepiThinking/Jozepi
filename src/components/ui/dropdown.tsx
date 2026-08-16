@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { CaretDown, Plus } from "@phosphor-icons/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CaretDown, MagnifyingGlass, Plus } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils/cn";
 
 export interface DropdownOption {
@@ -24,6 +24,8 @@ interface DropdownProps {
   createPlaceholder?: string;
   onCreateOption?: (label: string) => string | void;
   onDeleteOption?: (value: string) => void;
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }
 
 const DROPDOWN_EXIT_MS = 160;
@@ -43,15 +45,24 @@ export function Dropdown({
   createPlaceholder = "Digite o nome",
   onCreateOption,
   onDeleteOption,
+  searchable = false,
+  searchPlaceholder = "Buscar...",
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const [closing, setClosing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createValue, setCreateValue] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const closeTimeoutRef = useRef<number | null>(null);
   const inputId = id ?? label.toLowerCase().replace(/\s/g, "-");
   const selectedOption = options.find((option) => option.value === value);
+
+  const visibleOptions = useMemo(() => {
+    if (!searchable || !searchQuery.trim()) return options;
+    const query = searchQuery.trim().toLowerCase();
+    return options.filter((option) => option.label.toLowerCase().includes(query));
+  }, [options, searchable, searchQuery]);
 
   function clearCloseTimeout() {
     if (closeTimeoutRef.current) {
@@ -77,6 +88,7 @@ export function Dropdown({
       setCreating(false);
       setCreateValue("");
       setCreateError(null);
+      setSearchQuery("");
       closeTimeoutRef.current = null;
     }, DROPDOWN_EXIT_MS);
   }
@@ -172,8 +184,28 @@ export function Dropdown({
             closing ? "dropdown-menu-exit" : "dropdown-menu-enter"
           )}
         >
+          {searchable && (
+            <div className="relative mb-2">
+              <MagnifyingGlass
+                size={15}
+                weight={DROPDOWN_ICON_WEIGHT}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+                aria-hidden
+              />
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder={searchPlaceholder}
+                autoFocus
+                className="w-full rounded-md border border-border bg-input py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted/60 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+              />
+            </div>
+          )}
           <div role="listbox" aria-labelledby={inputId} className="space-y-1">
-            {options.map((option) => {
+            {searchable && visibleOptions.length === 0 && (
+              <p className="px-3 py-2 text-sm text-muted">Nenhum resultado encontrado.</p>
+            )}
+            {visibleOptions.map((option) => {
               const selected = option.value === value;
 
               return (
