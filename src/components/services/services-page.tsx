@@ -887,7 +887,10 @@ export function ServicesPage() {
     return product ? total + calculateProductUsageCost(product, usage.amount) : total;
   }, 0);
 
-  function getServiceFinancials(serviceId: string, price: number | string) {
+  // Cost is informational only (how much is spent on products for this
+  // service) — it must never be netted against/subtracted from the
+  // service's price shown to the user.
+  function getServiceFinancials(serviceId: string) {
     const usages = serviceProductUsages[serviceId] ?? [];
     const cost = usages.reduce((total, usage) => {
       const product = products.find((item) => item.id === usage.productId);
@@ -898,11 +901,7 @@ export function ServicesPage() {
       return product ? calculateProductUsageCost(product, usage.amount) > 0 : false;
     });
 
-    return {
-      cost,
-      hasCost,
-      profit: Number(price) - cost,
-    };
+    return { cost, hasCost };
   }
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
@@ -1923,8 +1922,7 @@ export function ServicesPage() {
           {/* Service cards — single container with dividers */}
           <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card divide-y divide-border">
             {filteredServices.map((service) => {
-                  const financials = getServiceFinancials(service.id, service.price);
-                  const profitPositive = financials.profit >= 0;
+                  const financials = getServiceFinancials(service.id);
 
                   const isEditingThis = editingService?.id === service.id;
 
@@ -2161,12 +2159,9 @@ export function ServicesPage() {
                               </p>
                               {financials.hasCost && (
                                 <p className="text-[11px] leading-tight text-muted">
-                                  Custo {formatCurrency(financials.cost)}
+                                  Custo em produtos {formatCurrency(financials.cost)}
                                 </p>
                               )}
-                              <p className={`text-[11px] font-semibold leading-tight ${profitPositive ? "text-success" : "text-danger"}`}>
-                                Lucro {formatCurrency(financials.profit)}
-                              </p>
                             </div>
 
                             {/* Agendar + icon actions stacked */}

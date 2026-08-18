@@ -83,6 +83,7 @@ import {
   getDateRangeKeys,
   getAppointmentEndDate,
   getAppointmentDurationDays,
+  getDailyTimeWindow,
   appointmentOccursOnDate,
   formatShortDate,
   formatAppointmentDuration,
@@ -1485,19 +1486,47 @@ export function AgendaCalendar() {
     endTime: string
   ) {
     return getDateRangeKeys(startDate, endDate).some((date) => {
-      const appointmentsForDate = appointments.filter(
-        (appointment) =>
-          appointmentOccursOnDate(appointment, date) &&
-          appointment.id !== editingAppointmentId &&
-          rangesOverlap(startTime, endTime, appointment.startTime, appointment.endTime)
+      const [dayStart, dayEnd] = getDailyTimeWindow(
+        date,
+        startDate,
+        endDate,
+        startTime,
+        endTime
       );
 
+      const appointmentsForDate = appointments.filter((appointment) => {
+        if (
+          !appointmentOccursOnDate(appointment, date) ||
+          appointment.id === editingAppointmentId
+        ) {
+          return false;
+        }
+
+        const [existingStart, existingEnd] = getDailyTimeWindow(
+          date,
+          appointment.date,
+          getAppointmentEndDate(appointment),
+          appointment.startTime,
+          appointment.endTime
+        );
+
+        return rangesOverlap(dayStart, dayEnd, existingStart, existingEnd);
+      });
+
       return timeSlots
-        .filter((time) => isTimeInRange(time, startTime, endTime))
+        .filter((time) => isTimeInRange(time, dayStart, dayEnd))
         .some((time) => {
-          const occupiedCount = appointmentsForDate.filter((appointment) =>
-            isTimeInRange(time, appointment.startTime, appointment.endTime)
-          ).length;
+          const occupiedCount = appointmentsForDate.filter((appointment) => {
+            const [existingStart, existingEnd] = getDailyTimeWindow(
+              date,
+              appointment.date,
+              getAppointmentEndDate(appointment),
+              appointment.startTime,
+              appointment.endTime
+            );
+
+            return isTimeInRange(time, existingStart, existingEnd);
+          }).length;
 
           return occupiedCount >= agendaCapacity;
         });
@@ -1507,11 +1536,12 @@ export function AgendaCalendar() {
   function selectTimeSlot(time: string) {
     setError(null);
 
-    if (
-      !form.startTime ||
-      form.endTime ||
-      timeToMinutes(time) <= timeToMinutes(form.startTime)
-    ) {
+    const canPickEndTime =
+      form.startTime &&
+      !form.endTime &&
+      (form.isMultiDay || timeToMinutes(time) > timeToMinutes(form.startTime));
+
+    if (!canPickEndTime) {
       setForm((prev) => ({ ...prev, startTime: time, endTime: "" }));
       return;
     }
@@ -1610,7 +1640,10 @@ export function AgendaCalendar() {
       return;
     }
 
-    if (timeToMinutes(form.endTime) <= timeToMinutes(form.startTime)) {
+    if (
+      !form.isMultiDay &&
+      timeToMinutes(form.endTime) <= timeToMinutes(form.startTime)
+    ) {
       setError("O horário final precisa ser depois do começo.");
       return;
     }
@@ -2445,7 +2478,8 @@ export function AgendaCalendar() {
                         Serviço de múltiplos dias
                       </span>
                       <span className="mt-1 block text-xs text-muted">
-                        O horário de início e fim será aplicado a todos os dias do período.
+                        O horário de início vale para o primeiro dia e o horário final para o
+                        último dia do período.
                       </span>
                     </span>
                     <span
@@ -2951,6 +2985,7 @@ export function AgendaCalendar() {
                       const isSelectedEndpoint =
                         form.startTime === time || form.endTime === time;
                       const isInSelectedRange =
+                        !form.isMultiDay &&
                         form.startTime &&
                         form.endTime &&
                         isTimeBetween(time, form.startTime, form.endTime);
@@ -2959,7 +2994,7 @@ export function AgendaCalendar() {
                       const isConflictingEndTime =
                         !!form.startTime &&
                         !form.endTime &&
-                        timeToMinutes(time) > timeToMinutes(form.startTime) &&
+                        (form.isMultiDay || timeToMinutes(time) > timeToMinutes(form.startTime)) &&
                         hasAppointmentConflict(
                           form.date,
                           form.isMultiDay ? form.endDate : form.date,
@@ -3617,10 +3652,10 @@ export function AgendaCalendar() {
                   <div className="grid grid-cols-4 gap-1.5 rounded-lg border border-border bg-background p-2">
                     {timeSlots.map((time) => {
                       const isSelectedEndpoint = form.startTime === time || form.endTime === time;
-                      const isInSelectedRange = form.startTime && form.endTime && isTimeBetween(time, form.startTime, form.endTime);
+                      const isInSelectedRange = !form.isMultiDay && form.startTime && form.endTime && isTimeBetween(time, form.startTime, form.endTime);
                       const occupiedCount = slotOccupancyForFormDate.get(time) ?? 0;
                       const isFull = occupiedCount >= agendaCapacity;
-                      const isConflictingEndTime = !!form.startTime && !form.endTime && timeToMinutes(time) > timeToMinutes(form.startTime) && hasAppointmentConflict(form.date, form.isMultiDay ? form.endDate : form.date, form.startTime, time);
+                      const isConflictingEndTime = !!form.startTime && !form.endTime && (form.isMultiDay || timeToMinutes(time) > timeToMinutes(form.startTime)) && hasAppointmentConflict(form.date, form.isMultiDay ? form.endDate : form.date, form.startTime, time);
                       const isUnavailable = isFull || isConflictingEndTime;
                       return (
                         <button

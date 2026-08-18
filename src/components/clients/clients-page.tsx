@@ -77,6 +77,30 @@ function createVehicleFormItem(vehicle?: Vehicle | null): VehicleFormItem {
   };
 }
 
+function ClientStatChip({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2 shadow-card">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+          {label}
+        </p>
+        <p className="text-sm font-bold leading-tight text-foreground">{value}</p>
+      </div>
+    </div>
+  );
+}
+
 function VehicleFormModal({
   client,
   vehicle,
@@ -801,8 +825,8 @@ export function ClientsPage() {
         }
       />
 
-      <div className="mb-6">
-        <div className="relative max-w-md">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative max-w-md flex-1">
           <MagnifyingGlass
             size={16}
             weight={CLIENT_ICON_WEIGHT}
@@ -817,6 +841,14 @@ export function ClientsPage() {
             className="w-full rounded-lg border border-border bg-input py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
           />
         </div>
+
+        {!loading && (
+          <ClientStatChip
+            label="Total de clientes"
+            value={String(clients.length)}
+            icon={<UsersThree size={16} weight={CLIENT_ICON_WEIGHT} aria-hidden />}
+          />
+        )}
       </div>
 
       {loading ? (

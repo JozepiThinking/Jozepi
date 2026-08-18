@@ -1,19 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowCounterClockwise,
   Camera,
+  CaretDown,
+  CaretUp,
   CaretUpDown,
+  CurrencyDollar,
   Drop,
   EnvelopeSimple,
+  Faders,
   Funnel,
   MagnifyingGlassPlus,
   Package,
   PencilSimple,
   Plus,
   Trash,
-  Warning,
   Wrench,
   X,
 } from "@phosphor-icons/react";
@@ -59,6 +63,8 @@ const PRODUCT_ICON_WEIGHT = "light" as const;
 
 type ProductTypeFilter = "all" | "liquid" | "utensil";
 type ProductPageTab = "products" | "suppliers";
+type ProductSortColumn = "name" | "value" | "stock";
+type ProductSortDirection = "asc" | "desc";
 
 type ProductDeleteConfirm =
   | { type: "product"; product: ProductItem; linkedServiceCount: number }
@@ -98,6 +104,12 @@ interface ReplenishForm {
 }
 
 const PRODUCT_FILTER_EXIT_MS = 300;
+
+// Single source of truth for the products table column widths, applied via
+// inline style to both the header row and every product row so they can
+// never drift out of alignment regardless of CSS class generation.
+const PRODUCTS_TABLE_GRID_TEMPLATE =
+  "minmax(220px, 1fr) 110px 120px 190px 172px";
 
 function ProductInlineFilterButton({
   value,
@@ -307,11 +319,6 @@ function getSupplierExtra(supplier: Supplier, key: keyof Supplier) {
 const PRODUCT_PHOTO_MAX_SIZE = 480;
 const PRODUCT_PHOTO_QUALITY = 0.72;
 const PRODUCT_PHOTO_COMPACT_THRESHOLD = 180_000;
-const priceHistoryReasonLabels: Record<ProductPriceHistoryReason, string> = {
-  created: "Cadastro",
-  edited: "Edição",
-  replenished: "Reposição",
-};
 
 function resizeProductImage(source: File | string) {
   return new Promise<string>((resolve, reject) => {
@@ -365,19 +372,238 @@ async function compactProductPhoto(product: ProductItem) {
   }
 }
 
-function formatPriceHistoryDate(date: string) {
-  const parsedDate = new Date(date);
-  if (Number.isNaN(parsedDate.getTime())) return "";
-
-  return parsedDate.toLocaleDateString("pt-BR");
-}
-
 function dateKey(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
+}
+
+function SortableColumnHeader({
+  label,
+  column,
+  activeColumn,
+  direction,
+  onSort,
+  align = "left",
+}: {
+  label: string;
+  column: ProductSortColumn;
+  activeColumn: ProductSortColumn;
+  direction: ProductSortDirection;
+  onSort: (column: ProductSortColumn) => void;
+  align?: "left" | "right";
+}) {
+  const isActive = activeColumn === column;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(column)}
+      className={`inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors hover:text-foreground ${
+        align === "right" ? "justify-end" : ""
+      } ${isActive ? "text-foreground" : "text-muted"}`}
+    >
+      {label}
+      {isActive ? (
+        direction === "asc" ? (
+          <CaretUp size={12} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+        ) : (
+          <CaretDown size={12} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+        )
+      ) : (
+        <CaretUpDown
+          size={12}
+          weight={PRODUCT_ICON_WEIGHT}
+          className="opacity-40"
+          aria-hidden
+        />
+      )}
+    </button>
+  );
+}
+
+function ProductStatChip({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2 shadow-card">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+          {label}
+        </p>
+        <p className="text-sm font-bold leading-tight text-foreground">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function ProductReplenishModal({
+  product,
+  amount,
+  error,
+  onAmountChange,
+  onCancel,
+  onConfirm,
+}: {
+  product: ProductItem;
+  amount: string;
+  error: string | null;
+  onAmountChange: (value: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-foreground/25 px-4 backdrop-blur-sm"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="replenish-modal-title"
+        className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-card-hover"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
+            <ArrowCounterClockwise size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h2
+              id="replenish-modal-title"
+              className="text-sm font-semibold text-foreground"
+            >
+              Repor estoque
+            </h2>
+            <p className="truncate text-xs text-muted">{product.name}</p>
+          </div>
+        </div>
+
+        <p className="mb-3 text-xs text-muted">
+          Estoque será preenchido ao máximo. Informe o novo custo do produto (opcional).
+        </p>
+        <Input
+          label="Custo total (R$)"
+          type="number"
+          min="0"
+          step="0.01"
+          className="number-input-no-spinner"
+          value={amount}
+          onChange={(event) => onAmountChange(event.target.value)}
+          placeholder={product.totalCost || "0,00"}
+        />
+        {error && <p className="mt-2 text-xs font-medium text-danger">{error}</p>}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button type="button" variant="success" onClick={onConfirm}>
+            Repor
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function ProductStockEditModal({
+  product,
+  value,
+  onValueChange,
+  onCancel,
+  onConfirm,
+}: {
+  product: ProductItem;
+  value: string;
+  onValueChange: (value: string) => void;
+  onCancel: () => void;
+  onConfirm: (value: string) => void;
+}) {
+  if (typeof document === "undefined") return null;
+
+  const initialStock = getProductInitialStock(product);
+  const stockUnit = getProductStockUnit(product);
+  const percent =
+    initialStock > 0
+      ? Math.max(0, Math.min(100, ((Number(value) || 0) / initialStock) * 100))
+      : 0;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-foreground/25 px-4 backdrop-blur-sm"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="stock-edit-modal-title"
+        className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-card-hover"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
+            <Faders size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h2
+              id="stock-edit-modal-title"
+              className="text-sm font-semibold text-foreground"
+            >
+              Editar estoque
+            </h2>
+            <p className="truncate text-xs text-muted">{product.name}</p>
+          </div>
+        </div>
+
+        <p className="mb-3 text-sm font-bold text-foreground">
+          {formatStockAmount(Number(value) || 0)} {stockUnit} /{" "}
+          {formatStockAmount(initialStock)} {stockUnit}
+        </p>
+        <input
+          type="range"
+          min="0"
+          max={initialStock}
+          step={product.type === "liquid" ? "1" : "0.01"}
+          value={value}
+          onChange={(event) => onValueChange(event.target.value)}
+          className="stock-range-slider w-full"
+          style={{
+            background: `linear-gradient(to right, var(--primary) 0%, var(--primary) ${percent}%, #e2e8f0 ${percent}%, #e2e8f0 100%)`,
+          }}
+          aria-label={`Ajustar estoque atual de ${product.name}`}
+        />
+
+        <div className="mt-5 flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            variant="success"
+            onClick={() => onConfirm(value)}
+          >
+            Salvar
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
 }
 
 function SupplierDetail({
@@ -443,6 +669,8 @@ export function ProductsPage() {
   >({});
   const [typeError, setTypeError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<ProductTypeFilter>("all");
+  const [sortColumn, setSortColumn] = useState<ProductSortColumn>("name");
+  const [sortDirection, setSortDirection] = useState<ProductSortDirection>("asc");
   const [activeProductTab, setActiveProductTab] = useState<ProductPageTab>("products");
   const [showProductFilter, setShowProductFilter] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -1151,42 +1379,31 @@ export function ProductsPage() {
     );
   }
 
-  function getProductUsageSummary(product: ProductItem) {
-    const summary = Object.values(serviceProductUsages).reduce(
-      (acc, usages) => {
-        const usage = usages.find((item) => item.productId === product.id);
-        if (!usage) return acc;
-
-        try {
-          const amount = parsePositiveNumber(usage.amount);
-          return {
-            serviceCount: acc.serviceCount + 1,
-            totalUsage: acc.totalUsage + amount,
-          };
-        } catch {
-          return acc;
-        }
-      },
-      { serviceCount: 0, totalUsage: 0 }
-    );
-    const averageUsage =
-      summary.serviceCount > 0 ? summary.totalUsage / summary.serviceCount : 0;
-    const estimatedUses =
-      averageUsage > 0
-        ? Math.floor(getProductRemainingStock(product) / averageUsage)
-        : null;
-
-    return {
-      ...summary,
-      averageUsage,
-      estimatedUses,
-    };
+  function handleSort(column: ProductSortColumn) {
+    if (sortColumn === column) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortColumn(column);
+    setSortDirection("asc");
   }
 
   const filteredProducts = products.filter((product) => {
     if (typeFilter === "all") return true;
     if (typeFilter === "liquid") return product.type === "liquid";
     return product.type !== "liquid";
+  });
+  const sortedProducts = [...filteredProducts].sort((a, b) => {
+    let comparison = 0;
+    if (sortColumn === "name") {
+      comparison = a.name.localeCompare(b.name, "pt-BR");
+    } else if (sortColumn === "value") {
+      comparison =
+        parseMoney(a.totalCost || "0") - parseMoney(b.totalCost || "0");
+    } else {
+      comparison = getProductStockPercent(a) - getProductStockPercent(b);
+    }
+    return sortDirection === "asc" ? comparison : -comparison;
   });
   const totalInvested = products.reduce(
     (total, product) => total + parseMoney(product.totalCost || "0"),
@@ -1222,7 +1439,7 @@ export function ProductsPage() {
 
       {activeProductTab === "products" && (
         <div key="products-tab" className="product-tab-panel-enter">
-      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="sticky top-0 z-20 mb-6 flex flex-col gap-4 bg-background/95 py-2 backdrop-blur-sm lg:flex-row lg:items-center lg:justify-between">
         <ProductInlineFilterButton
           value={typeFilter}
           options={productTypeFilterOptions}
@@ -1234,14 +1451,28 @@ export function ProductsPage() {
         />
 
         {products.length > 0 && (
-          <Button
-            variant="success"
-            onClick={openCreateForm}
-            className="w-full sm:w-auto"
-          >
-            <Plus size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
-            Adicionar produto
-          </Button>
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <ProductStatChip
+                label="Total investido"
+                value={formatCurrency(totalInvested)}
+                icon={<CurrencyDollar size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />}
+              />
+              <ProductStatChip
+                label="Produtos no estoque"
+                value={String(stockProducts.length)}
+                icon={<Package size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />}
+              />
+            </div>
+            <Button
+              variant="success"
+              onClick={openCreateForm}
+              className="w-full sm:w-auto"
+            >
+              <Plus size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+              Adicionar produto
+            </Button>
+          </div>
         )}
       </div>
 
@@ -1251,8 +1482,12 @@ export function ProductsPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] xl:items-start">
-        <section className="order-2 xl:order-1">
+      <div
+        className={`grid grid-cols-1 items-start gap-6 ${
+          formOpen ? "lg:grid-cols-[minmax(0,1fr)_320px]" : ""
+        }`}
+      >
+        <section className="order-2 lg:order-1">
           {isCatalogLoading ? (
             <div className="rounded-lg border border-border bg-card shadow-card py-16 text-center text-sm text-muted shadow-card">
               Carregando produtos...
@@ -1283,108 +1518,308 @@ export function ProductsPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              {filteredProducts.map((product) => {
-                const isLiquid = product.type === "liquid";
+            <>
+              {/* Tabela (md+) */}
+              <div className="hidden overflow-hidden rounded-lg border border-border bg-card shadow-card md:block">
+                <div className="overflow-x-auto">
+                  <div className="min-w-[840px]">
+                    <div
+                      className="grid items-center gap-4 border-b border-border bg-background/60 px-4 py-3"
+                      style={{ gridTemplateColumns: PRODUCTS_TABLE_GRID_TEMPLATE }}
+                    >
+                      <SortableColumnHeader
+                        label="Produto"
+                        column="name"
+                        activeColumn={sortColumn}
+                        direction={sortDirection}
+                        onSort={handleSort}
+                      />
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                        Volume total
+                      </span>
+                      <SortableColumnHeader
+                        label="Valor"
+                        column="value"
+                        activeColumn={sortColumn}
+                        direction={sortDirection}
+                        onSort={handleSort}
+                        align="right"
+                      />
+                      <SortableColumnHeader
+                        label="Estoque atual"
+                        column="stock"
+                        activeColumn={sortColumn}
+                        direction={sortDirection}
+                        onSort={handleSort}
+                      />
+                      <span className="text-right text-xs font-semibold uppercase tracking-wide text-muted">
+                        Ações
+                      </span>
+                    </div>
 
-                return (
-                  <article
-                    key={product.id}
-                    className="relative z-0 rounded-lg border border-border bg-card shadow-card p-5 shadow-card transition-all hover:z-50 hover:-translate-y-0.5 hover:shadow-card-hover"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        {product.photoUrl ? (
-                          <span className="product-photo-preview group/photo relative h-10 w-10 shrink-0 cursor-zoom-in overflow-visible rounded-lg border border-border bg-card shadow-card shadow-card transition-all duration-300 hover:border-success/40 hover:shadow-card-hover hover:ring-2 hover:ring-success/15">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={product.photoUrl}
-                              alt={`Foto de ${product.name}`}
-                              className="h-full w-full rounded-lg object-cover transition duration-300 group-hover/photo:scale-105 group-hover/photo:brightness-110"
-                            />
-                            <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-foreground/0 text-white opacity-0 transition-all duration-300 group-hover/photo:bg-foreground/25 group-hover/photo:opacity-100">
-                              <MagnifyingGlassPlus
-                                size={16}
-                                weight={PRODUCT_ICON_WEIGHT}
-                                className="drop-shadow-card"
-                                aria-hidden
+                    {sortedProducts.map((product) => {
+                      const isLiquid = product.type === "liquid";
+                      const remainingStock = getProductRemainingStock(product);
+                      const initialStock = getProductInitialStock(product);
+                      const stockPercent = getProductStockPercent(product);
+                      const stockUnit = getProductStockUnit(product);
+                      const progressWidth = Math.max(0, Math.min(100, stockPercent));
+                      const criticalStock = stockPercent < 20;
+                      const warningStock = stockPercent >= 20 && stockPercent <= 50;
+                      const progressClass = criticalStock
+                        ? "bg-danger"
+                        : warningStock
+                          ? "bg-warning"
+                          : "bg-success";
+
+                      return (
+                        <div
+                          key={product.id}
+                          className="group relative z-0 grid items-center gap-4 border-b border-border/70 px-4 py-3 transition-colors last:border-b-0 hover:z-50 hover:bg-background/70"
+                          style={{ gridTemplateColumns: PRODUCTS_TABLE_GRID_TEMPLATE }}
+                        >
+                          <div className="flex min-w-0 items-center gap-3">
+                            {product.photoUrl ? (
+                              <span className="product-photo-preview group/photo relative h-9 w-9 shrink-0 cursor-zoom-in overflow-visible rounded-lg border border-border bg-card shadow-card transition-all duration-300 hover:border-success/40 hover:shadow-card-hover hover:ring-2 hover:ring-success/15">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={product.photoUrl}
+                                  alt={`Foto de ${product.name}`}
+                                  className="h-full w-full rounded-lg object-cover transition duration-300 group-hover/photo:scale-105 group-hover/photo:brightness-110"
+                                />
+                                <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-foreground/0 text-white opacity-0 transition-all duration-300 group-hover/photo:bg-foreground/25 group-hover/photo:opacity-100">
+                                  <MagnifyingGlassPlus
+                                    size={14}
+                                    weight={PRODUCT_ICON_WEIGHT}
+                                    className="drop-shadow-card"
+                                    aria-hidden
+                                  />
+                                </span>
+                                <span className="pointer-events-none absolute left-0 top-11 z-[999] hidden h-44 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-card p-1 opacity-0 shadow-2xl ring-1 ring-slate-900/5 group-hover/photo:block product-photo-preview-popover">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={product.photoUrl}
+                                    alt={`Prévia ampliada de ${product.name}`}
+                                    className="h-full w-full rounded-lg object-cover"
+                                  />
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
+                                {isLiquid ? (
+                                  <Drop size={18} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                                ) : (
+                                  <Wrench size={18} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                                )}
+                              </span>
+                            )}
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-foreground">
+                                {product.name}
+                              </p>
+                              <p className="truncate text-xs font-medium text-muted">
+                                {getTypeLabel(product.type)}
+                                {product.supplierId
+                                  ? ` • ${getSupplierName(product.supplierId)}`
+                                  : ""}
+                              </p>
+                            </div>
+                          </div>
+
+                          <p className="text-sm text-foreground">
+                            {isLiquid ? `${product.volumeMl} ml` : product.quantity}
+                          </p>
+
+                          <p className="text-right text-sm font-semibold text-foreground">
+                            {formatCurrency(parseMoney(product.totalCost || "0"))}
+                          </p>
+
+                          <div className="min-w-0">
+                            <p className="truncate text-xs text-muted">
+                              {formatStockAmount(remainingStock)} {stockUnit} /{" "}
+                              {formatStockAmount(initialStock)} {stockUnit}
+                            </p>
+                            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-border">
+                              <div
+                                className={`h-full rounded-full transition-all ${progressClass}`}
+                                style={{ width: `${progressWidth}%` }}
                               />
-                            </span>
-                            <span className="pointer-events-none absolute left-0 top-12 z-[999] hidden h-44 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-card p-1 opacity-0 shadow-2xl ring-1 ring-slate-900/5 group-hover/photo:block product-photo-preview-popover">
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => openReplenish(product.id)}
+                              className="rounded-lg bg-success/10 p-1.5 text-success transition-colors hover:bg-success hover:text-white"
+                              title="Repor estoque"
+                            >
+                              <ArrowCounterClockwise size={15} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openStockEdit(product)}
+                              className="rounded-lg bg-success/10 p-1.5 text-success transition-colors hover:bg-success hover:text-white"
+                              title="Editar estoque"
+                            >
+                              <Faders size={15} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openEditForm(product)}
+                              className="rounded-lg bg-success/10 p-1.5 text-success transition-colors hover:bg-success hover:text-white"
+                              title="Editar produto"
+                            >
+                              <PencilSimple size={15} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => requestDeleteProduct(product)}
+                              className="rounded-lg bg-danger/10 p-1.5 text-danger transition-colors hover:bg-danger hover:text-white"
+                              title="Excluir produto"
+                            >
+                              <Trash size={15} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Cards (mobile) */}
+              <div className="space-y-4 md:hidden">
+                {sortedProducts.map((product) => {
+                  const isLiquid = product.type === "liquid";
+                  const remainingStock = getProductRemainingStock(product);
+                  const initialStock = getProductInitialStock(product);
+                  const stockPercent = getProductStockPercent(product);
+                  const stockUnit = getProductStockUnit(product);
+                  const progressWidth = Math.max(0, Math.min(100, stockPercent));
+                  const criticalStock = stockPercent < 20;
+                  const warningStock = stockPercent >= 20 && stockPercent <= 50;
+                  const progressClass = criticalStock
+                    ? "bg-danger"
+                    : warningStock
+                      ? "bg-warning"
+                      : "bg-success";
+
+                  return (
+                    <article
+                      key={product.id}
+                      className="relative z-0 rounded-lg border border-border bg-card shadow-card p-5 transition-all hover:z-50 hover:-translate-y-0.5 hover:shadow-card-hover"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          {product.photoUrl ? (
+                            <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-border bg-card">
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={product.photoUrl}
-                                alt={`Prévia ampliada de ${product.name}`}
+                                alt={`Foto de ${product.name}`}
                                 className="h-full w-full rounded-lg object-cover"
                               />
                             </span>
+                          ) : (
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
+                              {isLiquid ? (
+                                <Drop size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                              ) : (
+                                <Wrench size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                              )}
+                            </span>
+                          )}
+                          <div>
+                            <h2 className="font-semibold text-foreground">
+                              {product.name}
+                            </h2>
+                            <p className="text-xs font-medium text-muted">
+                              {getTypeLabel(product.type)}
+                              {product.supplierId
+                                ? ` • ${getSupplierName(product.supplierId)}`
+                                : ""}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openReplenish(product.id)}
+                            className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
+                            title="Repor estoque"
+                          >
+                            <ArrowCounterClockwise size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openStockEdit(product)}
+                            className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
+                            title="Editar estoque"
+                          >
+                            <Faders size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openEditForm(product)}
+                            className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
+                            title="Editar produto"
+                          >
+                            <PencilSimple size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => requestDeleteProduct(product)}
+                            className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
+                            title="Excluir produto"
+                          >
+                            <Trash size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                        <div className="rounded-lg bg-background px-4 py-3">
+                          <span className="font-medium text-muted">
+                            {isLiquid ? "Volume total" : "Quantidade"}
                           </span>
-                        ) : (
-                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
-                            {isLiquid ? (
-                              <Drop size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
-                            ) : (
-                              <Wrench size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
-                            )}
-                          </span>
-                        )}
-                        <div>
-                          <h2 className="font-semibold text-foreground">
-                            {product.name}
-                          </h2>
-                          <p className="text-xs font-medium text-muted">
-                            {getTypeLabel(product.type)}
-                            {product.supplierId
-                              ? ` • ${getSupplierName(product.supplierId)}`
-                              : ""}
+                          <p className="mt-1 font-bold text-foreground">
+                            {isLiquid ? `${product.volumeMl} ml` : product.quantity}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-background px-4 py-3">
+                          <span className="font-medium text-muted">Valor</span>
+                          <p className="mt-1 font-bold text-foreground">
+                            {formatCurrency(parseMoney(product.totalCost || "0"))}
                           </p>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openEditForm(product)}
-                          className="rounded-lg bg-success/10 p-2 text-success transition-colors hover:bg-success hover:text-white"
-                          title="Editar produto"
-                        >
-                          <PencilSimple size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => requestDeleteProduct(product)}
-                          className="rounded-lg bg-danger/10 p-2 text-danger transition-colors hover:bg-danger hover:text-white"
-                          title="Excluir produto"
-                        >
-                          <Trash size={16} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
-                      <div className="rounded-lg bg-background px-4 py-3">
-                        <span className="font-medium text-muted">
-                          {isLiquid ? "Volume total" : "Quantidade"}
-                        </span>
-                        <p className="mt-1 font-bold text-foreground">
-                          {isLiquid ? `${product.volumeMl} ml` : product.quantity}
+                      <div className="mt-3 rounded-lg bg-background px-4 py-3">
+                        <p className="text-xs font-medium text-muted">
+                          Estoque atual
                         </p>
-                      </div>
-                      <div className="rounded-lg bg-background px-4 py-3">
-                        <span className="font-medium text-muted">Valor</span>
-                        <p className="mt-1 font-bold text-foreground">
-                          {formatCurrency(parseMoney(product.totalCost || "0"))}
+                        <p className="mt-1 text-xs font-semibold text-foreground">
+                          {formatStockAmount(remainingStock)} {stockUnit} /{" "}
+                          {formatStockAmount(initialStock)} {stockUnit}
                         </p>
+                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
+                          <div
+                            className={`h-full rounded-full transition-all ${progressClass}`}
+                            style={{ width: `${progressWidth}%` }}
+                          />
+                        </div>
                       </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </>
           )}
         </section>
 
-        <aside className="order-1 xl:order-2 xl:sticky xl:top-4 xl:self-start">
+        <aside className="order-1 w-full lg:order-2 lg:sticky lg:top-4 lg:w-[320px] lg:shrink-0 lg:self-start">
           {formOpen ? (
             <form
               key={formAnimationKey}
@@ -1546,271 +1981,6 @@ export function ProductsPage() {
                 </Button>
               </div>
             </form>
-          ) : isCatalogLoading ? (
-            <div className="flex h-[calc(100vh-2rem)] min-h-[28rem] flex-col items-center justify-center rounded-lg border border-border bg-card shadow-card p-5 text-sm text-muted shadow-card">
-              Carregando estoque...
-            </div>
-          ) : products.length > 0 ? (
-            <div className="flex h-[calc(100vh-2rem)] min-h-[28rem] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-card p-5 shadow-card">
-              <div className="mb-5 flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-widest text-muted">
-                    Estoque
-                  </p>
-                  <h2 className="mt-1 text-lg font-semibold text-foreground">
-                    Produtos disponíveis
-                  </h2>
-                </div>
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10 text-success">
-                  <Package size={20} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                <div className="rounded-lg bg-background px-4 py-3">
-                  <p className="text-xs font-semibold text-muted">
-                    Total investido
-                  </p>
-                  <p className="mt-1 text-lg font-bold text-foreground">
-                    {formatCurrency(totalInvested)}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-background px-4 py-3">
-                  <p className="text-xs font-semibold text-muted">
-                    Produtos no estoque
-                  </p>
-                  <p className="mt-1 text-lg font-bold text-foreground">
-                    {stockProducts.length}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
-                {stockProducts.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-border bg-background px-4 py-6 text-center text-sm text-muted">
-                    Nenhum produto líquido no estoque.
-                  </p>
-                ) : stockProducts.map((product) => {
-                  const initialStock = getProductInitialStock(product);
-                  const remainingStock = getProductRemainingStock(product);
-                  const stockPercent = getProductStockPercent(product);
-                  const usageSummary = getProductUsageSummary(product);
-                  const progressWidth = Math.max(
-                    0,
-                    Math.min(100, stockPercent)
-                  );
-                  const stockUnit = getProductStockUnit(product);
-                  const criticalStock = stockPercent < 20;
-                  const warningStock = stockPercent >= 20 && stockPercent <= 50;
-                  const priceHistory = product.priceHistory ?? [];
-                  const progressClass = criticalStock
-                    ? "bg-danger"
-                    : warningStock
-                      ? "bg-warning"
-                      : "bg-success";
-
-                  return (
-                    <div
-                      key={product.id}
-                      className={`rounded-lg border p-4 transition-colors ${
-                        criticalStock
-                          ? "border-danger/25 bg-danger/5"
-                          : "border-border bg-background"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold text-foreground">
-                            {product.name}
-                          </p>
-                          <p className="mt-0.5 text-xs text-muted">
-                            {editingStockProductId === product.id
-                              ? `${formatStockAmount(Number(stockEditValue) || 0)} ${stockUnit} / ${formatStockAmount(initialStock)} ${stockUnit}`
-                              : `${formatStockAmount(remainingStock)} ${stockUnit} / ${formatStockAmount(initialStock)} ${stockUnit}`}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => openStockEdit(product)}
-                            className="mt-2 inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-card px-2.5 py-1.5 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white"
-                          >
-                            <PencilSimple size={14} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
-                            Editar estoque
-                          </button>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          {criticalStock && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-1 text-[10px] font-bold text-danger">
-                              <Warning size={12} weight={PRODUCT_ICON_WEIGHT} aria-hidden />
-                              Repor estoque
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => openReplenish(product.id)}
-                            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-card px-2.5 py-1.5 text-xs font-semibold text-success transition-colors hover:bg-success hover:text-white"
-                          >
-                            <ArrowCounterClockwise
-                              size={14}
-                              weight={PRODUCT_ICON_WEIGHT}
-                              aria-hidden
-                            />
-                            Repor
-                          </button>
-                        </div>
-                      </div>
-
-                      {editingStockProductId === product.id ? (
-                        <div className="mt-3">
-                          <input
-                            type="range"
-                            min="0"
-                            max={initialStock}
-                            step={product.type === "liquid" ? "1" : "0.01"}
-                            value={stockEditValue}
-                            onChange={(event) => {
-                              setStockEditValue(event.target.value);
-                            }}
-                            onMouseUp={(event) => {
-                              updateCurrentStock(product, event.currentTarget.value);
-                              closeStockEdit();
-                            }}
-                            onTouchEnd={(event) => {
-                              updateCurrentStock(product, event.currentTarget.value);
-                              closeStockEdit();
-                            }}
-                            onBlur={(event) => {
-                              updateCurrentStock(product, event.currentTarget.value);
-                              closeStockEdit();
-                            }}
-                            className="stock-range-slider w-full"
-                            style={{
-                              background: `linear-gradient(to right, var(--primary) 0%, var(--primary) ${
-                                initialStock > 0
-                                  ? Math.max(
-                                      0,
-                                      Math.min(
-                                        100,
-                                        ((Number(stockEditValue) || 0) /
-                                          initialStock) *
-                                          100
-                                      )
-                                    )
-                                  : 0
-                              }%, #e2e8f0 ${
-                                initialStock > 0
-                                  ? Math.max(
-                                      0,
-                                      Math.min(
-                                        100,
-                                        ((Number(stockEditValue) || 0) /
-                                          initialStock) *
-                                          100
-                                      )
-                                    )
-                                  : 0
-                              }%, #e2e8f0 100%)`,
-                            }}
-                            aria-label={`Ajustar estoque atual de ${product.name}`}
-                          />
-                        </div>
-                      ) : (
-                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-border">
-                          <div
-                            className={`h-full rounded-full transition-all ${progressClass}`}
-                            style={{ width: `${progressWidth}%` }}
-                          />
-                        </div>
-                      )}
-
-                      {usageSummary.serviceCount > 0 ? (
-                        <div className="mt-3 rounded-lg bg-card px-3 py-2">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-muted">
-                            Autonomia
-                          </p>
-                          <p className="mt-0.5 text-sm font-bold text-foreground">
-                            {usageSummary.estimatedUses ?? 0} usos
-                          </p>
-                        </div>
-                      ) : null}
-
-                      {priceHistory.length > 0 && (
-                        <div className="mt-3 rounded-lg border border-border bg-card shadow-card px-3 py-2">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-muted">
-                            Histórico de preços
-                          </p>
-                          <div className="mt-2 space-y-1.5">
-                            {priceHistory.slice(0, 3).map((entry) => (
-                              <div
-                                key={entry.id}
-                                className="flex items-center justify-between gap-3 text-xs"
-                              >
-                                <span className="min-w-0 truncate font-semibold text-foreground">
-                                  {priceHistoryReasonLabels[entry.reason]}
-                                  {formatPriceHistoryDate(entry.date)
-                                    ? ` • ${formatPriceHistoryDate(entry.date)}`
-                                    : ""}
-                                </span>
-                                <span className="shrink-0 font-bold text-muted">
-                                  {formatCurrency(parseMoney(entry.price || "0"))}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {replenishingProductId === product.id && (
-                        <div className="mt-3 rounded-lg border border-success/30 bg-success/5 p-3">
-                          <p className="mb-0.5 text-xs font-semibold text-foreground">
-                            Atualizar preço de compra
-                          </p>
-                          <p className="mb-2 text-[11px] text-muted">
-                            Estoque será preenchido ao máximo. Informe o novo custo do produto (opcional).
-                          </p>
-                          <Input
-                            label="Custo total (R$)"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            className="number-input-no-spinner"
-                            value={replenishForm.amount}
-                            onChange={(event) => {
-                              setReplenishForm((prev) => ({
-                                ...prev,
-                                amount: event.target.value,
-                              }));
-                              setReplenishError(null);
-                            }}
-                            placeholder={product.totalCost || "0,00"}
-                          />
-                          {replenishError && (
-                            <p className="mt-2 text-xs font-medium text-danger">
-                              {replenishError}
-                            </p>
-                          )}
-                          <div className="mt-3 flex justify-end gap-2">
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              onClick={closeReplenish}
-                            >
-                              Cancelar
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="success"
-                              onClick={() => handleReplenishProduct(product)}
-                            >
-                              Repor
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           ) : null}
         </aside>
       </div>
@@ -2227,6 +2397,45 @@ export function ProductsPage() {
           }
         }}
       />
+
+      {replenishingProductId &&
+        (() => {
+          const product = products.find((item) => item.id === replenishingProductId);
+          if (!product) return null;
+
+          return (
+            <ProductReplenishModal
+              product={product}
+              amount={replenishForm.amount}
+              error={replenishError}
+              onAmountChange={(value) => {
+                setReplenishForm((prev) => ({ ...prev, amount: value }));
+                setReplenishError(null);
+              }}
+              onCancel={closeReplenish}
+              onConfirm={() => handleReplenishProduct(product)}
+            />
+          );
+        })()}
+
+      {editingStockProductId &&
+        (() => {
+          const product = products.find((item) => item.id === editingStockProductId);
+          if (!product) return null;
+
+          return (
+            <ProductStockEditModal
+              product={product}
+              value={stockEditValue}
+              onValueChange={setStockEditValue}
+              onCancel={closeStockEdit}
+              onConfirm={(value) => {
+                updateCurrentStock(product, value);
+                closeStockEdit();
+              }}
+            />
+          );
+        })()}
     </>
   );
 }

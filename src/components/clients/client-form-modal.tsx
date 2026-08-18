@@ -12,7 +12,6 @@ import {
 } from "@phosphor-icons/react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Dropdown } from "@/components/ui/dropdown";
 import { BrandAutocomplete } from "@/components/clients/brand-autocomplete";
 import { ModelAutocomplete } from "@/components/clients/model-autocomplete";
 import { VehiclePhotoUpload } from "@/components/clients/vehicle-photo-upload";
@@ -32,11 +31,6 @@ interface ClientFormModalProps {
   onClose: () => void;
   onSave: (data: ClientFormData) => Promise<void>;
 }
-
-const vehicleYearOptions = Array.from(
-  { length: new Date().getFullYear() - 1980 + 1 },
-  (_, index) => String(new Date().getFullYear() - index)
-).map((year) => ({ value: year, label: year }));
 
 const VEHICLE_FORM_EXIT_MS = 180;
 const CLIENT_MODAL_ICON_WEIGHT = "light" as const;
@@ -222,12 +216,15 @@ function VehicleEditorModal({
             }
             placeholder="ABC-1D23"
           />
-          <Dropdown
+          <Input
             label="Ano"
             value={form.year}
-            placeholder="Selecione o ano"
-            options={vehicleYearOptions}
-            onChange={(year) => updateVehicle({ year })}
+            onChange={(event) =>
+              updateVehicle({ year: event.target.value.replace(/\D/g, "").slice(0, 4) })
+            }
+            placeholder="2024"
+            inputMode="numeric"
+            maxLength={4}
           />
         </div>
 

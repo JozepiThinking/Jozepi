@@ -10,6 +10,8 @@ import {
   DEFAULT_AGENDA_CAPACITY,
   AGENDA_STORAGE_KEY,
   AGENDA_CAPACITY_STORAGE_KEY,
+  BUSINESS_START_TIME,
+  BUSINESS_END_TIME,
 } from "./constants";
 
 export function timeToMinutes(time: string) {
@@ -90,6 +92,26 @@ export function appointmentOccursOnDate(
   date: string
 ) {
   return appointment.date <= date && date <= getAppointmentEndDate(appointment);
+}
+
+/**
+ * Resolves the effective start/end time-of-day for a specific `date` inside a
+ * (possibly multi-day) period. Multi-day appointments are a single continuous
+ * span: the start time only applies to the first day, the end time only
+ * applies to the last day, and every day in between is fully occupied.
+ */
+export function getDailyTimeWindow(
+  date: string,
+  rangeStartDate: string,
+  rangeEndDate: string,
+  startTime: string,
+  endTime: string
+): [string, string] {
+  if (rangeStartDate === rangeEndDate) return [startTime, endTime];
+  if (date === rangeStartDate) return [startTime, BUSINESS_END_TIME];
+  if (date === rangeEndDate) return [BUSINESS_START_TIME, endTime];
+
+  return [BUSINESS_START_TIME, BUSINESS_END_TIME];
 }
 
 export function formatShortDate(date: string) {

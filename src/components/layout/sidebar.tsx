@@ -3,6 +3,7 @@
 import type { Icon } from "@phosphor-icons/react";
 import {
   CalendarBlank,
+  ChartBar,
   CurrencyDollar,
   Package,
   SquaresFour,
@@ -44,6 +45,7 @@ const navigation: {
   { name: "Serviços", href: "/servicos", icon: Wrench },
   { name: "Produtos", href: "/produtos", icon: Package },
   { name: "Financeiro", href: "/financeiro", icon: CurrencyDollar },
+  { name: "Relatórios", href: "/relatorios", icon: ChartBar },
 ];
 
 interface SidebarProps {
