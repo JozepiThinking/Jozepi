@@ -1,18 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { getInviteLoginError } from "@/lib/invites";
 
-export function LoginForm() {
+export function LoginForm({
+  inviteErrorCode,
+}: {
+  inviteErrorCode?: string;
+}) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [recoveringPassword, setRecoveringPassword] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    () => getInviteLoginError(inviteErrorCode)
+  );
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -113,16 +119,6 @@ export function LoginForm() {
       >
         {recoveringPassword ? "Voltar para login" : "Esqueci minha senha"}
       </button>
-
-      <p className="text-center text-sm text-muted">
-        Não tem conta?{" "}
-        <Link
-          href="/cadastro"
-          className="font-medium text-primary hover:text-primary-hover"
-        >
-          Criar conta grátis
-        </Link>
-      </p>
     </form>
   );
 }

@@ -26,6 +26,11 @@ import { createClient } from "@/lib/supabase/client";
 import { assertMutationRows } from "@/lib/supabase/mutations";
 import { formatCurrency } from "@/lib/utils/format";
 import {
+  DEFAULT_TIME_ZONE,
+  resolveTimeZone,
+  wallClockInTimeZone,
+} from "@/lib/timezone";
+import {
   ensurePackageServicesInCatalog,
   isPackageCatalogServiceName,
 } from "@/lib/services/packages";
@@ -658,10 +663,16 @@ export function AgendaCalendar() {
   const linkedClientHandledRef = useRef<string | null>(null);
   const linkedServiceIds = searchParams.get("packageServices");
   const linkedServicesHandledRef = useRef<string | null>(null);
-  const today = useMemo(() => new Date(), []);
-  const [now, setNow] = useState(today);
-  const [currentMonth, setCurrentMonth] = useState(startOfMonth(today));
-  const [selectedDate, setSelectedDate] = useState(today);
+  const [timeZone, setTimeZone] = useState(DEFAULT_TIME_ZONE);
+  const [now, setNow] = useState(() =>
+    wallClockInTimeZone(new Date(), DEFAULT_TIME_ZONE)
+  );
+  const [currentMonth, setCurrentMonth] = useState(() =>
+    startOfMonth(wallClockInTimeZone(new Date(), DEFAULT_TIME_ZONE))
+  );
+  const [selectedDate, setSelectedDate] = useState(() =>
+    wallClockInTimeZone(new Date(), DEFAULT_TIME_ZONE)
+  );
   const [dayDrawerOpen, setDayDrawerOpen] = useState(false);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -689,8 +700,8 @@ export function AgendaCalendar() {
     string | null
   >(null);
   const [form, setForm] = useState<AppointmentForm>({
-    date: dateKey(today),
-    endDate: dateKey(today),
+    date: dateKey(now),
+    endDate: dateKey(now),
     isMultiDay: false,
     startTime: "",
     endTime: "",
@@ -794,6 +805,14 @@ export function AgendaCalendar() {
         }
         setAgendaCapacity(normalizeAgendaCapacity(workshopData?.agenda_capacity));
       }
+
+      const nextTimeZone = resolveTimeZone(
+        workshopData && "timezone" in workshopData
+          ? (workshopData.timezone as string | null)
+          : null
+      );
+      setTimeZone(nextTimeZone);
+      setNow(wallClockInTimeZone(new Date(), nextTimeZone));
     }
 
     const { data: clientsData, error: clientsError } = await fetchClients(
@@ -904,7 +923,8 @@ export function AgendaCalendar() {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      const nextNow = new Date();
+      const realNow = new Date();
+      const nextNow = wallClockInTimeZone(realNow, timeZone);
       setNow(nextNow);
       setAppointments((prev) => {
         const completedAppointmentIds: string[] = [];
@@ -930,7 +950,7 @@ export function AgendaCalendar() {
         });
 
         if (completedAppointmentIds.length > 0) {
-          void updateAppointmentStatusBulk(supabase, completedAppointmentIds, nextNow.toISOString())
+          void updateAppointmentStatusBulk(supabase, completedAppointmentIds, realNow.toISOString())
             .then(async ({ error: updateError }) => {
               if (updateError) {
                 setError(updateError.message);
@@ -956,6 +976,7 @@ export function AgendaCalendar() {
     applySupabaseStockDiscountForAppointment,
     supabase,
     syncFinanceRevenueForAppointment,
+    timeZone,
   ]);
 
   const selectedKey = dateKey(selectedDate);
@@ -1265,7 +1286,7 @@ export function AgendaCalendar() {
     if (!linkedClient) return;
 
     void Promise.resolve().then(() => {
-      const targetDate = new Date();
+      const targetDate = wallClockInTimeZone(new Date(), timeZone);
       const targetKey = dateKey(targetDate);
 
       linkedClientHandledRef.current = linkedClientId;
@@ -1293,7 +1314,7 @@ export function AgendaCalendar() {
       setFormClosing(false);
       setCreating(true);
     });
-  }, [clients, linkedClientId, loadingClients]);
+  }, [clients, linkedClientId, loadingClients, timeZone]);
 
   useEffect(() => {
     if (
@@ -1312,7 +1333,7 @@ export function AgendaCalendar() {
     if (validIds.length === 0) return;
 
     void Promise.resolve().then(() => {
-      const targetDate = new Date();
+      const targetDate = wallClockInTimeZone(new Date(), timeZone);
       const targetKey = dateKey(targetDate);
 
       setCurrentMonth(startOfMonth(targetDate));
@@ -1334,7 +1355,7 @@ export function AgendaCalendar() {
       setFormClosing(false);
       setCreating(true);
     });
-  }, [services, linkedServiceIds, loadingServices]);
+  }, [services, linkedServiceIds, loadingServices, timeZone]);
 
   function openEditForm(appointment: Appointment) {
     setOpenStatusMenuId(null);
@@ -2258,8 +2279,8 @@ export function AgendaCalendar() {
               <button
                 type="button"
                 onClick={() => {
-                  setCurrentMonth(startOfMonth(today));
-                  selectCalendarDate(today);
+                  setCurrentMonth(startOfMonth(now));
+                  selectCalendarDate(now);
                 }}
                 className="min-h-11 rounded-lg border border-border bg-background px-3 py-2 text-base font-medium text-foreground transition-colors hover:border-accent sm:min-h-0 sm:text-sm"
               >
@@ -2294,7 +2315,7 @@ export function AgendaCalendar() {
                 0
               );
               const isSelected = key === selectedKey;
-              const isToday = key === dateKey(today);
+              const isToday = key === dateKey(now);
 
               return (
                 <button

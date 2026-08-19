@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isMissingTimezoneError } from "@/lib/timezone";
 
 export async function fetchWorkshopProfile(supabase: SupabaseClient) {
   return supabase
@@ -11,6 +12,16 @@ export async function fetchWorkshopCapacity(
   supabase: SupabaseClient,
   workshopId: string
 ) {
+  const withTimezone = await supabase
+    .from("workshops")
+    .select("agenda_capacity, timezone")
+    .eq("id", workshopId)
+    .single();
+
+  if (!withTimezone.error || !isMissingTimezoneError(withTimezone.error)) {
+    return withTimezone;
+  }
+
   return supabase
     .from("workshops")
     .select("agenda_capacity")

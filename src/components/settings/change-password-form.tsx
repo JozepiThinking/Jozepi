@@ -177,7 +177,7 @@ export function ChangePasswordForm({ email }: ChangePasswordFormProps) {
           </h3>
           <p className="mt-1 text-xs text-muted">
             {step === "form"
-              ? "Confirme sua senha atual e defina uma nova senha."
+              ? "Confirme sua senha atual e defina uma nova. Enviaremos um código para o seu e-mail antes de concluir a troca."
               : "Confirme o código enviado para o seu e-mail para concluir a troca."}
           </p>
         </div>

@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { formatCurrency } from "@/lib/utils/format";
+import { formatSequentialNumber } from "@/lib/reports/sequential-number";
 import type { ReportsExportMeta, ReportsReceiptPayload } from "@/lib/reports/export-data";
 
 const PRIMARY: [number, number, number] = [26, 39, 68];
@@ -75,11 +76,16 @@ function drawHeader(doc: jsPDF, meta: ReportsExportMeta, logo: LogoImage | null)
   const pageWidth = doc.internal.pageSize.getWidth();
   const { workshop } = meta;
 
-  const LOGO_SIZE = 14;
+  const LOGO_SIZE = 20;
   const LOGO_X = PAGE_MARGIN;
-  const LOGO_Y = 12;
-  const DIVIDER_X = LOGO_X + LOGO_SIZE + 4;
-  const TEXT_X = DIVIDER_X + 5;
+  const NAME_BASELINE = 16.5;
+  const NAME_CAP_HEIGHT = 4.4;
+  const textTop = NAME_BASELINE - NAME_CAP_HEIGHT;
+  let textBottom = NAME_BASELINE + 3.8 + 4 + 3.8;
+  if (workshop.phone) textBottom += 3.8;
+  const LOGO_Y = Math.max(10, (textTop + textBottom) / 2 - LOGO_SIZE / 2);
+  const DIVIDER_X = LOGO_X + LOGO_SIZE + 6;
+  const TEXT_X = DIVIDER_X + 6;
 
   if (logo) {
     const aspect = logo.width / logo.height;
@@ -90,18 +96,20 @@ function drawHeader(doc: jsPDF, meta: ReportsExportMeta, logo: LogoImage | null)
     doc.addImage(logo.dataUrl, "PNG", offsetX, offsetY, drawWidth, drawHeight);
   } else {
     doc.setFillColor(...PRIMARY);
-    doc.roundedRect(LOGO_X, LOGO_Y, LOGO_SIZE, LOGO_SIZE, 2, 2, "F");
+    doc.roundedRect(LOGO_X, LOGO_Y, LOGO_SIZE, LOGO_SIZE, 3, 3, "F");
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
+    doc.setFontSize(13);
     const initials = workshop.name.slice(0, 2).toUpperCase();
-    doc.text(initials, LOGO_X + LOGO_SIZE / 2, LOGO_Y + 8.5, { align: "center" });
+    doc.text(initials, LOGO_X + LOGO_SIZE / 2, LOGO_Y + LOGO_SIZE / 2 + 4.6, {
+      align: "center",
+    });
   }
 
   // Company text block — name, document type, contact, address — stacked
   // to the right of the logo, tracked with a running cursor so optional
   // lines (e.g. phone) don't leave a visual gap when absent.
-  let textY = 16.5;
+  let textY = NAME_BASELINE;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12.5);
@@ -142,21 +150,16 @@ function drawHeader(doc: jsPDF, meta: ReportsExportMeta, logo: LogoImage | null)
   // company text block's actual height.
   doc.setDrawColor(...BORDER);
   doc.setLineWidth(0.2);
-  doc.line(DIVIDER_X, LOGO_Y, DIVIDER_X, Math.max(textY - 2, LOGO_Y + LOGO_SIZE));
+  doc.line(DIVIDER_X, Math.min(LOGO_Y, textTop), DIVIDER_X, Math.max(textY - 2, LOGO_Y + LOGO_SIZE));
 
   const rightX = pageWidth - PAGE_MARGIN;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(...PREMIUM);
-  doc.text(meta.receiptNumber, rightX, 17, { align: "right" });
-
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   doc.setTextColor(...MUTED);
-  doc.text(`Período: ${meta.periodLabel}`, rightX, 22, { align: "right" });
-  doc.text(`Referente a: ${meta.clientLabel}`, rightX, 26.5, { align: "right" });
+  doc.text(`Período: ${meta.periodLabel}`, rightX, 17, { align: "right" });
+  doc.text(`Referente a: ${meta.clientLabel}`, rightX, 21.5, { align: "right" });
 
-  const dividerY = Math.max(textY, 26.5) + 5;
+  const dividerY = Math.max(textY, LOGO_Y + LOGO_SIZE) + 5;
   doc.setDrawColor(...PREMIUM);
   doc.setLineWidth(0.3);
   doc.line(PAGE_MARGIN, dividerY, pageWidth - PAGE_MARGIN, dividerY);
@@ -232,11 +235,19 @@ export async function exportReceiptToPdf(payload: ReportsReceiptPayload) {
     autoTable(doc, {
       startY: y,
       margin: { left: PAGE_MARGIN, right: PAGE_MARGIN },
-      head: [["Data", "Serviço", "Valor"]],
-      body: group.rows.map((row) => [row.date, row.description, money(row.amount)]),
+      head: [["Nº", "Data", "Serviço", "Valor"]],
+      body: group.rows.map((row) => [
+        formatSequentialNumber(row.type, row.sequentialNumber),
+        row.date,
+        row.description,
+        money(row.amount),
+      ]),
       headStyles: { fillColor: PRIMARY, textColor: 255 },
       styles: { fontSize: 8.5 },
-      columnStyles: { 2: { halign: "right" } },
+      columnStyles: {
+        0: { cellWidth: 22 },
+        3: { halign: "right" },
+      },
     });
     y = getFinalY(doc) + 6;
 

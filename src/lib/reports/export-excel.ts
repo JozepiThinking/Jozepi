@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { formatCurrency } from "@/lib/utils/format";
+import { formatSequentialNumber } from "@/lib/reports/sequential-number";
 import type { ReportsListExportPayload } from "@/lib/reports/export-data";
 
 type SheetRow = (string | number)[];
@@ -27,8 +28,15 @@ function buildTransactionsSheet(payload: ReportsListExportPayload) {
     ["Total no período", formatCurrency(payload.total)],
     ["Lançamentos", payload.rows.length],
     [],
-    ["Data", "Cliente", "Serviço", "Categoria", "Valor"],
-    ...payload.rows.map((r) => [r.date, r.client, r.description, r.category, formatCurrency(r.amount)]),
+    ["Data", "Nº", "Cliente", "Serviço", "Categoria", "Valor"],
+    ...payload.rows.map((r) => [
+      r.date,
+      formatSequentialNumber(r.type, r.sequentialNumber),
+      r.client,
+      r.description,
+      r.category,
+      formatCurrency(r.amount),
+    ]),
   ];
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   sheet["!cols"] = autoWidth(rows);

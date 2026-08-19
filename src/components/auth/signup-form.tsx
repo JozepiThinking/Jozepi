@@ -7,11 +7,23 @@ import { createClient } from "@/lib/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-export function SignupForm() {
+interface SignupFormProps {
+  mode: "invite" | "bootstrap";
+  inviteToken?: string;
+  workshopName?: string;
+  lockedEmail?: string | null;
+}
+
+export function SignupForm({
+  mode,
+  inviteToken,
+  workshopName,
+  lockedEmail,
+}: SignupFormProps) {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
-  const [workshopName, setWorkshopName] = useState("");
-  const [email, setEmail] = useState("");
+  const [newWorkshopName, setNewWorkshopName] = useState("");
+  const [email, setEmail] = useState(lockedEmail ?? "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -26,16 +38,29 @@ export function SignupForm() {
       email,
       password,
       options: {
-        data: {
-          full_name: fullName,
-          workshop_name: workshopName,
-        },
+        data:
+          mode === "invite"
+            ? {
+                full_name: fullName,
+                invite_token: inviteToken,
+              }
+            : {
+                full_name: fullName,
+                workshop_name: newWorkshopName,
+              },
         emailRedirectTo: `${window.location.origin}/auth/callback`,
       },
     });
 
     if (authError) {
-      setError(authError.message);
+      const message = authError.message.toLowerCase();
+      if (message.includes("database error") || message.includes("convite")) {
+        setError(
+          "Este convite não é mais válido. Peça um novo link para a oficina."
+        );
+      } else {
+        setError(authError.message);
+      }
       setLoading(false);
       return;
     }
@@ -46,6 +71,13 @@ export function SignupForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
+      {mode === "invite" && workshopName && (
+        <div className="rounded-lg border border-border bg-background px-4 py-3 text-sm text-foreground">
+          Convite para entrar na oficina{" "}
+          <span className="font-semibold">{workshopName}</span>.
+        </div>
+      )}
+
       {error && (
         <div className="rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
           {error}
@@ -62,14 +94,16 @@ export function SignupForm() {
         autoComplete="name"
       />
 
-      <Input
-        label="Nome da oficina"
-        type="text"
-        placeholder="Estética Automotiva Premium"
-        value={workshopName}
-        onChange={(e) => setWorkshopName(e.target.value)}
-        required
-      />
+      {mode === "bootstrap" && (
+        <Input
+          label="Nome da oficina"
+          type="text"
+          placeholder="Estética Automotiva Premium"
+          value={newWorkshopName}
+          onChange={(e) => setNewWorkshopName(e.target.value)}
+          required
+        />
+      )}
 
       <Input
         label="E-mail"
@@ -79,6 +113,7 @@ export function SignupForm() {
         onChange={(e) => setEmail(e.target.value)}
         required
         autoComplete="email"
+        disabled={Boolean(lockedEmail)}
       />
 
       <Input

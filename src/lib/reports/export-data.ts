@@ -1,15 +1,23 @@
 import { formatShortDate } from "@/lib/reports/date-range";
-import type { ReportClient, ReportTransactionRow, WorkshopInfo } from "@/lib/reports/types";
+import { sumReportAmount } from "@/lib/reports/data";
+import { formatGeneratedAt } from "@/lib/timezone";
+import type {
+  ReportClient,
+  ReportTransactionRow,
+  ReportTransactionType,
+  WorkshopInfo,
+} from "@/lib/reports/types";
 
 export interface ReportsExportMeta {
   workshop: WorkshopInfo;
   periodLabel: string;
   clientLabel: string;
   generatedAtLabel: string;
-  receiptNumber: string;
 }
 
 export interface ReportsReceiptRow {
+  sequentialNumber: number | null;
+  type: ReportTransactionType;
   date: string;
   description: string;
   amount: number;
@@ -34,6 +42,8 @@ export interface ReportsReceiptPayload {
 export interface ReportsListExportPayload {
   meta: ReportsExportMeta;
   rows: {
+    sequentialNumber: number | null;
+    type: ReportTransactionType;
     date: string;
     client: string;
     description: string;
@@ -43,15 +53,8 @@ export interface ReportsListExportPayload {
   total: number;
 }
 
-function buildGeneratedAtLabel() {
-  return new Date().toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
-}
-
-// No dedicated "receipts" table exists to back a persisted sequential
-// counter, so a compact, unique-per-generation code derived from the
-// current timestamp is used instead (traceability without schema changes).
-function buildReceiptNumber() {
-  return `Nº ${Date.now().toString(36).toUpperCase()}`;
+function buildGeneratedAtLabel(timeZone: string) {
+  return formatGeneratedAt(new Date(), timeZone);
 }
 
 export function buildExportMeta(
@@ -63,8 +66,7 @@ export function buildExportMeta(
     workshop,
     periodLabel,
     clientLabel,
-    generatedAtLabel: buildGeneratedAtLabel(),
-    receiptNumber: buildReceiptNumber(),
+    generatedAtLabel: buildGeneratedAtLabel(workshop.timezone),
   };
 }
 
@@ -107,6 +109,8 @@ export function buildReceiptPayload({
 
     const group = groups.get(key)!;
     group.rows.push({
+      sequentialNumber: row.sequentialNumber,
+      type: row.type,
       date: formatShortDate(row.date),
       description: row.description,
       amount: row.amount,
@@ -121,7 +125,7 @@ export function buildReceiptPayload({
   return {
     meta: buildExportMeta(workshop, periodLabel, clientLabel),
     groups: sortedGroups,
-    grandTotal: sortedGroups.reduce((sum, group) => sum + group.subtotal, 0),
+    grandTotal: sumReportAmount(rows),
   };
 }
 
@@ -141,12 +145,14 @@ export function buildListExportPayload({
   return {
     meta: buildExportMeta(workshop, periodLabel, clientLabel),
     rows: sortedRows.map((row) => ({
+      sequentialNumber: row.sequentialNumber,
+      type: row.type,
       date: formatShortDate(row.date),
       client: row.clientName,
       description: row.description,
       category: row.category,
       amount: row.amount,
     })),
-    total: rows.reduce((sum, row) => sum + row.amount, 0),
+    total: sumReportAmount(rows),
   };
 }

@@ -1,10 +1,10 @@
 import { createClient } from "@/lib/supabase/client";
 import { toCurrencyNumber } from "@/lib/reports/date-range";
+import { DEFAULT_TIME_ZONE, isMissingTimezoneError, resolveTimeZone } from "@/lib/timezone";
 import type {
   ReportClient,
   ReportExpenseEntry,
   ReportRevenueEntry,
-  ReportServiceItem,
   ReportTransactionRow,
   ReportsSourceData,
 } from "@/lib/reports/types";
@@ -13,6 +13,11 @@ type Supabase = ReturnType<typeof createClient>;
 
 function firstRelation<T>(value: T | T[] | null | undefined) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function toSequentialNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : null;
 }
 
 interface RawTransaction {
@@ -24,23 +29,36 @@ interface RawTransaction {
   service_order_id: string | null;
   supplier_id: string | null;
   transaction_date: string;
+  sequential_number: number | null;
 }
 
 interface RawServiceRelation {
   name: string;
-  price?: number | string | null;
+}
+
+async function loadWorkshop(supabase: Supabase, workshopId: string) {
+  const withTimezone = await supabase
+    .from("workshops")
+    .select("name, document, phone, address, logo_url, timezone")
+    .eq("id", workshopId)
+    .maybeSingle();
+
+  if (!withTimezone.error) return withTimezone.data;
+
+  if (isMissingTimezoneError(withTimezone.error)) {
+    const { data } = await supabase
+      .from("workshops")
+      .select("name, document, phone, address, logo_url")
+      .eq("id", workshopId)
+      .maybeSingle();
+    return data;
+  }
+
+  return null;
 }
 
 interface RawOrderItem {
-  quantity: number | string | null;
-  unit_price: number | string | null;
   services: RawServiceRelation | RawServiceRelation[] | null;
-}
-
-interface RawVehicle {
-  brand: string;
-  model: string;
-  plate: string;
 }
 
 interface RawClientRelation {
@@ -50,20 +68,13 @@ interface RawClientRelation {
 
 interface RawOrder {
   id: string;
-  total_amount: number | string;
-  completed_at: string | null;
-  opened_at: string | null;
   clients: RawClientRelation | RawClientRelation[] | null;
-  vehicles: RawVehicle | RawVehicle[] | null;
   service_order_items: RawOrderItem[] | null;
-}
-
-function getOrderDate(order: RawOrder) {
-  return (order.completed_at ?? order.opened_at ?? "").slice(0, 10);
 }
 
 async function loadTransactions(supabase: Supabase, workshopId: string) {
   const attempts = [
+    "id, type, description, amount, category, service_order_id, supplier_id, transaction_date, sequential_number",
     "id, type, description, amount, category, service_order_id, supplier_id, transaction_date",
     "id, type, description, amount, category, service_order_id, transaction_date",
   ];
@@ -79,6 +90,9 @@ async function loadTransactions(supabase: Supabase, workshopId: string) {
       return ((data ?? []) as unknown as RawTransaction[]).map((row) => ({
         ...row,
         supplier_id: "supplier_id" in row ? row.supplier_id : null,
+        sequential_number: toSequentialNumber(
+          "sequential_number" in row ? row.sequential_number : null
+        ),
       }));
     }
   }
@@ -92,17 +106,13 @@ export async function fetchReportsSourceData(
   const supabase = createClient();
 
   const [
-    { data: workshopData },
+    workshopData,
     { data: clientsData },
     { data: suppliersData },
     { data: ordersData },
     transactions,
   ] = await Promise.all([
-    supabase
-      .from("workshops")
-      .select("name, document, phone, address, logo_url")
-      .eq("id", workshopId)
-      .maybeSingle(),
+    loadWorkshop(supabase, workshopId),
     supabase
       .from("clients")
       .select("id, name, phone, document, address")
@@ -117,15 +127,9 @@ export async function fetchReportsSourceData(
       .select(
         `
         id,
-        total_amount,
-        completed_at,
-        opened_at,
         clients(id, name),
-        vehicles(brand, model, plate),
         service_order_items(
-          quantity,
-          unit_price,
-          services(name, price)
+          services(name)
         )
       `
       )
@@ -165,7 +169,6 @@ export async function fetchReportsSourceData(
 
   const revenueEntries: ReportRevenueEntry[] = [];
   const expenseEntries: ReportExpenseEntry[] = [];
-  const reportOrderIds = new Set<string>();
 
   for (const transaction of transactions) {
     const amount = toCurrencyNumber(transaction.amount);
@@ -182,8 +185,6 @@ export async function fetchReportsSourceData(
           .filter(Boolean)
           .join(", ") || transaction.category || "Receita manual";
 
-      if (order) reportOrderIds.add(order.id);
-
       revenueEntries.push({
         id: transaction.id,
         date,
@@ -193,6 +194,7 @@ export async function fetchReportsSourceData(
         category: transaction.category ?? "Outros",
         kind: transaction.service_order_id ? "automatic" : "manual",
         amount,
+        sequentialNumber: transaction.sequential_number ?? null,
       });
       continue;
     }
@@ -206,56 +208,7 @@ export async function fetchReportsSourceData(
         : "—",
       category: transaction.category ?? "Outros",
       amount,
-    });
-  }
-
-  const serviceItems: ReportServiceItem[] = [];
-  for (const order of orders) {
-    if (!reportOrderIds.has(order.id)) continue;
-
-    const client = firstRelation(order.clients);
-    const vehicle = firstRelation(order.vehicles);
-    const vehicleLabel = vehicle
-      ? `${vehicle.brand} ${vehicle.model} · ${vehicle.plate}`.trim()
-      : null;
-    const date = getOrderDate(order);
-    const items = order.service_order_items ?? [];
-
-    if (items.length === 0) {
-      serviceItems.push({
-        id: `${order.id}-service`,
-        orderId: order.id,
-        date,
-        clientId: client?.id ?? null,
-        clientName: client?.name ?? "Cliente não encontrado",
-        vehicleLabel,
-        serviceName: "Serviço",
-        quantity: 1,
-        amount: toCurrencyNumber(order.total_amount),
-      });
-      continue;
-    }
-
-    items.forEach((item, index) => {
-      const service = firstRelation(item.services);
-      const quantity = Number(item.quantity) || 1;
-      // Prioritize the value actually charged on this order item
-      // (`unit_price`, set when the appointment was created/customized) over
-      // the service's current catalog price, which may have since changed
-      // and does not reflect what the client was really charged.
-      const unitPrice = toCurrencyNumber(item.unit_price ?? service?.price);
-
-      serviceItems.push({
-        id: `${order.id}-${index}`,
-        orderId: order.id,
-        date,
-        clientId: client?.id ?? null,
-        clientName: client?.name ?? "Cliente não encontrado",
-        vehicleLabel,
-        serviceName: service?.name ?? "Serviço",
-        quantity,
-        amount: unitPrice * quantity,
-      });
+      sequentialNumber: transaction.sequential_number ?? null,
     });
   }
 
@@ -265,6 +218,7 @@ export async function fetchReportsSourceData(
     phone?: string | null;
     address?: string | null;
     logo_url?: string | null;
+    timezone?: string | null;
   } | null;
 
   return {
@@ -274,21 +228,20 @@ export async function fetchReportsSourceData(
       phone: workshop?.phone ?? null,
       address: workshop?.address ?? null,
       logoUrl: workshop?.logo_url ?? null,
+      timezone: resolveTimeZone(workshop?.timezone) || DEFAULT_TIME_ZONE,
     },
     clients,
     revenueEntries,
     expenseEntries,
-    serviceItems,
   };
 }
 
 /**
- * Flattens the three separate report sources (revenue, expense, service items)
- * into a single row shape so the reports table can filter/sort/select across
- * all of them uniformly.
+ * Flattens revenue and expense entries into a single row shape so the
+ * reports table can filter/sort/select across both of them uniformly.
  */
 export function buildTransactionRows(
-  source: Pick<ReportsSourceData, "revenueEntries" | "expenseEntries" | "serviceItems">
+  source: Pick<ReportsSourceData, "revenueEntries" | "expenseEntries">
 ): ReportTransactionRow[] {
   const revenueRows: ReportTransactionRow[] = source.revenueEntries.map((entry) => ({
     id: `receita-${entry.id}`,
@@ -299,6 +252,7 @@ export function buildTransactionRows(
     description: entry.serviceName,
     category: entry.category,
     amount: entry.amount,
+    sequentialNumber: entry.sequentialNumber,
   }));
 
   const expenseRows: ReportTransactionRow[] = source.expenseEntries.map((entry) => ({
@@ -310,18 +264,26 @@ export function buildTransactionRows(
     description: entry.description,
     category: entry.category,
     amount: entry.amount,
+    sequentialNumber: entry.sequentialNumber,
   }));
 
-  const serviceRows: ReportTransactionRow[] = source.serviceItems.map((item) => ({
-    id: `servico-${item.id}`,
-    type: "servico",
-    date: item.date,
-    clientId: item.clientId,
-    clientName: item.clientName,
-    description: item.serviceName,
-    category: item.vehicleLabel ?? "Serviço",
-    amount: item.amount,
-  }));
+  return [...revenueRows, ...expenseRows];
+}
 
-  return [...revenueRows, ...expenseRows, ...serviceRows];
+/**
+ * Sums report rows. When the set includes both receitas and despesas,
+ * despesas are subtracted (resultado líquido). A single-type set still
+ * sums in the original direction (positive total).
+ */
+export function sumReportAmount(
+  rows: Pick<ReportTransactionRow, "type" | "amount">[]
+) {
+  const hasRevenue = rows.some((row) => row.type === "receita");
+  const hasExpense = rows.some((row) => row.type === "despesa");
+  const netExpenses = hasRevenue && hasExpense;
+
+  return rows.reduce((sum, row) => {
+    if (netExpenses && row.type === "despesa") return sum - row.amount;
+    return sum + row.amount;
+  }, 0);
 }

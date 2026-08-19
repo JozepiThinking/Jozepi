@@ -12,6 +12,7 @@ export interface WorkshopInfo {
   phone: string | null;
   address: string | null;
   logoUrl: string | null;
+  timezone: string;
 }
 
 export type RevenueKind = "automatic" | "manual";
@@ -25,6 +26,7 @@ export interface ReportRevenueEntry {
   category: string;
   kind: RevenueKind;
   amount: number;
+  sequentialNumber: number | null;
 }
 
 export interface ReportExpenseEntry {
@@ -34,18 +36,7 @@ export interface ReportExpenseEntry {
   supplierName: string;
   category: string;
   amount: number;
-}
-
-export interface ReportServiceItem {
-  id: string;
-  orderId: string;
-  date: string;
-  clientId: string | null;
-  clientName: string;
-  vehicleLabel: string | null;
-  serviceName: string;
-  quantity: number;
-  amount: number;
+  sequentialNumber: number | null;
 }
 
 export interface ReportsSourceData {
@@ -53,10 +44,9 @@ export interface ReportsSourceData {
   clients: ReportClient[];
   revenueEntries: ReportRevenueEntry[];
   expenseEntries: ReportExpenseEntry[];
-  serviceItems: ReportServiceItem[];
 }
 
-export type ReportTransactionType = "receita" | "despesa" | "servico";
+export type ReportTransactionType = "receita" | "despesa";
 
 export interface ReportTransactionRow {
   id: string;
@@ -67,4 +57,5 @@ export interface ReportTransactionRow {
   description: string;
   category: string;
   amount: number;
+  sequentialNumber: number | null;
 }

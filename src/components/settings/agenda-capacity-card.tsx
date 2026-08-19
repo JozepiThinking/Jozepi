@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { CalendarClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SettingsCollapsibleCard } from "@/components/settings/settings-collapsible-card";
 import { createClient } from "@/lib/supabase/client";
 
 const DEFAULT_AGENDA_CAPACITY = 1;
@@ -170,31 +172,22 @@ export function AgendaCapacityCard() {
   }
 
   return (
-    <form
-      onSubmit={handleSave}
-      className="card-surface"
+    <SettingsCollapsibleCard
+      icon={<CalendarClock className="h-5 w-5" />}
+      title="Capacidade simultânea"
+      description="Defina quantos carros podem ser atendidos no mesmo horário. A agenda só bloqueia um horário quando todas as vagas estiverem ocupadas."
     >
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="max-w-2xl">
-          <h2 className="text-lg font-semibold text-foreground">
-            Capacidade simultânea
-          </h2>
-          <p className="mt-1 text-sm text-muted">
-            Defina quantos carros podem ser atendidos no mesmo horário. A agenda
-            só bloqueia um horário quando todas as vagas estiverem ocupadas.
-          </p>
-        </div>
-        <div className="w-full lg:w-48">
-          <Input
-            label="Carros ao mesmo tempo"
-            type="number"
-            min="1"
-            step="1"
-            value={capacity}
-            disabled={loading}
-            onChange={(event) => setCapacity(event.target.value)}
-          />
-        </div>
+      <form onSubmit={handleSave}>
+      <div className="w-full max-w-xs">
+        <Input
+          label="Carros ao mesmo tempo"
+          type="number"
+          min="1"
+          step="1"
+          value={capacity}
+          disabled={loading}
+          onChange={(event) => setCapacity(event.target.value)}
+        />
       </div>
 
       {error && (
@@ -219,6 +212,7 @@ export function AgendaCapacityCard() {
           Salvar capacidade
         </Button>
       </div>
-    </form>
+      </form>
+    </SettingsCollapsibleCard>
   );
 }

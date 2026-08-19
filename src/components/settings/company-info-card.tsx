@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, ImageUp, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SettingsCollapsibleCard } from "@/components/settings/settings-collapsible-card";
 import { createClient } from "@/lib/supabase/client";
 import { isCnpjComplete, maskCnpj, maskPhone } from "@/lib/utils/masks";
 import {
@@ -178,20 +179,13 @@ export function CompanyInfoCard() {
   const displayedLogo = logoPreview ?? (!removeLogo ? savedLogoUrl : null);
 
   return (
-    <form onSubmit={handleSave} className="card-surface">
-      <div className="flex items-start gap-4">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-premium/10 text-premium">
-          <Building2 className="h-5 w-5" />
-        </div>
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">Dados da empresa</h2>
-          <p className="mt-1 text-sm text-muted">
-            Usados no cabeçalho dos comprovantes em PDF gerados em Relatórios.
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-5 flex items-center gap-4 rounded-lg border border-border bg-background px-4 py-3">
+    <SettingsCollapsibleCard
+      icon={<Building2 className="h-5 w-5" />}
+      title="Dados da empresa"
+      description="Usados no cabeçalho dos comprovantes em PDF gerados em Relatórios."
+    >
+      <form onSubmit={handleSave}>
+      <div className="flex items-center gap-4 rounded-lg border border-border bg-background px-4 py-3">
         <div className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-card">
           {displayedLogo ? (
             <Image
@@ -302,6 +296,7 @@ export function CompanyInfoCard() {
           Salvar dados da empresa
         </Button>
       </div>
-    </form>
+      </form>
+    </SettingsCollapsibleCard>
   );
 }

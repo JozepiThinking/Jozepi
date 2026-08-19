@@ -23,7 +23,8 @@ export const metadata: Metadata = {
   title: "Jozep's Garage",
   description: "Sistema para gestão de estética automotiva",
   icons: {
-    icon: "/favicon.png",
+    icon: [{ url: "/favicon.png", type: "image/png" }],
+    apple: "/favicon.png",
   },
 };
 

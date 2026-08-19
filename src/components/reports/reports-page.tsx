@@ -16,6 +16,7 @@ import { Dropdown } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/format";
+import { DEFAULT_TIME_ZONE, wallClockInTimeZone } from "@/lib/timezone";
 import {
   dateKey,
   formatShortDate,
@@ -24,27 +25,27 @@ import {
   startOfMonth,
   type ReportPeriod,
 } from "@/lib/reports/date-range";
-import { buildTransactionRows, fetchReportsSourceData } from "@/lib/reports/data";
+import { buildTransactionRows, fetchReportsSourceData, sumReportAmount } from "@/lib/reports/data";
 import type {
   ReportClient,
   ReportExpenseEntry,
   ReportRevenueEntry,
-  ReportServiceItem,
   ReportTransactionType,
   WorkshopInfo,
 } from "@/lib/reports/types";
 import { buildListExportPayload, buildReceiptPayload } from "@/lib/reports/export-data";
 import { exportReceiptToPdf } from "@/lib/reports/export-pdf";
 import { exportReportsToExcel } from "@/lib/reports/export-excel";
+import { formatSequentialNumber } from "@/lib/reports/sequential-number";
 
 const REPORT_ICON_WEIGHT = "light" as const;
 const CLIENT_FILTER_ALL = "all";
 
-type ReportSortColumn = "date" | "client" | "value";
+type ReportSortColumn = "number" | "date" | "client" | "value";
 type ReportSortDirection = "asc" | "desc";
 
 const REPORTS_TABLE_GRID_TEMPLATE =
-  "40px 100px minmax(140px, 1fr) minmax(170px, 1.5fr) 130px 120px";
+  "40px 72px 100px minmax(140px, 1fr) minmax(170px, 1.5fr) 130px 120px";
 
 const periodOptions: { value: ReportPeriod; label: string }[] = [
   { value: "today", label: "Hoje" },
@@ -62,19 +63,16 @@ const typeFilterOptions: {
 }[] = [
   { value: "receita", label: "Receita", dotClass: "bg-success" },
   { value: "despesa", label: "Despesa", dotClass: "bg-danger" },
-  { value: "servico", label: "Serviço", dotClass: "bg-primary" },
 ];
 
 const typeBadgeClasses: Record<ReportTransactionType, string> = {
   receita: "bg-success/10 text-success",
   despesa: "bg-danger/10 text-danger",
-  servico: "bg-primary/10 text-primary",
 };
 
 const typeBadgeLabels: Record<ReportTransactionType, string> = {
   receita: "Receita",
   despesa: "Despesa",
-  servico: "Serviço",
 };
 
 function getPeriodLabel(period: ReportPeriod, start: string, end: string): string {
@@ -167,6 +165,7 @@ const EMPTY_WORKSHOP: WorkshopInfo = {
   phone: null,
   address: null,
   logoUrl: null,
+  timezone: DEFAULT_TIME_ZONE,
 };
 
 export function ReportsPage() {
@@ -175,17 +174,18 @@ export function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [workshop, setWorkshop] = useState<WorkshopInfo>(EMPTY_WORKSHOP);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [clients, setClients] = useState<ReportClient[]>([]);
   const [revenueEntries, setRevenueEntries] = useState<ReportRevenueEntry[]>([]);
   const [expenseEntries, setExpenseEntries] = useState<ReportExpenseEntry[]>([]);
-  const [serviceItems, setServiceItems] = useState<ReportServiceItem[]>([]);
 
   const [period, setPeriod] = useState<ReportPeriod>("month");
   const [customStart, setCustomStart] = useState(dateKey(startOfMonth(new Date())));
   const [customEnd, setCustomEnd] = useState(dateKey(new Date()));
   const [clientFilter, setClientFilter] = useState(CLIENT_FILTER_ALL);
   const [typeFilter, setTypeFilter] = useState<Set<ReportTransactionType>>(
-    () => new Set(["receita", "despesa", "servico"])
+    () => new Set(["receita", "despesa"])
   );
 
   const [sortColumn, setSortColumn] = useState<ReportSortColumn>("date");
@@ -214,7 +214,6 @@ export function ReportsPage() {
       setClients(source.clients);
       setRevenueEntries(source.revenueEntries);
       setExpenseEntries(source.expenseEntries);
-      setServiceItems(source.serviceItems);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Não foi possível carregar os relatórios."
@@ -230,8 +229,14 @@ export function ReportsPage() {
   }, [loadData]);
 
   const range = useMemo(
-    () => getReportRange(period, customStart, customEnd),
-    [period, customStart, customEnd]
+    () =>
+      getReportRange(
+        period,
+        customStart,
+        customEnd,
+        wallClockInTimeZone(new Date(), workshop.timezone)
+      ),
+    [period, customStart, customEnd, workshop.timezone]
   );
 
   const periodLabel = useMemo(
@@ -251,8 +256,8 @@ export function ReportsPage() {
   );
 
   const allRows = useMemo(
-    () => buildTransactionRows({ revenueEntries, expenseEntries, serviceItems }),
-    [revenueEntries, expenseEntries, serviceItems]
+    () => buildTransactionRows({ revenueEntries, expenseEntries }),
+    [revenueEntries, expenseEntries]
   );
 
   const filteredRows = useMemo(
@@ -270,7 +275,9 @@ export function ReportsPage() {
     const rows = [...filteredRows];
     rows.sort((a, b) => {
       let comparison = 0;
-      if (sortColumn === "date") comparison = a.date.localeCompare(b.date);
+      if (sortColumn === "number")
+        comparison = (a.sequentialNumber ?? 0) - (b.sequentialNumber ?? 0);
+      else if (sortColumn === "date") comparison = a.date.localeCompare(b.date);
       else if (sortColumn === "client") comparison = a.clientName.localeCompare(b.clientName);
       else comparison = a.amount - b.amount;
 
@@ -279,20 +286,14 @@ export function ReportsPage() {
     return rows;
   }, [filteredRows, sortColumn, sortDirection]);
 
-  const total = useMemo(
-    () => filteredRows.reduce((sum, row) => sum + row.amount, 0),
-    [filteredRows]
-  );
+  const total = useMemo(() => sumReportAmount(filteredRows), [filteredRows]);
 
   const selectedRows = useMemo(
     () => sortedRows.filter((row) => selectedIds.has(row.id)),
     [sortedRows, selectedIds]
   );
 
-  const selectedTotal = useMemo(
-    () => selectedRows.reduce((sum, row) => sum + row.amount, 0),
-    [selectedRows]
-  );
+  const selectedTotal = useMemo(() => sumReportAmount(selectedRows), [selectedRows]);
 
   const allVisibleSelected = sortedRows.length > 0 && selectedRows.length === sortedRows.length;
 
@@ -302,7 +303,7 @@ export function ReportsPage() {
       return;
     }
     setSortColumn(column);
-    setSortDirection(column === "date" ? "desc" : "asc");
+    setSortDirection(column === "date" || column === "number" ? "desc" : "asc");
   }
 
   function toggleRow(id: string) {
@@ -325,7 +326,6 @@ export function ReportsPage() {
     setTypeFilter((prev) => {
       const next = new Set(prev);
       if (next.has(type)) {
-        if (next.size === 1) return next; // keep at least one type active
         next.delete(type);
       } else {
         next.add(type);
@@ -355,6 +355,31 @@ export function ReportsPage() {
     setSelectedIds(new Set());
   }
 
+  async function exportReceiptPdf(
+    rows: typeof filteredRows,
+    nextClientLabel: string
+  ) {
+    setExportingPdf(true);
+    setExportError(null);
+
+    try {
+      const payload = buildReceiptPayload({
+        rows,
+        clients,
+        workshop,
+        periodLabel,
+        clientLabel: nextClientLabel,
+      });
+      await exportReceiptToPdf(payload);
+    } catch (err) {
+      setExportError(
+        err instanceof Error ? err.message : "Não foi possível gerar o comprovante."
+      );
+    } finally {
+      setExportingPdf(false);
+    }
+  }
+
   function handleExportExcel() {
     const payload = buildListExportPayload({
       rows: filteredRows,
@@ -366,38 +391,17 @@ export function ReportsPage() {
   }
 
   async function handleExportPdf() {
-    const payload = buildReceiptPayload({
-      rows: filteredRows,
-      clients,
-      workshop,
-      periodLabel,
-      clientLabel,
-    });
-    await exportReceiptToPdf(payload);
+    await exportReceiptPdf(filteredRows, clientLabel);
   }
 
   async function handleExportSelectedPdf() {
     if (selectedRows.length === 0) return;
-    const payload = buildReceiptPayload({
-      rows: selectedRows,
-      clients,
-      workshop,
-      periodLabel,
-      clientLabel: "Itens selecionados",
-    });
-    await exportReceiptToPdf(payload);
+    await exportReceiptPdf(selectedRows, "Itens selecionados");
   }
 
   async function handleExportClientPdf() {
     if (!selectedClient) return;
-    const payload = buildReceiptPayload({
-      rows: filteredRows,
-      clients,
-      workshop,
-      periodLabel,
-      clientLabel: selectedClient.name,
-    });
-    await exportReceiptToPdf(payload);
+    await exportReceiptPdf(filteredRows, selectedClient.name);
   }
 
   if (loading) {
@@ -460,7 +464,14 @@ export function ReportsPage() {
           </div>
 
           <div className="flex shrink-0 gap-2">
-            <Button type="button" variant="secondary" onClick={handleExportPdf} className="gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleExportPdf}
+              disabled={exportingPdf}
+              loading={exportingPdf}
+              className="gap-2"
+            >
               <FilePdf size={18} weight={REPORT_ICON_WEIGHT} aria-hidden />
               Exportar PDF
             </Button>
@@ -509,7 +520,8 @@ export function ReportsPage() {
             <button
               type="button"
               onClick={handleExportClientPdf}
-              className="flex min-h-11 items-center gap-2.5 rounded-lg border border-premium/30 bg-premium/10 px-4 py-2.5 text-sm font-semibold text-premium transition-colors hover:bg-premium/20"
+              disabled={exportingPdf}
+              className="flex min-h-11 items-center gap-2.5 rounded-lg border border-premium/30 bg-premium/10 px-4 py-2.5 text-sm font-semibold text-premium transition-colors hover:bg-premium/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <IdentificationCard size={18} weight={REPORT_ICON_WEIGHT} aria-hidden />
               Exportar comprovante completo de {selectedClient.name}
@@ -518,13 +530,30 @@ export function ReportsPage() {
         </div>
       </div>
 
+      {exportError && (
+        <p className="rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
+          {exportError}
+        </p>
+      )}
+
       {/* Resumo */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <MiniStat
-          label="Total no período"
+          label={
+            filteredRows.some((row) => row.type === "receita") &&
+            filteredRows.some((row) => row.type === "despesa")
+              ? "Resultado no período"
+              : "Total no período"
+          }
           value={formatCurrency(total)}
-          icon={<CurrencyDollar size={16} weight={REPORT_ICON_WEIGHT} className="text-success" />}
-          tone="success"
+          icon={
+            <CurrencyDollar
+              size={16}
+              weight={REPORT_ICON_WEIGHT}
+              className={total < 0 ? "text-danger" : "text-success"}
+            />
+          }
+          tone={total < 0 ? "danger" : "success"}
         />
         <MiniStat
           label="Lançamentos no período"
@@ -557,6 +586,8 @@ export function ReportsPage() {
               type="button"
               variant="success"
               onClick={handleExportSelectedPdf}
+              disabled={exportingPdf}
+              loading={exportingPdf}
               className="gap-2"
             >
               <FilePdf size={18} weight={REPORT_ICON_WEIGHT} aria-hidden />
@@ -573,7 +604,7 @@ export function ReportsPage() {
         {sortedRows.length === 0 ? (
           <p className="text-sm text-muted">Nenhum lançamento no período/filtro selecionado.</p>
         ) : (
-          <div className="min-w-[760px]">
+          <div className="min-w-[840px]">
             <div
               className="grid items-center gap-3 border-b border-border pb-2"
               style={{ gridTemplateColumns: REPORTS_TABLE_GRID_TEMPLATE }}
@@ -584,6 +615,13 @@ export function ReportsPage() {
                 onChange={toggleSelectAll}
                 className="h-4 w-4 accent-primary"
                 aria-label="Selecionar todos"
+              />
+              <SortableColumnHeader
+                label="Nº"
+                column="number"
+                activeColumn={sortColumn}
+                direction={sortDirection}
+                onSort={handleSort}
               />
               <SortableColumnHeader
                 label="Data"
@@ -631,6 +669,9 @@ export function ReportsPage() {
                     className="h-4 w-4 accent-primary"
                     aria-label={`Selecionar lançamento de ${row.clientName}`}
                   />
+                  <span className="text-sm font-semibold tabular-nums text-foreground">
+                    {formatSequentialNumber(row.type, row.sequentialNumber)}
+                  </span>
                   <span className="text-sm text-muted">{formatShortDate(row.date)}</span>
                   <span className="truncate text-sm font-medium text-foreground">
                     {row.clientName}

@@ -10,45 +10,28 @@ import type {
 } from "@/lib/dashboard/types";
 import { getProductStockPercent } from "@/lib/dashboard/types";
 import { createClient } from "@/lib/supabase/server";
-
-const DASHBOARD_TIME_ZONE = "America/Sao_Paulo";
-
-const hourFormatter = new Intl.DateTimeFormat("pt-BR", {
-  hour: "numeric",
-  hour12: false,
-  timeZone: DASHBOARD_TIME_ZONE,
-});
-
-const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
-  weekday: "long",
-  day: "2-digit",
-  month: "long",
-  year: "numeric",
-  timeZone: DASHBOARD_TIME_ZONE,
-});
+import {
+  DEFAULT_TIME_ZONE,
+  addDaysToDateKey,
+  addMonthsToYearMonth,
+  dateKeyInTimeZone,
+  formatZonedDate,
+  getZonedDateTime,
+  getZonedHour,
+  isMissingTimezoneError,
+  monthRangeKeys,
+  resolveTimeZone,
+} from "@/lib/timezone";
 
 function capitalize(value: string) {
   return value.charAt(0).toLocaleUpperCase("pt-BR") + value.slice(1);
 }
 
-function getGreeting(date: Date) {
-  const hour = Number(
-    hourFormatter.formatToParts(date).find((part) => part.type === "hour")
-      ?.value ?? 0
-  );
+function getGreeting(date: Date, timeZone: string) {
+  const hour = getZonedHour(date, timeZone);
   if (hour >= 4 && hour < 12) return "Bom dia";
   if (hour >= 12 && hour < 18) return "Boa tarde";
   return "Boa noite";
-}
-
-function formatDashboardDate(date: Date) {
-  const parts = dateFormatter.formatToParts(date);
-  const weekday = parts.find((p) => p.type === "weekday")?.value;
-  const day = parts.find((p) => p.type === "day")?.value;
-  const month = parts.find((p) => p.type === "month")?.value;
-  const year = parts.find((p) => p.type === "year")?.value;
-  if (!weekday || !day || !month || !year) return dateFormatter.format(date);
-  return `${capitalize(weekday)}, ${day} de ${capitalize(month)} de ${year}`;
 }
 
 function getDisplayName(fullName?: string | null, email?: string | null) {
@@ -57,24 +40,9 @@ function getDisplayName(fullName?: string | null, email?: string | null) {
   return firstName ? capitalize(firstName) : "usuário";
 }
 
-function toDateStr(date: Date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function addDays(date: Date, days: number) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
-}
-
 export default async function DashboardPage() {
   const supabase = await createClient();
   const now = new Date();
-  const todayStr = toDateStr(now);
-  const weekEndStr = toDateStr(addDays(now, 6));
 
   const {
     data: { user },
@@ -107,17 +75,33 @@ export default async function DashboardPage() {
   let monthlyChartData: MonthChartData[] = [];
   let maxChartValue = 1;
 
+  let timeZone = DEFAULT_TIME_ZONE;
+
   if (profile?.workshop_id) {
     const workshopId = profile.workshop_id;
+
+    const { data: workshop, error: timezoneError } = await supabase
+      .from("workshops")
+      .select("timezone")
+      .eq("id", workshopId)
+      .maybeSingle();
+
+    if (!timezoneError) {
+      timeZone = resolveTimeZone(workshop?.timezone);
+    } else if (!isMissingTimezoneError(timezoneError)) {
+      timeZone = DEFAULT_TIME_ZONE;
+    }
+
+    const todayStr = dateKeyInTimeZone(now, timeZone);
+    const weekEndStr = addDaysToDateKey(todayStr, 6);
+    const { start: monthStart, end: monthEnd } = monthRangeKeys(now, timeZone);
+    const zonedNow = getZonedDateTime(now, timeZone);
 
     const { data: statsData } = await supabase
       .from("dashboard_stats")
       .select("*")
       .eq("workshop_id", workshopId)
       .single();
-
-    const monthStart = toDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
-    const monthEnd = toDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0));
 
     const { count: openCount } = await supabase
       .from("service_orders")
@@ -228,8 +212,8 @@ export default async function DashboardPage() {
       pendingExpenses = (pendingExpenseData as PendingExpenseRow[] | null) ?? [];
     }
 
-    const sixMonthsAgoDate = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-    const sixMonthsAgoStr = toDateStr(sixMonthsAgoDate);
+    const sixMonthsAgo = addMonthsToYearMonth(zonedNow.year, zonedNow.month, -5);
+    const sixMonthsAgoStr = `${sixMonthsAgo.year}-${String(sixMonthsAgo.month).padStart(2, "0")}-01`;
     const { data: txData } = await supabase
       .from("financial_transactions")
       .select("type, amount, transaction_date")
@@ -243,8 +227,9 @@ export default async function DashboardPage() {
     }[];
 
     monthlyChartData = Array.from({ length: 6 }, (_, idx) => {
-      const date = new Date(now.getFullYear(), now.getMonth() - 5 + idx, 1);
-      const monthPrefix = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const monthParts = addMonthsToYearMonth(zonedNow.year, zonedNow.month, -5 + idx);
+      const date = new Date(monthParts.year, monthParts.month - 1, 1);
+      const monthPrefix = `${monthParts.year}-${String(monthParts.month).padStart(2, "0")}`;
       const label = date
         .toLocaleDateString("pt-BR", { month: "short" })
         .replace(".", "");
@@ -267,9 +252,9 @@ export default async function DashboardPage() {
   }
 
   const data: DashboardData = {
-    greeting: getGreeting(now),
+    greeting: getGreeting(now, timeZone),
     greetingName: getDisplayName(profile?.full_name, user?.email),
-    dateLabel: formatDashboardDate(now),
+    dateLabel: formatZonedDate(now, timeZone),
     stats,
     weekAppointments,
     nextTodayAppointment,
